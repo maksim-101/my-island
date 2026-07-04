@@ -83,6 +83,7 @@ struct NotchContentView: View {
                 )
             }
             .onHover { handleHover($0) }
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
     }
 
     private func handleHover(_ hovering: Bool) {
