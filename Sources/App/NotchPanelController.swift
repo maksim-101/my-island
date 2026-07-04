@@ -7,9 +7,40 @@ import MyIslandCore
 final class NotchPanelController: NSObject {
     private var panels: [NotchPanel] = []
     private let logger = Logger(subsystem: AppIdentity.bundleID, category: "NotchPanelController")
+    nonisolated(unsafe) private var screenObserver: NSObjectProtocol?
 
     override init() {
         super.init()
+
+        rebuildPanels()
+
+        screenObserver = NotificationCenter.default.addObserver(
+            forName: NSApplication.didChangeScreenParametersNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor in
+                self?.rebuildPanels()
+            }
+        }
+    }
+
+    deinit {
+        if let screenObserver {
+            NotificationCenter.default.removeObserver(screenObserver)
+        }
+    }
+
+    /// Rebuilds `panels` from the current `NSScreen.screens` (SHELL-05,
+    /// WR-01) — closes panels for screens that disappeared and creates
+    /// panels for newly notched screens. Called at launch and whenever
+    /// `NSApplication.didChangeScreenParametersNotification` fires (clamshell
+    /// open/close, display attach/detach).
+    private func rebuildPanels() {
+        for panel in panels {
+            panel.orderOut(nil)
+        }
+        panels.removeAll()
 
         for screen in NSScreen.screens {
             guard let notchFrame = screen.notchFrame else {
