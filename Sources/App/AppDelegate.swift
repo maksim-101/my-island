@@ -5,11 +5,11 @@ import MyIslandCore
 
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
-    private var statusItemController: StatusItemController?
+    private var notchPanelController: NotchPanelController?
     private let logger = Logger(subsystem: AppIdentity.bundleID, category: "AppDelegate")
 
     func applicationDidFinishLaunching(_ notification: Notification) {
-        statusItemController = StatusItemController()
+        notchPanelController = NotchPanelController()
 
         do {
             try SMAppService.mainApp.register()
