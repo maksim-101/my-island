@@ -1,0 +1,49 @@
+name: MyIsland
+options:
+  bundleIdPrefix: com.maksim101
+  deploymentTarget:
+    macOS: "26.0"
+  createIntermediateGroups: true
+  defaultConfig: Release
+
+packages:
+  MyIslandCore:
+    path: Core
+
+settings:
+  base:
+    SWIFT_VERSION: "6.0"
+    MACOSX_DEPLOYMENT_TARGET: "26.0"
+    PRODUCT_BUNDLE_IDENTIFIER: com.maksim101.myisland
+    PRODUCT_NAME: my-island
+    MARKETING_VERSION: "0.1.0"
+    CURRENT_PROJECT_VERSION: "1"
+    SWIFT_STRICT_CONCURRENCY: complete
+
+targets:
+  MyIsland:
+    type: application
+    platform: macOS
+    sources:
+      - path: Sources
+        excludes:
+          - "**/Info.plist"
+    dependencies:
+      - package: MyIslandCore
+        product: MyIslandCore
+    settings:
+      base:
+        INFOPLIST_FILE: Sources/App/Info.plist
+        CODE_SIGN_STYLE: Automatic
+        ENABLE_HARDENED_RUNTIME: true
+        COMBINE_HIDPI_IMAGES: true
+        LD_RUNPATH_SEARCH_PATHS:
+          - "$(inherited)"
+          - "@executable_path/../Frameworks"
+    info:
+      path: Sources/App/Info.plist
+      properties:
+        LSUIElement: true
+        CFBundleDisplayName: my-island
+        CFBundleName: my-island
+        NSAppleEventsUsageDescription: my-island sends Apple Events to verify Automation permission and, in later phases, to reveal the iTerm2 pane of a waiting Claude Code session.
