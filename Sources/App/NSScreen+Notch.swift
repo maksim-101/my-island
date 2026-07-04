@@ -9,8 +9,8 @@ extension NSScreen {
     var notchFrame: NSRect? {
         NotchGeometry.notchFrame(
             screenFrame: frame,
-            auxiliaryTopLeftWidth: auxiliaryTopLeftArea?.width,
-            auxiliaryTopRightWidth: auxiliaryTopRightArea?.width,
+            auxiliaryTopLeftMaxX: auxiliaryTopLeftArea?.maxX,
+            auxiliaryTopRightMinX: auxiliaryTopRightArea?.minX,
             safeAreaTop: safeAreaInsets.top
         )
     }
