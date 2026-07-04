@@ -7,15 +7,36 @@ import MyIslandCore
 final class NotchViewModel {
     private var dwell = HoverDwell()
 
+    /// Notified synchronously whenever `isOpen` actually changes, regardless
+    /// of which caller (hover dwell or the global-hotkey `toggle()`) drove the
+    /// change. `NotchPanelController` uses this to keep the AppKit window
+    /// frame in sync with the SwiftUI content state.
+    var onOpenChange: ((Bool) -> Void)?
+
     var isOpen: Bool {
         if case .open = dwell.state { return true }
         return false
     }
 
     func hoverBegan() { dwell.hoverBegan() }
-    func dwellElapsed() { dwell.dwellElapsed() }
-    func hoverEnded() { dwell.hoverEnded() }
-    func toggle() { dwell.toggle() }
+
+    func dwellElapsed() {
+        let wasOpen = isOpen
+        dwell.dwellElapsed()
+        if isOpen != wasOpen { onOpenChange?(isOpen) }
+    }
+
+    func hoverEnded() {
+        let wasOpen = isOpen
+        dwell.hoverEnded()
+        if isOpen != wasOpen { onOpenChange?(isOpen) }
+    }
+
+    func toggle() {
+        let wasOpen = isOpen
+        dwell.toggle()
+        if isOpen != wasOpen { onOpenChange?(isOpen) }
+    }
 }
 
 @MainActor
@@ -39,23 +60,29 @@ struct NotchContentView: View {
 
     var body: some View {
         let size = model.isOpen ? expandedSize : collapsedSize
-        VStack(spacing: 0) {
-            NotchShape(topCornerRadius: 6, bottomCornerRadius: model.isOpen ? 24 : 14)
-                .fill(Color.black)
-                .frame(width: size.width, height: size.height)
-                .overlay {
-                    if model.isOpen {
-                        ExpandedPanelView()
-                    } else {
-                        Image(systemName: "circle.lefthalf.filled")
-                            .font(.system(size: 10, weight: .regular))
-                            .foregroundStyle(.white.opacity(0.55))
-                    }
+        NotchShape(topCornerRadius: 6, bottomCornerRadius: model.isOpen ? 24 : 14)
+            .fill(Color.black)
+            .frame(width: size.width, height: size.height)
+            .overlay {
+                ZStack {
+                    Image(systemName: "circle.lefthalf.filled")
+                        .font(.system(size: 10, weight: .regular))
+                        .foregroundStyle(.white.opacity(0.55))
+                        .opacity(model.isOpen ? 0 : 1)
+
+                    ExpandedPanelView()
+                        .opacity(model.isOpen ? 1 : 0)
                 }
-                .onHover { handleHover($0) }
-            Spacer(minLength: 0)
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+                // Content fades in slightly after the box starts growing
+                // (delay on expand only), so text never appears before the
+                // box exists (DEFECT B). Fades out immediately on collapse,
+                // in step with the box shrinking back down.
+                .animation(
+                    NotchLayout.morphAnimation.delay(model.isOpen ? NotchLayout.expandContentDelay : 0),
+                    value: model.isOpen
+                )
+            }
+            .onHover { handleHover($0) }
     }
 
     private func handleHover(_ hovering: Bool) {
