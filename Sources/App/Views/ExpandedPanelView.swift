@@ -1,5 +1,6 @@
 import SwiftUI
 import AppKit
+import KeyboardShortcuts
 
 @MainActor
 struct ExpandedPanelView: View {
@@ -21,9 +22,7 @@ struct ExpandedPanelView: View {
                     Text("Toggle shortcut")
                         .font(.system(size: 11, weight: .medium))
                         .foregroundStyle(.white.opacity(0.8))
-                    Text("Recorder added in Plan 03")
-                        .font(.system(size: 10))
-                        .foregroundStyle(.white.opacity(0.45))
+                    KeyboardShortcuts.Recorder(for: .toggleNotchPanel)
                 }
 
                 Spacer()
