@@ -6,7 +6,6 @@ import MyIslandCore
 @MainActor
 final class NotchPanelController: NSObject {
     private var panels: [NotchPanel] = []
-    private let viewModel = NotchViewModel()
     private let logger = Logger(subsystem: AppIdentity.bundleID, category: "NotchPanelController")
 
     override init() {
@@ -18,7 +17,8 @@ final class NotchPanelController: NSObject {
                 continue
             }
 
-            let panel = Self.makePanel(notchFrame: notchFrame, screen: screen, model: viewModel)
+            let model = NotchViewModel()
+            let panel = Self.makePanel(notchFrame: notchFrame, screen: screen, model: model)
             panels.append(panel)
             panel.orderFrontRegardless()
         }
@@ -33,6 +33,7 @@ final class NotchPanelController: NSObject {
         let styleMask: NSWindow.StyleMask = [.borderless, .nonactivatingPanel, .utilityWindow]
 
         let panel = NotchPanel(contentRect: contentRect, styleMask: styleMask, backing: .buffered, defer: false)
+        panel.viewModel = model
         panel.contentView = NSHostingView(rootView: NotchContentView(model: model, notchSize: notchFrame.size))
 
         panel.level = NSWindow.Level(rawValue: NSWindow.Level.mainMenu.rawValue + 3)
@@ -53,12 +54,21 @@ final class NotchPanelController: NSObject {
 
     func toggle() {
         withAnimation(NotchLayout.morphAnimation) {
-            viewModel.toggle()
+            for panel in panels {
+                panel.viewModel?.toggle()
+            }
         }
     }
 }
 
+/// Each screen's panel owns its own `NotchViewModel` (IN-02) — hovering or
+/// toggling one screen's notch must not open/close another screen's.
 private final class NotchPanel: NSPanel {
-    override var canBecomeKey: Bool { false }
-    override var canBecomeMain: Bool { false }
+    weak var viewModel: NotchViewModel?
+
+    // Becomes key only while expanded, so KeyboardShortcuts.Recorder can
+    // capture a keystroke (CR-02); flips back to false once collapsed so the
+    // ambient/non-activating hover behavior is preserved (no focus theft).
+    override var canBecomeKey: Bool { viewModel?.isOpen ?? false }
+    override var canBecomeMain: Bool { viewModel?.isOpen ?? false }
 }
