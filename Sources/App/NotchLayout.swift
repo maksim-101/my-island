@@ -4,7 +4,7 @@ import SwiftUI
 /// animation, shared by the AppKit window sizing in `NotchPanelController`
 /// and the SwiftUI content sizing in `NotchContentView` so they cannot drift.
 enum NotchLayout {
-    static let expandedWidthMultiplier: CGFloat = 3.5
-    static let expandedHeight: CGFloat = 200
+    static let expandedWidthMultiplier: CGFloat = 2.2
+    static let expandedHeight: CGFloat = 160
     static let morphAnimation: Animation = .interactiveSpring(response: 0.38, dampingFraction: 0.8)
 }
