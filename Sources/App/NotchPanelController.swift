@@ -5,9 +5,6 @@ import MyIslandCore
 
 @MainActor
 final class NotchPanelController: NSObject {
-    private static let expandedWidthMultiplier: CGFloat = 3.5
-    private static let expandedHeight: CGFloat = 200
-
     private var panels: [NotchPanel] = []
     private let viewModel = NotchViewModel()
     private let logger = Logger(subsystem: AppIdentity.bundleID, category: "NotchPanelController")
@@ -30,13 +27,13 @@ final class NotchPanelController: NSObject {
     }
 
     private static func makePanel(notchFrame: NSRect, screen: NSScreen, model: NotchViewModel) -> NotchPanel {
-        let width = notchFrame.width * expandedWidthMultiplier
-        let height = expandedHeight
+        let width = notchFrame.width * NotchLayout.expandedWidthMultiplier
+        let height = NotchLayout.expandedHeight
         let contentRect = NSRect(x: 0, y: 0, width: width, height: height)
         let styleMask: NSWindow.StyleMask = [.borderless, .nonactivatingPanel, .utilityWindow]
 
         let panel = NotchPanel(contentRect: contentRect, styleMask: styleMask, backing: .buffered, defer: false)
-        panel.contentView = NSHostingView(rootView: NotchContentView(model: model))
+        panel.contentView = NSHostingView(rootView: NotchContentView(model: model, notchSize: notchFrame.size))
 
         panel.level = NSWindow.Level(rawValue: NSWindow.Level.mainMenu.rawValue + 3)
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary, .ignoresCycle]
@@ -55,7 +52,7 @@ final class NotchPanelController: NSObject {
     }
 
     func toggle() {
-        withAnimation(.interactiveSpring(response: 0.38, dampingFraction: 0.8)) {
+        withAnimation(NotchLayout.morphAnimation) {
             viewModel.toggle()
         }
     }

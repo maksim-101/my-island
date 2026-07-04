@@ -21,22 +21,20 @@ final class NotchViewModel {
 @MainActor
 struct NotchContentView: View {
     let model: NotchViewModel
+    let notchSize: CGSize
 
     @State private var hoverTask: Task<Void, Never>?
 
     private static let dwellDelay: Duration = .seconds(0.25)
     private static let collapseGrace: Duration = .milliseconds(100)
-    private static let morph: Animation = .interactiveSpring(response: 0.38, dampingFraction: 0.8)
 
-    private var collapsedSize: CGSize {
-        if let notchFrame = NSScreen.main?.notchFrame {
-            return CGSize(width: notchFrame.width, height: notchFrame.height)
-        }
-        return CGSize(width: 200, height: 32)
-    }
+    private var collapsedSize: CGSize { notchSize }
 
     private var expandedSize: CGSize {
-        CGSize(width: collapsedSize.width * 3.5, height: 200)
+        CGSize(
+            width: collapsedSize.width * NotchLayout.expandedWidthMultiplier,
+            height: NotchLayout.expandedHeight
+        )
     }
 
     var body: some View {
@@ -67,7 +65,7 @@ struct NotchContentView: View {
             hoverTask = Task {
                 try? await Task.sleep(for: Self.dwellDelay)
                 guard !Task.isCancelled else { return }
-                withAnimation(Self.morph) {
+                withAnimation(NotchLayout.morphAnimation) {
                     model.dwellElapsed()
                 }
             }
@@ -75,7 +73,7 @@ struct NotchContentView: View {
             hoverTask = Task {
                 try? await Task.sleep(for: Self.collapseGrace)
                 guard !Task.isCancelled else { return }
-                withAnimation(Self.morph) {
+                withAnimation(NotchLayout.morphAnimation) {
                     model.hoverEnded()
                 }
             }
