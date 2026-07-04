@@ -9,6 +9,9 @@ options:
 packages:
   MyIslandCore:
     path: Core
+  KeyboardShortcuts:
+    url: https://github.com/sindresorhus/KeyboardShortcuts
+    from: 3.0.1
 
 settings:
   base:
@@ -32,6 +35,7 @@ targets:
     dependencies:
       - package: MyIslandCore
         product: MyIslandCore
+      - package: KeyboardShortcuts
     settings:
       base:
         INFOPLIST_FILE: Sources/App/Info.plist
