@@ -27,10 +27,15 @@ struct ExpandedPanelView: View {
 
                 Spacer()
 
-                Button("Quit my-island") {
+                Button {
                     NSApp.terminate(nil)
+                } label: {
+                    Image(systemName: "power")
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(.white.opacity(0.75))
                 }
-                .font(.system(size: 11, weight: .medium))
+                .buttonStyle(.plain)
+                .help("Quit my-island")
             }
         }
         .padding(16)
