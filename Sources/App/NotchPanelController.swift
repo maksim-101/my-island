@@ -78,6 +78,15 @@ final class NotchPanelController: NSObject {
         panel.anchorMaxY = anchorMaxY
 
         let hostingView = NSHostingView(rootView: NotchContentView(model: model, notchSize: notchFrame.size))
+        // Decouple from the window's Auto Layout / constraint-update cycle:
+        // `applyFrame` resizes the panel manually via `setFrame`, and letting
+        // the hosting view participate in constraint-based sizing causes an
+        // uncaught NSException (abort) the first time that manual resize
+        // fires. Frame/autoresize-based sizing avoids the window display
+        // cycle entirely while still tracking the window's content bounds.
+        hostingView.sizingOptions = []
+        hostingView.translatesAutoresizingMaskIntoConstraints = true
+        hostingView.autoresizingMask = [.width, .height]
         panel.contentView = hostingView
 
         panel.level = NSWindow.Level(rawValue: NSWindow.Level.mainMenu.rawValue + 3)
