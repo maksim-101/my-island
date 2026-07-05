@@ -4,24 +4,24 @@ import AppKit
 @MainActor
 struct ExpandedPanelView: View {
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: Tokens.Spacing.md) {
             Text("my-island")
                 .font(.system(size: 13, weight: .semibold))
-                .foregroundStyle(.white)
+                .foregroundStyle(Tokens.Color.text)
 
             Text("Ambient content arrives in Phase 3.")
                 .font(.system(size: 11))
-                .foregroundStyle(.white.opacity(0.6))
+                .foregroundStyle(Tokens.Color.textMuted)
         }
-        .padding(16)
+        .padding(Tokens.Spacing.lg)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .overlay(alignment: .topTrailing) {
             settingsButton
-                .padding(12)
+                .padding(Tokens.Spacing.md)
         }
         .overlay(alignment: .bottomTrailing) {
             quitButton
-                .padding(12)
+                .padding(Tokens.Spacing.md)
         }
     }
 
@@ -31,7 +31,7 @@ struct ExpandedPanelView: View {
         } label: {
             Image(systemName: "gearshape")
                 .font(.system(size: 12, weight: .medium))
-                .foregroundStyle(.white.opacity(0.55))
+                .foregroundStyle(Tokens.Color.textMuted)
         }
         .buttonStyle(.plain)
         .help("Settings…")
@@ -43,7 +43,7 @@ struct ExpandedPanelView: View {
         } label: {
             Image(systemName: "power")
                 .font(.system(size: 11, weight: .regular))
-                .foregroundStyle(.white.opacity(0.5))
+                .foregroundStyle(Tokens.Color.textFaint)
         }
         .buttonStyle(.plain)
         .help("Quit my-island")

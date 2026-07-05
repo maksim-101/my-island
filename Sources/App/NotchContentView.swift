@@ -75,7 +75,7 @@ struct NotchContentView: View {
                 .overlay {
                     Image(systemName: "circle.lefthalf.filled")
                         .font(.system(size: 10, weight: .regular))
-                        .foregroundStyle(.white.opacity(0.55))
+                        .foregroundStyle(Tokens.Color.textMuted)
                         .opacity(model.isOpen ? 0 : 1)
                 }
 
