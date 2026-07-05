@@ -1,5 +1,5 @@
 ---
-version: alpha
+version: "1.0"
 name: my-island
 colors:
   accent: "#7C6BFF"
@@ -75,6 +75,19 @@ as considered instrument, not decoration; information-dense but never loud.
   accents for categorical distinctions only (e.g. timer states, session categories) when a second hue
   is genuinely needed. They never carry attention meaning (that is amber's alone) and never replace the
   indigo identity accent.
+
+### Timer state colors (locked)
+
+Color on a timer always **means** which timer/state is running, and the collapsed dot and the expanded
+ring/chip use the **same** color so the two views read as one:
+
+- **Countdown → indigo** (`accent`) — a plain countdown carries no focus/break semantics, so it uses the
+  identity accent, not a warm hue.
+- **Pomodoro focus → coral** (`accent-warm`).
+- **Pomodoro break → mint** (`accent-cool`).
+
+A timer never uses amber (attention-only). Color is applied where it carries meaning; a resting/idle
+surface stays neutral.
 - **Neutrals** — warm-biased greys on near-black: `background` for the desktop/notch, `surface` and
   `surface-raised` for the panel and chips, `hairline` for low-contrast separators. `text` /
   `text-muted` / `text-faint` form a three-step legibility hierarchy.
@@ -92,10 +105,24 @@ A 4px-base spacing scale (4 / 8 / 12 / 16 / 24) keeps density tight enough for a
 use the sm/md/lg rounding scale (7 / 11 / 16). Separators are single low-contrast hairlines, never heavy
 rules — structure comes from spacing and grouping labels, not boxes.
 
+### Collapsed notch (locked geometry rule)
+
+The collapsed overlay is a **fixed black shape whose footprint never changes** to show content — it is
+never widened and never grown to fit a timer or now-playing. It has three zones:
+
+- **left half** — reserved for Now Playing (artwork/title),
+- **center** — the physical camera housing: opaque, **nothing is ever drawn over it**,
+- **right half** — the running timer (colored dot + remaining time).
+
+Ambient content fills the pre-existing halves; it does not resize the notch. The **only** thing that may
+change the collapsed shape is the transient **HUD**, which grows the notch a little **downward** (below
+the camera, never wider) to show a brightness/volume level bar, then reverts. Expansion (hover / hotkey)
+morphs the same shape downward into the panel.
+
 ## Components
 
-- **Notch strip** (collapsed) — always populated: now-playing on the left, amber attention chip + clock
-  on the right, flanking the physical notch. Never blank.
+- **Notch strip** (collapsed) — the fixed three-zone shape above: now-playing (left half), camera housing
+  (center, no content), running timer (right half). Never blank; never resized to fit content.
 - **Panel** (hover-reveal) — `surface` card, md rounding, hairline border, grouped rows under uppercase
   mono labels.
 - **Primary button** — indigo fill, sm rounding, used sparingly (e.g. "Join").
@@ -112,3 +139,6 @@ rules — structure comes from spacing and grouping labels, not boxes.
 - **Don't** add a third UI typeface — SF Pro + SF Mono only.
 - **Don't** let coral or mint compete with amber or replace indigo; they are categorical seasoning, used
   only when a distinction genuinely needs a second hue.
+- **Don't** widen or grow the collapsed notch to fit ambient content, and **don't** render notch content
+  as a menu-bar item beside it — content lives inside the fixed notch shape (left/right halves). Only the
+  HUD grows the notch, and only downward.
