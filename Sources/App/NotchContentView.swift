@@ -78,25 +78,40 @@ struct NotchContentView: View {
                 .fill(Color.black)
                 .frame(width: shapeSize.width, height: shapeSize.height)
                 .overlay {
-                    ZStack {
-                        Image(systemName: "circle.lefthalf.filled")
-                            .font(.system(size: 10, weight: .regular))
-                            .foregroundStyle(.white.opacity(0.55))
-                            .opacity(model.isOpen ? 0 : 1)
-
-                        ExpandedPanelView()
-                            .opacity(model.isOpen ? 1 : 0)
-                    }
-                    // Content fades in slightly after the box starts growing
-                    // (delay on expand only), so text never appears before the
-                    // box exists (DEFECT B). Fades out immediately on collapse,
-                    // in step with the box shrinking back down.
-                    .animation(
-                        NotchLayout.morphAnimation.delay(model.isOpen ? NotchLayout.expandContentDelay : 0),
-                        value: model.isOpen
-                    )
+                    Image(systemName: "circle.lefthalf.filled")
+                        .font(.system(size: 10, weight: .regular))
+                        .foregroundStyle(.white.opacity(0.55))
+                        .opacity(model.isOpen ? 0 : 1)
                 }
                 .onHover { handleHover($0) }
+
+            // Laid out at a CONSTANT expanded size (never `shapeSize`) so its
+            // VStack/HStack is always measured at its final geometry and never
+            // reflows mid-morph — that reflow was the "wobble" (title +
+            // recorder pill visibly sliding into place at a different rate
+            // than everything else). The whole panel instead fades in/out as
+            // ONE unit and is masked to a shape sized to the currently
+            // morphing box (`shapeSize`) so it never paints outside the still
+            // growing/shrinking black notch.
+            ExpandedPanelView()
+                .frame(width: expandedSize.width, height: expandedSize.height, alignment: .topLeading)
+                .mask(alignment: .top) {
+                    NotchShape(topCornerRadius: 6, bottomCornerRadius: model.isOpen ? 24 : 14)
+                        .frame(width: shapeSize.width, height: shapeSize.height)
+                }
+                .opacity(model.isOpen ? 1 : 0)
+                // Collapsed content still occupies the full expanded footprint
+                // (to stay constant-sized), so hit-testing must be disabled
+                // while closed or it would swallow hover over the invisible
+                // area beyond the collapsed notch.
+                .allowsHitTesting(model.isOpen)
+                // Content trails the box growth slightly on expand (so text
+                // never appears before the box exists), and fades out in step
+                // with the box shrinking back down on collapse.
+                .animation(
+                    NotchLayout.morphAnimation.delay(model.isOpen ? NotchLayout.expandContentDelay : 0),
+                    value: model.isOpen
+                )
         }
         .frame(width: expandedSize.width, height: expandedSize.height, alignment: .top)
     }
