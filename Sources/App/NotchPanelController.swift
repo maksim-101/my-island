@@ -86,8 +86,39 @@ final class NotchPanelController: NSObject {
         // cycle entirely while still tracking the window's content bounds.
         hostingView.sizingOptions = []
         hostingView.translatesAutoresizingMaskIntoConstraints = true
-        hostingView.autoresizingMask = [.width, .height]
-        panel.contentView = hostingView
+
+        // The hosting view is NOT the window's contentView. `NSHostingView`
+        // calls `updateAnimatedWindowSize(_:)` on ITS OWN WINDOW whenever it
+        // detects a `windowDidLayout` pass — if it IS the contentView, that
+        // resizes the panel directly and collides with `applyFrame`'s manual
+        // `setFrame`, aborting with an uncaught NSException. Wrapping it in a
+        // plain `NSView` container means the window's contentView is never an
+        // `NSHostingView`, so no window-resize feedback can originate from
+        // SwiftUI's layout pass — `applyFrame` remains the ONLY code that
+        // resizes the window.
+        let expandedWidth = notchFrame.width * NotchLayout.expandedWidthMultiplier
+        let expandedHeight = NotchLayout.expandedHeight
+
+        let container = NSView(frame: NSRect(origin: .zero, size: collapsedFrame.size))
+        container.autoresizesSubviews = true
+        container.wantsLayer = true
+        container.layer?.masksToBounds = true
+
+        // Fixed at the expanded size (matches the constant SwiftUI content
+        // size in `NotchContentView`), centered horizontally and top-pinned
+        // within the container. While the container is collapsed (notch
+        // sized), only the top-center notch region is visible; the rest is
+        // clipped by `masksToBounds`. When `applyFrame` grows the window, the
+        // full hosting content becomes visible without ever resizing itself.
+        hostingView.frame = NSRect(
+            x: (container.bounds.width - expandedWidth) / 2,
+            y: container.bounds.height - expandedHeight,
+            width: expandedWidth,
+            height: expandedHeight
+        )
+        hostingView.autoresizingMask = [.minXMargin, .maxXMargin, .minYMargin]
+        container.addSubview(hostingView)
+        panel.contentView = container
 
         panel.level = NSWindow.Level(rawValue: NSWindow.Level.mainMenu.rawValue + 3)
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary, .ignoresCycle]

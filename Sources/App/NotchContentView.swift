@@ -59,31 +59,46 @@ struct NotchContentView: View {
     }
 
     var body: some View {
-        let size = model.isOpen ? expandedSize : collapsedSize
-        NotchShape(topCornerRadius: 6, bottomCornerRadius: model.isOpen ? 24 : 14)
-            .fill(Color.black)
-            .frame(width: size.width, height: size.height)
-            .overlay {
-                ZStack {
-                    Image(systemName: "circle.lefthalf.filled")
-                        .font(.system(size: 10, weight: .regular))
-                        .foregroundStyle(.white.opacity(0.55))
-                        .opacity(model.isOpen ? 0 : 1)
+        let shapeSize = model.isOpen ? expandedSize : collapsedSize
+        // The OUTER frame is a CONSTANT size (always expandedSize, regardless
+        // of isOpen) — this is load-bearing. `NSHostingView` calls
+        // `updateAnimatedWindowSize(_:)` whenever its SwiftUI content's
+        // reported size CHANGES, and that method resizes the AppKit window
+        // itself. `NotchPanelController.applyFrame` is already the sole
+        // window-resizer (manual `setFrame`); if the hosting view's content
+        // size also changes (as it did when this frame used
+        // `maxWidth/maxHeight: .infinity`), the two resize paths fight and
+        // the window enters an invalid state, aborting with an uncaught
+        // NSException. Keeping the outer frame constant means the hosting
+        // view's reported content size never changes, so
+        // `updateAnimatedWindowSize` has nothing to animate — only the
+        // `NotchShape` inside morphs visually.
+        ZStack(alignment: .top) {
+            NotchShape(topCornerRadius: 6, bottomCornerRadius: model.isOpen ? 24 : 14)
+                .fill(Color.black)
+                .frame(width: shapeSize.width, height: shapeSize.height)
+                .overlay {
+                    ZStack {
+                        Image(systemName: "circle.lefthalf.filled")
+                            .font(.system(size: 10, weight: .regular))
+                            .foregroundStyle(.white.opacity(0.55))
+                            .opacity(model.isOpen ? 0 : 1)
 
-                    ExpandedPanelView()
-                        .opacity(model.isOpen ? 1 : 0)
+                        ExpandedPanelView()
+                            .opacity(model.isOpen ? 1 : 0)
+                    }
+                    // Content fades in slightly after the box starts growing
+                    // (delay on expand only), so text never appears before the
+                    // box exists (DEFECT B). Fades out immediately on collapse,
+                    // in step with the box shrinking back down.
+                    .animation(
+                        NotchLayout.morphAnimation.delay(model.isOpen ? NotchLayout.expandContentDelay : 0),
+                        value: model.isOpen
+                    )
                 }
-                // Content fades in slightly after the box starts growing
-                // (delay on expand only), so text never appears before the
-                // box exists (DEFECT B). Fades out immediately on collapse,
-                // in step with the box shrinking back down.
-                .animation(
-                    NotchLayout.morphAnimation.delay(model.isOpen ? NotchLayout.expandContentDelay : 0),
-                    value: model.isOpen
-                )
-            }
-            .onHover { handleHover($0) }
-            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+                .onHover { handleHover($0) }
+        }
+        .frame(width: expandedSize.width, height: expandedSize.height, alignment: .top)
     }
 
     private func handleHover(_ hovering: Bool) {
