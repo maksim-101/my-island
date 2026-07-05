@@ -222,6 +222,11 @@ final class NotchPanelController: NSObject {
         panel.hasShadow = false
         panel.ignoresMouseEvents = false
         panel.isReleasedWhenClosed = false
+        // Stay non-activating, but allow the panel to become key ONLY when a
+        // view that needs first-responder status is clicked — i.e. the duration
+        // text field. Plain buttons (Start, presets) don't trigger it, so the
+        // ambient overlay never steals focus except to accept typed input.
+        panel.becomesKeyOnlyIfNeeded = true
 
         return panel
     }
@@ -480,7 +485,10 @@ private final class NotchPanel: NSPanel {
     // in a dedicated, activated Settings window (AppDelegate.showSettings),
     // so the notch panel never needs to become key/main and never steals
     // focus or activation from whatever the user is doing.
-    override var canBecomeKey: Bool { false }
+    // Can become key (so the duration text field accepts typing) but only when
+    // needed — `becomesKeyOnlyIfNeeded` limits that to text-field clicks, so the
+    // panel stays a non-activating ambient overlay otherwise. Never main.
+    override var canBecomeKey: Bool { true }
     override var canBecomeMain: Bool { false }
 
     // The notch overlay is a fixed, level-27 ambient window — it must never be

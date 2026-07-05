@@ -138,11 +138,19 @@ struct TimerPanelView: View {
             presetButton(minutes: 15)
             presetButton(minutes: 25)
 
-            Stepper(value: $customMinutes, in: 1...180) {
-                Text("\(customMinutes)m")
+            // Type a value or scroll (wheel/trackpad) to adjust — replaces the
+            // fiddly Stepper.
+            HStack(spacing: 1) {
+                DurationField(minutes: $customMinutes)
+                Text("m")
                     .font(Tokens.Font.bodyMD)
                     .foregroundStyle(Tokens.Color.textMuted)
             }
+            .padding(.horizontal, Tokens.Spacing.sm)
+            .padding(.vertical, Tokens.Spacing.xs)
+            .background(Tokens.Color.surfaceRaised)
+            .clipShape(RoundedRectangle(cornerRadius: Tokens.Radius.sm))
+            .help("Type or scroll to set minutes")
 
             Button("Start") {
                 timer.startCountdown(minutes: Double(customMinutes))
