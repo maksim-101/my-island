@@ -12,7 +12,7 @@ struct HUDView: View {
     var body: some View {
         HStack(spacing: Tokens.Spacing.sm) {
             Image(systemName: hud.glyph.systemName)
-                .font(.system(size: 12, weight: .semibold))
+                .font(Tokens.Font.data)
                 .foregroundStyle(Tokens.Color.text)
 
             GeometryReader { proxy in
