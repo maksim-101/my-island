@@ -76,6 +76,16 @@ struct NotchContentView: View {
         hud.isShowingHUD ? 8 : 14
     }
 
+    /// Top rounding for the drawn shape. `NotchShape` insets its vertical sides
+    /// by `topCornerRadius`, which made the Ambient HUD bump ~12pt narrower than
+    /// the physical notch it drops from. For the HUD bump we drop that inset to
+    /// 0 so the bump's sides are flush with the notch; the squared top corners
+    /// sit behind the physical camera bezel and are never visible. The idle
+    /// notch and the expanded panel keep 6.
+    private var collapsedTopCornerRadius: CGFloat {
+        hud.isShowingHUD ? 0 : 6
+    }
+
     var body: some View {
         let shapeSize = model.isOpen ? expandedSize : collapsedShapeSize
         // The OUTER frame is a CONSTANT size (always expandedSize, regardless
@@ -92,7 +102,7 @@ struct NotchContentView: View {
         // `updateAnimatedWindowSize` has nothing to animate — only the
         // `NotchShape` inside morphs visually.
         ZStack(alignment: .top) {
-            NotchShape(topCornerRadius: 6, bottomCornerRadius: model.isOpen ? 24 : collapsedBottomCornerRadius)
+            NotchShape(topCornerRadius: collapsedTopCornerRadius, bottomCornerRadius: model.isOpen ? 24 : collapsedBottomCornerRadius)
                 .fill(Color.black)
                 .frame(width: shapeSize.width, height: shapeSize.height)
                 .overlay(alignment: .top) {
@@ -131,7 +141,7 @@ struct NotchContentView: View {
             // A brief neutral/indigo flash on timer completion (D-11) — NEVER
             // amber (that's reserved for the Claude "needs you" attention
             // signal) and never a system notification.
-            NotchShape(topCornerRadius: 6, bottomCornerRadius: model.isOpen ? 24 : collapsedBottomCornerRadius)
+            NotchShape(topCornerRadius: collapsedTopCornerRadius, bottomCornerRadius: model.isOpen ? 24 : collapsedBottomCornerRadius)
                 .fill(Tokens.Color.accent)
                 .frame(width: shapeSize.width, height: shapeSize.height)
                 .opacity(flashOpacity)
@@ -148,7 +158,7 @@ struct NotchContentView: View {
             ExpandedPanelView(timer: timer)
                 .frame(width: expandedSize.width, height: expandedSize.height, alignment: .topLeading)
                 .mask(alignment: .top) {
-                    NotchShape(topCornerRadius: 6, bottomCornerRadius: model.isOpen ? 24 : collapsedBottomCornerRadius)
+                    NotchShape(topCornerRadius: collapsedTopCornerRadius, bottomCornerRadius: model.isOpen ? 24 : collapsedBottomCornerRadius)
                         .frame(width: shapeSize.width, height: shapeSize.height)
                 }
                 .opacity(model.isOpen ? 1 : 0)
