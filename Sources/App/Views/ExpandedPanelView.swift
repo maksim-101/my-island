@@ -17,47 +17,54 @@ struct ExpandedPanelView: View {
             Divider()
                 .overlay(Color.white.opacity(0.12))
 
-            HStack {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("Toggle shortcut")
-                        .font(.system(size: 11, weight: .medium))
-                        .foregroundStyle(.white.opacity(0.8))
-                    Text(currentShortcutDescription)
-                        .font(.system(size: 11))
-                        .foregroundStyle(.white.opacity(0.6))
-                }
-
-                Button {
-                    NotificationCenter.default.post(name: .openMyIslandSettings, object: nil)
-                } label: {
-                    Image(systemName: "pencil")
-                        .font(.system(size: 11, weight: .medium))
-                        .foregroundStyle(.white.opacity(0.6))
-                }
-                .buttonStyle(.plain)
-                .help("Change shortcut…")
-
-                Spacer()
-
-                Button {
-                    NSApp.terminate(nil)
-                } label: {
-                    Image(systemName: "power")
-                        .font(.system(size: 13, weight: .semibold))
-                        .foregroundStyle(.white.opacity(0.75))
-                }
-                .buttonStyle(.plain)
-                .help("Quit my-island")
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Toggle shortcut")
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(.white.opacity(0.8))
+                Text(currentShortcutDescription)
+                    .font(.system(size: 11))
+                    .foregroundStyle(.white.opacity(0.6))
             }
         }
         .padding(16)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .overlay(alignment: .topTrailing) {
+            settingsButton
+                .padding(12)
+        }
+        .overlay(alignment: .bottomTrailing) {
+            quitButton
+                .padding(12)
+        }
+    }
+
+    private var settingsButton: some View {
+        Button {
+            NotificationCenter.default.post(name: .openMyIslandSettings, object: nil)
+        } label: {
+            Image(systemName: "gearshape")
+                .font(.system(size: 12, weight: .medium))
+                .foregroundStyle(.white.opacity(0.55))
+        }
+        .buttonStyle(.plain)
+        .help("Settings…")
+    }
+
+    private var quitButton: some View {
+        Button {
+            NSApp.terminate(nil)
+        } label: {
+            Image(systemName: "power")
+                .font(.system(size: 11, weight: .regular))
+                .foregroundStyle(.white.opacity(0.5))
+        }
+        .buttonStyle(.plain)
+        .help("Quit my-island")
     }
 
     private var currentShortcutDescription: String {
-        if let shortcut = KeyboardShortcuts.getShortcut(for: .toggleNotchPanel) {
-            return shortcut.description
-        }
-        return "Not set"
+        let shortcut = KeyboardShortcuts.getShortcut(for: .toggleNotchPanel)
+            ?? KeyboardShortcuts.Name.toggleNotchPanel.defaultShortcut
+        return shortcut?.description ?? "Not set"
     }
 }
