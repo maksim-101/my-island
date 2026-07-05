@@ -1,6 +1,5 @@
 import SwiftUI
 import AppKit
-import KeyboardShortcuts
 
 @MainActor
 struct ExpandedPanelView: View {
@@ -13,18 +12,6 @@ struct ExpandedPanelView: View {
             Text("Ambient content arrives in Phase 3.")
                 .font(.system(size: 11))
                 .foregroundStyle(.white.opacity(0.6))
-
-            Divider()
-                .overlay(Color.white.opacity(0.12))
-
-            VStack(alignment: .leading, spacing: 2) {
-                Text("Toggle shortcut")
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundStyle(.white.opacity(0.8))
-                Text(currentShortcutDescription)
-                    .font(.system(size: 11))
-                    .foregroundStyle(.white.opacity(0.6))
-            }
         }
         .padding(16)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
@@ -60,11 +47,5 @@ struct ExpandedPanelView: View {
         }
         .buttonStyle(.plain)
         .help("Quit my-island")
-    }
-
-    private var currentShortcutDescription: String {
-        let shortcut = KeyboardShortcuts.getShortcut(for: .toggleNotchPanel)
-            ?? KeyboardShortcuts.Name.toggleNotchPanel.defaultShortcut
-        return shortcut?.description ?? "Not set"
     }
 }
