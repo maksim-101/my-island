@@ -13,6 +13,10 @@ final class NotchPanelController: NSObject {
     // visible ears; drawing it as one shape avoids seams. Kept separate from the
     // notch panel so it never participates in the open/HUD morph.
     private var barPanels: [NSPanel] = []
+    // One per notched screen: the detached Liquid Glass Ambient HUD pill that
+    // floats just below the notch (HUDPillView). Independent of the notch/wings
+    // so its width never has to match them.
+    private var hudPanels: [NSPanel] = []
     private let logger = Logger(subsystem: AppIdentity.bundleID, category: "NotchPanelController")
     nonisolated(unsafe) private var screenObserver: NSObjectProtocol?
     // Observe-only mouse monitors (never intercept clicks) that let a hover over
@@ -50,15 +54,10 @@ final class NotchPanelController: NSObject {
                 self.hud.showBrightness(level: Double(level))
             }
         }
-        hud.onVisibilityChange = { [weak self] _ in
-            guard let self else { return }
-            for panel in self.panels {
-                // The expanded panel already covers this area — the HUD
-                // state must not fight the open/close window-resize path.
-                guard panel.viewModel?.isOpen != true else { continue }
-                panel.setFrame(self.resolvedFrame(for: panel), display: true)
-            }
-        }
+        // The Ambient HUD is now a detached glass pill below the notch
+        // (HUDPillView in its own window), so it no longer resizes the notch
+        // window — the pill window is always present and shows/hides its content
+        // as SwiftUI observes `hud.isShowingHUD`.
 
         rebuildPanels()
 
@@ -109,6 +108,8 @@ final class NotchPanelController: NSObject {
         panels.removeAll()
         barPanels.forEach { $0.orderOut(nil) }
         barPanels.removeAll()
+        hudPanels.forEach { $0.orderOut(nil) }
+        hudPanels.removeAll()
 
         for screen in NSScreen.screens {
             guard let notchFrame = screen.notchFrame else {
@@ -117,7 +118,7 @@ final class NotchPanelController: NSObject {
             }
 
             let model = NotchViewModel()
-            let panel = Self.makePanel(notchFrame: notchFrame, screen: screen, model: model, timer: timer, hud: hud)
+            let panel = Self.makePanel(notchFrame: notchFrame, screen: screen, model: model, timer: timer)
             model.onOpenChange = { [weak self, weak panel] isOpen in
                 guard let self, let panel else { return }
                 self.applyFrame(to: panel, isOpen: isOpen)
@@ -128,12 +129,16 @@ final class NotchPanelController: NSObject {
             let bar = Self.makeBarPanel(notchFrame: notchFrame, anchorMaxY: screen.frame.maxY, timer: timer, model: model)
             barPanels.append(bar)
             bar.orderFrontRegardless()
+
+            let hudPanel = Self.makeHudPanel(notchFrame: notchFrame, anchorMaxY: screen.frame.maxY, hud: hud)
+            hudPanels.append(hudPanel)
+            hudPanel.orderFrontRegardless()
         }
 
         logger.info("Initialized with \(self.panels.count, privacy: .public) notch panel(s)")
     }
 
-    private static func makePanel(notchFrame: NSRect, screen: NSScreen, model: NotchViewModel, timer: TimerViewModel, hud: HUDViewModel) -> NotchPanel {
+    private static func makePanel(notchFrame: NSRect, screen: NSScreen, model: NotchViewModel, timer: TimerViewModel) -> NotchPanel {
         let anchorMaxY = screen.frame.maxY
         let collapsedFrame = Self.collapsedFrame(notchFrame: notchFrame, anchorMaxY: anchorMaxY)
         let styleMask: NSWindow.StyleMask = [.borderless, .nonactivatingPanel, .utilityWindow]
@@ -148,7 +153,7 @@ final class NotchPanelController: NSObject {
         panel.notchFrame = notchFrame
         panel.anchorMaxY = anchorMaxY
 
-        let hostingView = NSHostingView(rootView: NotchContentView(model: model, notchSize: notchFrame.size, timer: timer, hud: hud))
+        let hostingView = NSHostingView(rootView: NotchContentView(model: model, notchSize: notchFrame.size, timer: timer))
         // Decouple from the window's Auto Layout / constraint-update cycle:
         // `applyFrame` resizes the panel manually via `setFrame`, and letting
         // the hosting view participate in constraint-based sizing causes an
@@ -252,6 +257,38 @@ final class NotchPanelController: NSObject {
         )
     }
 
+    /// The Ambient HUD pill window — floats centered just below the notch, sized
+    /// generously so the Liquid Glass capsule + its transition never clip. The
+    /// pill content shows/hides itself as SwiftUI observes `hud`.
+    private static func makeHudPanel(notchFrame: NSRect, anchorMaxY: CGFloat, hud: HUDViewModel) -> NSPanel {
+        let width: CGFloat = 200
+        let height: CGFloat = 44
+        let frame = NSRect(
+            x: notchFrame.midX - width / 2,
+            y: anchorMaxY - notchFrame.height - NotchLayout.hudPillGap - height,
+            width: width,
+            height: height
+        )
+        let panel = NSPanel(contentRect: frame, styleMask: [.borderless, .nonactivatingPanel, .utilityWindow], backing: .buffered, defer: false)
+
+        let container = NSView(frame: NSRect(origin: .zero, size: frame.size))
+        container.autoresizesSubviews = true
+        let hosting = NSHostingView(rootView: HUDPillView(hud: hud))
+        hosting.frame = NSRect(origin: .zero, size: frame.size)
+        hosting.autoresizingMask = [.width, .height]
+        container.addSubview(hosting)
+        panel.contentView = container
+
+        panel.level = NSWindow.Level(rawValue: NSWindow.Level.mainMenu.rawValue + 3)
+        panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary, .ignoresCycle]
+        panel.isOpaque = false
+        panel.backgroundColor = .clear
+        panel.hasShadow = false
+        panel.ignoresMouseEvents = true
+        panel.isReleasedWhenClosed = false
+        return panel
+    }
+
     private static func makeBarPanel(notchFrame: NSRect, anchorMaxY: CGFloat, timer: TimerViewModel, model: NotchViewModel) -> NSPanel {
         let frame = barFrame(notchFrame: notchFrame, anchorMaxY: anchorMaxY)
         let panel = NSPanel(contentRect: frame, styleMask: [.borderless, .nonactivatingPanel, .utilityWindow], backing: .buffered, defer: false)
@@ -298,31 +335,12 @@ final class NotchPanelController: NSObject {
         )
     }
 
-    /// The window frame while the Ambient HUD is showing (collapsed, not
-    /// open) — same width as `collapsedFrame` (the notch never widens,
-    /// D-03), taller by `NotchLayout.hudBumpHeight` so the AppKit window
-    /// itself grows enough for the downward bump not to be clipped by the
-    /// container's `masksToBounds`.
-    private static func hudBumpFrame(notchFrame: NSRect, anchorMaxY: CGFloat) -> NSRect {
-        let height = notchFrame.height + NotchLayout.hudBumpHeight
-        return NSRect(
-            x: notchFrame.midX - notchFrame.width / 2,
-            y: anchorMaxY - height,
-            width: notchFrame.width,
-            height: height
-        )
-    }
-
-    /// Single shared frame resolver used by both `applyFrame` (open/close)
-    /// and the HUD visibility handler — the one place that decides which of
-    /// the three sizes a given panel's window should currently be, so no
-    /// third/parallel resize system is ever introduced.
+    /// The one place that decides whether a given panel's window is at its
+    /// collapsed (notch) or expanded size. The Ambient HUD no longer factors in
+    /// here — it's a detached pill in its own window.
     private func resolvedFrame(for panel: NotchPanel) -> NSRect {
         if panel.viewModel?.isOpen == true {
             return Self.expandedFrame(notchFrame: panel.notchFrame, anchorMaxY: panel.anchorMaxY)
-        }
-        if hud.isShowingHUD {
-            return Self.hudBumpFrame(notchFrame: panel.notchFrame, anchorMaxY: panel.anchorMaxY)
         }
         return Self.collapsedFrame(notchFrame: panel.notchFrame, anchorMaxY: panel.anchorMaxY)
     }

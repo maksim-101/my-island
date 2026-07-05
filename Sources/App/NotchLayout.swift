@@ -33,10 +33,9 @@ enum NotchLayout {
     /// avoids flicker on momentary pointer blips.
     static let hoverCollapseGrace: TimeInterval = 0.1
 
-    /// The downward bump added below the camera housing while the Ambient
-    /// HUD (brightness/volume) is showing (D-03/D-06) — the drawn shape
-    /// grows by this much, never wider. Tuned on-device.
-    static let hudBumpHeight: CGFloat = 38
+    /// Gap between the notch's bottom edge and the top of the detached Ambient
+    /// HUD glass pill that floats below it (HUDPillView).
+    static let hudPillGap: CGFloat = 6
 
     /// How long the HUD stays up after the LAST brightness/volume change
     /// before fading and reverting to the timer/idle collapsed content
