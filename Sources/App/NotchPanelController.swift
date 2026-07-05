@@ -287,4 +287,12 @@ private final class NotchPanel: NSPanel {
     // ambient/non-activating hover behavior is preserved (no focus theft).
     override var canBecomeKey: Bool { viewModel?.isOpen ?? false }
     override var canBecomeMain: Bool { viewModel?.isOpen ?? false }
+
+    // The notch overlay is a fixed, level-27 ambient window — it must never be
+    // miniaturized or closed by the standard Window menu commands (⌘M / ⌘W), which
+    // otherwise reset its window level and position while it is the key window
+    // (it becomes key only while expanded, so the shortcut recorder can capture keys).
+    override func miniaturize(_ sender: Any?) { /* no-op: notch panel is not miniaturizable */ }
+    override func performMiniaturize(_ sender: Any?) { /* no-op */ }
+    override func performClose(_ sender: Any?) { /* no-op: not user-closable; Quit is via the panel's power button */ }
 }
