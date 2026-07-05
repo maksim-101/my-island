@@ -3,15 +3,15 @@ import AppKit
 
 @MainActor
 struct ExpandedPanelView: View {
+    let timer: TimerViewModel
+
     var body: some View {
         VStack(alignment: .leading, spacing: Tokens.Spacing.md) {
             Text("my-island")
                 .font(.system(size: 13, weight: .semibold))
                 .foregroundStyle(Tokens.Color.text)
 
-            Text("Ambient content arrives in Phase 3.")
-                .font(.system(size: 11))
-                .foregroundStyle(Tokens.Color.textMuted)
+            TimerPanelView(timer: timer)
         }
         .padding(Tokens.Spacing.lg)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
