@@ -43,6 +43,7 @@ final class NotchViewModel {
 struct NotchContentView: View {
     let model: NotchViewModel
     let notchSize: CGSize
+    let timer: TimerViewModel
 
     private var collapsedSize: CGSize { notchSize }
 
@@ -87,7 +88,7 @@ struct NotchContentView: View {
             // ONE unit and is masked to a shape sized to the currently
             // morphing box (`shapeSize`) so it never paints outside the still
             // growing/shrinking black notch.
-            ExpandedPanelView()
+            ExpandedPanelView(timer: timer)
                 .frame(width: expandedSize.width, height: expandedSize.height, alignment: .topLeading)
                 .mask(alignment: .top) {
                     NotchShape(topCornerRadius: 6, bottomCornerRadius: model.isOpen ? 24 : 14)

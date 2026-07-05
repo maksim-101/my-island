@@ -9,6 +9,11 @@ final class NotchPanelController: NSObject {
     private let logger = Logger(subsystem: AppIdentity.bundleID, category: "NotchPanelController")
     nonisolated(unsafe) private var screenObserver: NSObjectProtocol?
 
+    // Owned ONCE here (not inside `rebuildPanels`) so a running timer
+    // survives a screen-parameter change — every rebuilt panel is injected
+    // with this SAME instance, never a fresh one.
+    private let timer = TimerViewModel()
+
     override init() {
         super.init()
 
@@ -52,7 +57,7 @@ final class NotchPanelController: NSObject {
             }
 
             let model = NotchViewModel()
-            let panel = Self.makePanel(notchFrame: notchFrame, screen: screen, model: model)
+            let panel = Self.makePanel(notchFrame: notchFrame, screen: screen, model: model, timer: timer)
             model.onOpenChange = { [weak self, weak panel] isOpen in
                 guard let self, let panel else { return }
                 self.applyFrame(to: panel, isOpen: isOpen)
@@ -64,7 +69,7 @@ final class NotchPanelController: NSObject {
         logger.info("Initialized with \(self.panels.count, privacy: .public) notch panel(s)")
     }
 
-    private static func makePanel(notchFrame: NSRect, screen: NSScreen, model: NotchViewModel) -> NotchPanel {
+    private static func makePanel(notchFrame: NSRect, screen: NSScreen, model: NotchViewModel, timer: TimerViewModel) -> NotchPanel {
         let anchorMaxY = screen.frame.maxY
         let collapsedFrame = Self.collapsedFrame(notchFrame: notchFrame, anchorMaxY: anchorMaxY)
         let styleMask: NSWindow.StyleMask = [.borderless, .nonactivatingPanel, .utilityWindow]
@@ -79,7 +84,7 @@ final class NotchPanelController: NSObject {
         panel.notchFrame = notchFrame
         panel.anchorMaxY = anchorMaxY
 
-        let hostingView = NSHostingView(rootView: NotchContentView(model: model, notchSize: notchFrame.size))
+        let hostingView = NSHostingView(rootView: NotchContentView(model: model, notchSize: notchFrame.size, timer: timer))
         // Decouple from the window's Auto Layout / constraint-update cycle:
         // `applyFrame` resizes the panel manually via `setFrame`, and letting
         // the hosting view participate in constraint-based sizing causes an
