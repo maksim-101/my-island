@@ -261,8 +261,11 @@ final class NotchPanelController: NSObject {
     /// generously so the Liquid Glass capsule + its transition never clip. The
     /// pill content shows/hides itself as SwiftUI observes `hud`.
     private static func makeHudPanel(notchFrame: NSRect, anchorMaxY: CGFloat, hud: HUDViewModel) -> NSPanel {
-        let width: CGFloat = 200
-        let height: CGFloat = 44
+        // Generous window so the pill's glow/shadow never clip; HUDPillView pins
+        // its capsule to the top so it hangs just under the notch, with the
+        // extra height below reserved for the glow.
+        let width: CGFloat = 220
+        let height: CGFloat = 56
         let frame = NSRect(
             x: notchFrame.midX - width / 2,
             y: anchorMaxY - notchFrame.height - NotchLayout.hudPillGap - height,
