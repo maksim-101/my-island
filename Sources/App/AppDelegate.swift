@@ -1,12 +1,18 @@
 import AppKit
+import SwiftUI
 import ServiceManagement
 import OSLog
 import MyIslandCore
 import KeyboardShortcuts
 
+extension Notification.Name {
+    static let openMyIslandSettings = Notification.Name("openMyIslandSettings")
+}
+
 @MainActor
-final class AppDelegate: NSObject, NSApplicationDelegate {
+final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private var notchPanelController: NotchPanelController?
+    private var settingsWindow: NSWindow?
     private let logger = Logger(subsystem: AppIdentity.bundleID, category: "AppDelegate")
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -15,6 +21,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         KeyboardShortcuts.onKeyDown(for: .toggleNotchPanel) { [weak self] in
             self?.notchPanelController?.toggle()
         }
+
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(showSettings),
+            name: .openMyIslandSettings,
+            object: nil
+        )
 
         do {
             try SMAppService.mainApp.register()
@@ -25,5 +38,30 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
         .terminateNow
+    }
+
+    // Promotes the app to `.regular` and activates it while the Settings
+    // window is open — the notch panel is a non-activating overlay, so its
+    // hosted KeyboardShortcuts.Recorder (and the system's conflict-alert
+    // modal) has no activated app to anchor to (Dicticus pattern).
+    @objc func showSettings() {
+        NSApp.setActivationPolicy(.regular)
+        NSApp.activate(ignoringOtherApps: true)
+
+        if settingsWindow == nil {
+            let hosting = NSHostingController(rootView: SettingsView())
+            let win = NSWindow(contentViewController: hosting)
+            win.title = "my-island Settings"
+            win.styleMask = [.titled, .closable]
+            win.isReleasedWhenClosed = false
+            win.delegate = self
+            win.center()
+            settingsWindow = win
+        }
+        settingsWindow?.makeKeyAndOrderFront(nil)
+    }
+
+    func windowWillClose(_ notification: Notification) {
+        NSApp.setActivationPolicy(.accessory)
     }
 }

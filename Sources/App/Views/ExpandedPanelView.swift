@@ -22,12 +22,20 @@ struct ExpandedPanelView: View {
                     Text("Toggle shortcut")
                         .font(.system(size: 11, weight: .medium))
                         .foregroundStyle(.white.opacity(0.8))
-                    KeyboardShortcuts.Recorder(for: .toggleNotchPanel)
-                    Text("Requires ⌘, ⌃, or ⌥ (not ⇧ alone). System-reserved keys won't take.")
-                        .font(.system(size: 9))
-                        .foregroundStyle(.white.opacity(0.4))
-                        .fixedSize(horizontal: false, vertical: true)
+                    Text(currentShortcutDescription)
+                        .font(.system(size: 11))
+                        .foregroundStyle(.white.opacity(0.6))
                 }
+
+                Button {
+                    NotificationCenter.default.post(name: .openMyIslandSettings, object: nil)
+                } label: {
+                    Image(systemName: "pencil")
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundStyle(.white.opacity(0.6))
+                }
+                .buttonStyle(.plain)
+                .help("Change shortcut…")
 
                 Spacer()
 
@@ -44,5 +52,12 @@ struct ExpandedPanelView: View {
         }
         .padding(16)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+    }
+
+    private var currentShortcutDescription: String {
+        if let shortcut = KeyboardShortcuts.getShortcut(for: .toggleNotchPanel) {
+            return shortcut.description
+        }
+        return "Not set"
     }
 }

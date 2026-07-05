@@ -282,16 +282,17 @@ private final class NotchPanel: NSPanel {
     var pendingDwellOpen: DispatchWorkItem?
     var pendingHoverClose: DispatchWorkItem?
 
-    // Becomes key only while expanded, so KeyboardShortcuts.Recorder can
-    // capture a keystroke (CR-02); flips back to false once collapsed so the
-    // ambient/non-activating hover behavior is preserved (no focus theft).
-    override var canBecomeKey: Bool { viewModel?.isOpen ?? false }
-    override var canBecomeMain: Bool { viewModel?.isOpen ?? false }
+    // Purely non-activating (Dicticus pattern): the hotkey recorder now lives
+    // in a dedicated, activated Settings window (AppDelegate.showSettings),
+    // so the notch panel never needs to become key/main and never steals
+    // focus or activation from whatever the user is doing.
+    override var canBecomeKey: Bool { false }
+    override var canBecomeMain: Bool { false }
 
     // The notch overlay is a fixed, level-27 ambient window — it must never be
-    // miniaturized or closed by the standard Window menu commands (⌘M / ⌘W), which
-    // otherwise reset its window level and position while it is the key window
-    // (it becomes key only while expanded, so the shortcut recorder can capture keys).
+    // miniaturized or closed by the standard Window menu commands (⌘M / ⌘W),
+    // which would otherwise reset its window level and position. Kept as a
+    // defensive no-op even though the panel no longer becomes key.
     override func miniaturize(_ sender: Any?) { /* no-op: notch panel is not miniaturizable */ }
     override func performMiniaturize(_ sender: Any?) { /* no-op */ }
     override func performClose(_ sender: Any?) { /* no-op: not user-closable; Quit is via the panel's power button */ }
