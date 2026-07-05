@@ -14,8 +14,38 @@ final class NotchPanelController: NSObject {
     // with this SAME instance, never a fresh one.
     private let timer = TimerViewModel()
 
+    // Also owned ONCE here — the HUD providers/arbiter must not be recreated
+    // per-screen or their listeners would leak/duplicate every time
+    // `rebuildPanels` runs (clamshell open/close, display attach/detach).
+    private let volumeProvider = VolumeProvider()
+    private let brightnessProvider = BrightnessProvider()
+    private let hud = HUDViewModel()
+
     override init() {
         super.init()
+
+        volumeProvider.onChange = { [weak self] in
+            guard let self else { return }
+            self.hud.showVolume(level: Double(self.volumeProvider.level), muted: self.volumeProvider.isMuted)
+        }
+        // Only wired when the private brightness bridge actually resolved —
+        // an unavailable BrightnessProvider must never surface a HUD row
+        // (T-03-B2).
+        if brightnessProvider.isAvailable {
+            brightnessProvider.onChange = { [weak self] in
+                guard let self, let level = self.brightnessProvider.level else { return }
+                self.hud.showBrightness(level: Double(level))
+            }
+        }
+        hud.onVisibilityChange = { [weak self] _ in
+            guard let self else { return }
+            for panel in self.panels {
+                // The expanded panel already covers this area — the HUD
+                // state must not fight the open/close window-resize path.
+                guard panel.viewModel?.isOpen != true else { continue }
+                panel.setFrame(self.resolvedFrame(for: panel), display: true)
+            }
+        }
 
         rebuildPanels()
 
@@ -57,7 +87,7 @@ final class NotchPanelController: NSObject {
             }
 
             let model = NotchViewModel()
-            let panel = Self.makePanel(notchFrame: notchFrame, screen: screen, model: model, timer: timer)
+            let panel = Self.makePanel(notchFrame: notchFrame, screen: screen, model: model, timer: timer, hud: hud)
             model.onOpenChange = { [weak self, weak panel] isOpen in
                 guard let self, let panel else { return }
                 self.applyFrame(to: panel, isOpen: isOpen)
@@ -69,7 +99,7 @@ final class NotchPanelController: NSObject {
         logger.info("Initialized with \(self.panels.count, privacy: .public) notch panel(s)")
     }
 
-    private static func makePanel(notchFrame: NSRect, screen: NSScreen, model: NotchViewModel, timer: TimerViewModel) -> NotchPanel {
+    private static func makePanel(notchFrame: NSRect, screen: NSScreen, model: NotchViewModel, timer: TimerViewModel, hud: HUDViewModel) -> NotchPanel {
         let anchorMaxY = screen.frame.maxY
         let collapsedFrame = Self.collapsedFrame(notchFrame: notchFrame, anchorMaxY: anchorMaxY)
         let styleMask: NSWindow.StyleMask = [.borderless, .nonactivatingPanel, .utilityWindow]
@@ -84,7 +114,7 @@ final class NotchPanelController: NSObject {
         panel.notchFrame = notchFrame
         panel.anchorMaxY = anchorMaxY
 
-        let hostingView = NSHostingView(rootView: NotchContentView(model: model, notchSize: notchFrame.size, timer: timer))
+        let hostingView = NSHostingView(rootView: NotchContentView(model: model, notchSize: notchFrame.size, timer: timer, hud: hud))
         // Decouple from the window's Auto Layout / constraint-update cycle:
         // `applyFrame` resizes the panel manually via `setFrame`, and letting
         // the hosting view participate in constraint-based sizing causes an
@@ -177,6 +207,35 @@ final class NotchPanelController: NSObject {
         )
     }
 
+    /// The window frame while the Ambient HUD is showing (collapsed, not
+    /// open) — same width as `collapsedFrame` (the notch never widens,
+    /// D-03), taller by `NotchLayout.hudBumpHeight` so the AppKit window
+    /// itself grows enough for the downward bump not to be clipped by the
+    /// container's `masksToBounds`.
+    private static func hudBumpFrame(notchFrame: NSRect, anchorMaxY: CGFloat) -> NSRect {
+        let height = notchFrame.height + NotchLayout.hudBumpHeight
+        return NSRect(
+            x: notchFrame.midX - notchFrame.width / 2,
+            y: anchorMaxY - height,
+            width: notchFrame.width,
+            height: height
+        )
+    }
+
+    /// Single shared frame resolver used by both `applyFrame` (open/close)
+    /// and the HUD visibility handler — the one place that decides which of
+    /// the three sizes a given panel's window should currently be, so no
+    /// third/parallel resize system is ever introduced.
+    private func resolvedFrame(for panel: NotchPanel) -> NSRect {
+        if panel.viewModel?.isOpen == true {
+            return Self.expandedFrame(notchFrame: panel.notchFrame, anchorMaxY: panel.anchorMaxY)
+        }
+        if hud.isShowingHUD {
+            return Self.hudBumpFrame(notchFrame: panel.notchFrame, anchorMaxY: panel.anchorMaxY)
+        }
+        return Self.collapsedFrame(notchFrame: panel.notchFrame, anchorMaxY: panel.anchorMaxY)
+    }
+
     /// Drives the AppKit window frame in step with the model's open/close
     /// state, regardless of whether that state change came from hover dwell
     /// or the global-hotkey `toggle()`.
@@ -192,14 +251,11 @@ final class NotchPanelController: NSObject {
         panel.pendingCollapse = nil
 
         if isOpen {
-            panel.setFrame(Self.expandedFrame(notchFrame: panel.notchFrame, anchorMaxY: panel.anchorMaxY), display: true)
+            panel.setFrame(resolvedFrame(for: panel), display: true)
         } else {
-            let work = DispatchWorkItem { [weak panel] in
-                guard let panel, panel.viewModel?.isOpen != true else { return }
-                panel.setFrame(
-                    NotchPanelController.collapsedFrame(notchFrame: panel.notchFrame, anchorMaxY: panel.anchorMaxY),
-                    display: true
-                )
+            let work = DispatchWorkItem { [weak self, weak panel] in
+                guard let self, let panel, panel.viewModel?.isOpen != true else { return }
+                panel.setFrame(self.resolvedFrame(for: panel), display: true)
             }
             panel.pendingCollapse = work
             DispatchQueue.main.asyncAfter(deadline: .now() + NotchLayout.collapseWindowDelay, execute: work)

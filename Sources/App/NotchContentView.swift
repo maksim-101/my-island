@@ -44,6 +44,7 @@ struct NotchContentView: View {
     let model: NotchViewModel
     let notchSize: CGSize
     let timer: TimerViewModel
+    let hud: HUDViewModel
 
     @State private var flashOpacity: Double = 0
 
@@ -56,8 +57,18 @@ struct NotchContentView: View {
         )
     }
 
+    /// Collapsed drawn shape size while the Ambient HUD is showing: same
+    /// width (the notch NEVER widens, D-03), taller by `hudBumpHeight` so the
+    /// bump grows downward below the camera row, exactly like the open/close
+    /// morph already varies the drawn shape height within the constant outer
+    /// frame.
+    private var collapsedShapeSize: CGSize {
+        guard hud.isShowingHUD else { return collapsedSize }
+        return CGSize(width: collapsedSize.width, height: collapsedSize.height + NotchLayout.hudBumpHeight)
+    }
+
     var body: some View {
-        let shapeSize = model.isOpen ? expandedSize : collapsedSize
+        let shapeSize = model.isOpen ? expandedSize : collapsedShapeSize
         // The OUTER frame is a CONSTANT size (always expandedSize, regardless
         // of isOpen) — this is load-bearing. `NSHostingView` calls
         // `updateAnimatedWindowSize(_:)` whenever its SwiftUI content's
@@ -75,20 +86,42 @@ struct NotchContentView: View {
             NotchShape(topCornerRadius: 6, bottomCornerRadius: model.isOpen ? 24 : 14)
                 .fill(Color.black)
                 .frame(width: shapeSize.width, height: shapeSize.height)
-                .overlay {
-                    // Three-zone collapsed strip (DESIGN.md "Collapsed notch"):
-                    // left half reserved for Phase 5 Now Playing (empty for
-                    // now), the centered camera housing zone is left
-                    // deliberately contentless, and the right half hosts the
-                    // running timer's readout. Never widens the fixed notch
-                    // shape — content lives inside the existing halves.
-                    HStack(spacing: 0) {
-                        Color.clear
-                        Color.clear
-                        TimerCollapsedView(timer: timer)
+                .overlay(alignment: .top) {
+                    // Collapsed content is a single arbiter (Pitfall 4): the
+                    // Ambient HUD bump OR the three-zone timer strip, never
+                    // both. The camera row itself is always the same height
+                    // (`collapsedSize.height`) regardless of which is
+                    // showing; the HUD row is an ADDITIONAL strip below it,
+                    // matching the shape's downward-only growth.
+                    VStack(spacing: 0) {
+                        // Three-zone collapsed strip (DESIGN.md "Collapsed
+                        // notch"): left half reserved for Phase 5 Now
+                        // Playing (empty for now), the centered camera
+                        // housing zone is left deliberately contentless, and
+                        // the right half hosts the running timer's readout
+                        // — hidden while the HUD is taking over. Never
+                        // widens the fixed notch shape — content lives
+                        // inside the existing halves.
+                        HStack(spacing: 0) {
+                            Color.clear
+                            Color.clear
+                            Group {
+                                if hud.isShowingHUD {
+                                    Color.clear
+                                } else {
+                                    TimerCollapsedView(timer: timer)
+                                }
+                            }
                             .frame(maxWidth: .infinity, alignment: .trailing)
+                        }
+                        .padding(.horizontal, 6)
+                        .frame(height: collapsedSize.height)
+
+                        if hud.isShowingHUD {
+                            HUDView(hud: hud)
+                                .frame(height: NotchLayout.hudBumpHeight)
+                        }
                     }
-                    .padding(.horizontal, 6)
                     .opacity(model.isOpen ? 0 : 1)
                 }
 

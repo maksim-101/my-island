@@ -26,4 +26,14 @@ enum NotchLayout {
     /// Grace period after the cursor leaves before the notch collapses —
     /// avoids flicker on momentary pointer blips.
     static let hoverCollapseGrace: TimeInterval = 0.1
+
+    /// The downward bump added below the camera housing while the Ambient
+    /// HUD (brightness/volume) is showing (D-03/D-06) — the drawn shape
+    /// grows by this much, never wider. Tuned on-device.
+    static let hudBumpHeight: CGFloat = 38
+
+    /// How long the HUD stays up after the LAST brightness/volume change
+    /// before fading and reverting to the timer/idle collapsed content
+    /// (D-05).
+    static let hudFadeDelay: TimeInterval = 1.5
 }
