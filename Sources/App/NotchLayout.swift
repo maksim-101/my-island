@@ -11,7 +11,7 @@ enum NotchLayout {
     // duration stepper) and the entire Clipboard section were clipped below
     // the panel's masked bottom edge, so a countdown could not be started
     // (measured natural height at width 407 ≈ 272pt; verified via render harness).
-    static let expandedHeight: CGFloat = 280
+    static let expandedHeight: CGFloat = 320
     static let morphAnimation: Animation = .interactiveSpring(response: 0.38, dampingFraction: 0.8)
 
     /// Delay before the expanded content fades in, so it visually trails the

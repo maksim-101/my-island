@@ -18,7 +18,11 @@ struct ExpandedPanelView: View {
                 .foregroundStyle(Tokens.Color.text)
 
             TimerPanelView(timer: timer)
+            // Let the clipboard take the panel's remaining vertical space so its
+            // scroll area actually uses the height (otherwise the slack becomes
+            // empty space at the bottom and only ~2 rows show).
             ClipboardPanelView(clipboard: clipboard)
+                .frame(maxHeight: .infinity, alignment: .top)
         }
         .padding(Tokens.Spacing.lg)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)

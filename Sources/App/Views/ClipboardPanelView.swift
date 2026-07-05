@@ -23,13 +23,21 @@ struct ClipboardPanelView: View {
                     .foregroundStyle(Tokens.Color.textFaint)
             }
 
-            VStack(alignment: .leading, spacing: Tokens.Spacing.xs) {
-                ForEach(clipboard.entries) { entry in
-                    ClipboardRowView(entry: entry) {
-                        clipboard.select(entry)
+            // Bounded, scrollable so all up-to-10 entries are reachable without
+            // the panel growing unbounded — the full history was previously
+            // clipped to ~2 rows by the fixed panel height.
+            ScrollView {
+                VStack(alignment: .leading, spacing: Tokens.Spacing.xs) {
+                    ForEach(clipboard.entries) { entry in
+                        ClipboardRowView(entry: entry) {
+                            clipboard.select(entry)
+                        }
                     }
                 }
             }
+            .frame(maxHeight: .infinity)
+            .scrollIndicators(.visible)
+            .scrollBounceBehavior(.basedOnSize)
 
             Text("Text only \u{00B7} 10 max \u{00B7} in-memory \u{00B7} password-manager copies skipped")
                 .font(Tokens.Font.label)
