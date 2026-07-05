@@ -44,11 +44,6 @@ struct NotchContentView: View {
     let model: NotchViewModel
     let notchSize: CGSize
 
-    @State private var hoverTask: Task<Void, Never>?
-
-    private static let dwellDelay: Duration = .seconds(0.25)
-    private static let collapseGrace: Duration = .milliseconds(100)
-
     private var collapsedSize: CGSize { notchSize }
 
     private var expandedSize: CGSize {
@@ -83,7 +78,6 @@ struct NotchContentView: View {
                         .foregroundStyle(.white.opacity(0.55))
                         .opacity(model.isOpen ? 0 : 1)
                 }
-                .onHover { handleHover($0) }
 
             // Laid out at a CONSTANT expanded size (never `shapeSize`) so its
             // VStack/HStack is always measured at its final geometry and never
@@ -114,27 +108,13 @@ struct NotchContentView: View {
                 )
         }
         .frame(width: expandedSize.width, height: expandedSize.height, alignment: .top)
-    }
-
-    private func handleHover(_ hovering: Bool) {
-        hoverTask?.cancel()
-        if hovering {
-            model.hoverBegan()
-            hoverTask = Task {
-                try? await Task.sleep(for: Self.dwellDelay)
-                guard !Task.isCancelled else { return }
-                withAnimation(NotchLayout.morphAnimation) {
-                    model.dwellElapsed()
-                }
-            }
-        } else {
-            hoverTask = Task {
-                try? await Task.sleep(for: Self.collapseGrace)
-                guard !Task.isCancelled else { return }
-                withAnimation(NotchLayout.morphAnimation) {
-                    model.hoverEnded()
-                }
-            }
-        }
+        // Hover is intentionally NOT detected here via SwiftUI `.onHover`.
+        // `NotchPanelController`'s `HoverTrackingView` (an AppKit
+        // `NSTrackingArea` on the window's container view) drives
+        // `model.hoverBegan()`/`dwellElapsed()`/`hoverEnded()` instead — the
+        // recorder inside `ExpandedPanelView` does not reliably honor
+        // `.allowsHitTesting(false)` for its own hit-testing, which silently
+        // swallowed `.onHover` over the left half of the collapsed notch
+        // (SHELL-11).
     }
 }

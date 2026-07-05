@@ -17,4 +17,13 @@ enum NotchLayout {
     /// response so the window doesn't snap in while content is still visibly
     /// collapsing.
     static let collapseWindowDelay: TimeInterval = 0.45
+
+    /// How long the cursor must dwell over the notch before it expands.
+    /// Driven by `NotchPanelController`'s `NSTrackingArea`-based hover
+    /// detection (SHELL-11 fix) rather than SwiftUI `.onHover`.
+    static let hoverDwellDelay: TimeInterval = 0.25
+
+    /// Grace period after the cursor leaves before the notch collapses —
+    /// avoids flicker on momentary pointer blips.
+    static let hoverCollapseGrace: TimeInterval = 0.1
 }

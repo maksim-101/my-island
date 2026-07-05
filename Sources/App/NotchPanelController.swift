@@ -39,6 +39,8 @@ final class NotchPanelController: NSObject {
     private func rebuildPanels() {
         for panel in panels {
             panel.pendingCollapse?.cancel()
+            panel.pendingDwellOpen?.cancel()
+            panel.pendingHoverClose?.cancel()
             panel.orderOut(nil)
         }
         panels.removeAll()
@@ -99,7 +101,18 @@ final class NotchPanelController: NSObject {
         let expandedWidth = notchFrame.width * NotchLayout.expandedWidthMultiplier
         let expandedHeight = NotchLayout.expandedHeight
 
-        let container = NSView(frame: NSRect(origin: .zero, size: collapsedFrame.size))
+        // A plain `NSView` cannot be relied upon for hover detection here:
+        // `ExpandedPanelView`'s `KeyboardShortcuts.Recorder` (an AppKit
+        // `NSView` bridged via `NSViewRepresentable`) is positioned on the
+        // left of the panel and does not reliably honor SwiftUI's
+        // `.allowsHitTesting(false)` for its own event tracking, so it
+        // silently swallows hover over the left half of the collapsed notch
+        // and SwiftUI's `.onHover` never fires there (SHELL-11). A
+        // `NSTrackingArea` on this container — whose bounds always equal the
+        // window's full content rect, collapsed or expanded — sidesteps
+        // SwiftUI/NSView hit-testing entirely and is coordinate-exact for
+        // both notch halves.
+        let container = HoverTrackingView(frame: NSRect(origin: .zero, size: collapsedFrame.size))
         container.autoresizesSubviews = true
         container.wantsLayer = true
         container.layer?.masksToBounds = true
@@ -118,6 +131,10 @@ final class NotchPanelController: NSObject {
         )
         hostingView.autoresizingMask = [.minXMargin, .maxXMargin, .minYMargin]
         container.addSubview(hostingView)
+        container.onHoverChange = { [weak panel] hovering in
+            guard let panel else { return }
+            NotchPanelController.handleHoverChange(panel: panel, hovering: hovering)
+        }
         panel.contentView = container
 
         panel.level = NSWindow.Level(rawValue: NSWindow.Level.mainMenu.rawValue + 3)
@@ -191,6 +208,68 @@ final class NotchPanelController: NSObject {
             }
         }
     }
+
+    /// Drives the hover-dwell state machine from the `HoverTrackingView`'s
+    /// AppKit `NSTrackingArea` enter/exit events (SHELL-11 fix), replacing
+    /// SwiftUI `.onHover` — which the left half of the notch never received
+    /// (see `container` comment in `makePanel`). Mirrors the previous
+    /// `NotchContentView.handleHover` timing exactly (0.25s open dwell,
+    /// 0.1s close grace, cancel-on-new-event) but uses `DispatchWorkItem`s
+    /// hung off the panel instead of a SwiftUI `@State` `Task`, matching the
+    /// existing `pendingCollapse` pattern in this controller.
+    private static func handleHoverChange(panel: NotchPanel, hovering: Bool) {
+        panel.pendingDwellOpen?.cancel()
+        panel.pendingDwellOpen = nil
+        panel.pendingHoverClose?.cancel()
+        panel.pendingHoverClose = nil
+
+        guard let model = panel.viewModel else { return }
+
+        if hovering {
+            model.hoverBegan()
+            let work = DispatchWorkItem { [weak panel] in
+                guard let model = panel?.viewModel else { return }
+                withAnimation(NotchLayout.morphAnimation) {
+                    model.dwellElapsed()
+                }
+            }
+            panel.pendingDwellOpen = work
+            DispatchQueue.main.asyncAfter(deadline: .now() + NotchLayout.hoverDwellDelay, execute: work)
+        } else {
+            let work = DispatchWorkItem { [weak panel] in
+                guard let model = panel?.viewModel else { return }
+                withAnimation(NotchLayout.morphAnimation) {
+                    model.hoverEnded()
+                }
+            }
+            panel.pendingHoverClose = work
+            DispatchQueue.main.asyncAfter(deadline: .now() + NotchLayout.hoverCollapseGrace, execute: work)
+        }
+    }
+}
+
+/// Tracks hover over the container's full bounds via AppKit's
+/// `NSTrackingArea` rather than SwiftUI `.onHover`, which is unreliable here
+/// (see `container` comment in `NotchPanelController.makePanel`). `.zero` +
+/// `.inVisibleRect` keeps the tracking rect pinned to the view's current
+/// bounds automatically as `applyFrame` resizes the window between the
+/// collapsed notch size and the expanded panel size.
+private final class HoverTrackingView: NSView {
+    var onHoverChange: ((Bool) -> Void)?
+
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        trackingAreas.forEach(removeTrackingArea)
+        addTrackingArea(NSTrackingArea(
+            rect: .zero,
+            options: [.mouseEnteredAndExited, .activeAlways, .inVisibleRect],
+            owner: self,
+            userInfo: nil
+        ))
+    }
+
+    override func mouseEntered(with event: NSEvent) { onHoverChange?(true) }
+    override func mouseExited(with event: NSEvent) { onHoverChange?(false) }
 }
 
 /// Each screen's panel owns its own `NotchViewModel` (IN-02) — hovering or
@@ -200,6 +279,8 @@ private final class NotchPanel: NSPanel {
     var notchFrame: NSRect = .zero
     var anchorMaxY: CGFloat = 0
     var pendingCollapse: DispatchWorkItem?
+    var pendingDwellOpen: DispatchWorkItem?
+    var pendingHoverClose: DispatchWorkItem?
 
     // Becomes key only while expanded, so KeyboardShortcuts.Recorder can
     // capture a keystroke (CR-02); flips back to false once collapsed so the
