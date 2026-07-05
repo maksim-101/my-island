@@ -21,9 +21,16 @@ final class TimerViewModel {
     private(set) var startedDuration: TimeInterval = 0
 
     /// Fired once when a running timer completes (countdown ends, or the
-    /// final Pomodoro cycle's focus period ends). Wired to sound + notch
-    /// flash in plan 03-02 Task 3.
+    /// final Pomodoro cycle's focus period ends) — after the built-in sound +
+    /// flash side effect below. Optional extension point; not required for
+    /// D-11 itself.
     var onCompletion: (() -> Void)?
+
+    /// Toggled once per completion (D-11). `NotchContentView` observes this
+    /// to trigger a brief neutral/indigo flash overlay on the notch shape —
+    /// never amber, and never a system notification (that's the whole point
+    /// of D-11: no Notification Center TCC grant).
+    private(set) var flashPulse: Bool = false
 
     var mode: TimerMode? { engine.mode }
     var cycle: Int { engine.cycle }
@@ -107,6 +114,11 @@ final class TimerViewModel {
         if engine.mode == nil {
             logger.info("Timer completed")
             stopTicking()
+            // Fixed, compile-time system-sound constant (never a user-
+            // influenced path) — guarded optional, skips silently if
+            // unavailable (T-03-T1).
+            NSSound(named: "Glass")?.play()
+            flashPulse.toggle()
             onCompletion?()
         }
     }

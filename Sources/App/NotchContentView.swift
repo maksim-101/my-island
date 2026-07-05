@@ -45,6 +45,8 @@ struct NotchContentView: View {
     let notchSize: CGSize
     let timer: TimerViewModel
 
+    @State private var flashOpacity: Double = 0
+
     private var collapsedSize: CGSize { notchSize }
 
     private var expandedSize: CGSize {
@@ -74,11 +76,30 @@ struct NotchContentView: View {
                 .fill(Color.black)
                 .frame(width: shapeSize.width, height: shapeSize.height)
                 .overlay {
-                    Image(systemName: "circle.lefthalf.filled")
-                        .font(.system(size: 10, weight: .regular))
-                        .foregroundStyle(Tokens.Color.textMuted)
-                        .opacity(model.isOpen ? 0 : 1)
+                    // Three-zone collapsed strip (DESIGN.md "Collapsed notch"):
+                    // left half reserved for Phase 5 Now Playing (empty for
+                    // now), the centered camera housing zone is left
+                    // deliberately contentless, and the right half hosts the
+                    // running timer's readout. Never widens the fixed notch
+                    // shape — content lives inside the existing halves.
+                    HStack(spacing: 0) {
+                        Color.clear
+                        Color.clear
+                        TimerCollapsedView(timer: timer)
+                            .frame(maxWidth: .infinity, alignment: .trailing)
+                    }
+                    .padding(.horizontal, 6)
+                    .opacity(model.isOpen ? 0 : 1)
                 }
+
+            // A brief neutral/indigo flash on timer completion (D-11) — NEVER
+            // amber (that's reserved for the Claude "needs you" attention
+            // signal) and never a system notification.
+            NotchShape(topCornerRadius: 6, bottomCornerRadius: model.isOpen ? 24 : 14)
+                .fill(Tokens.Color.accent)
+                .frame(width: shapeSize.width, height: shapeSize.height)
+                .opacity(flashOpacity)
+                .allowsHitTesting(false)
 
             // Laid out at a CONSTANT expanded size (never `shapeSize`) so its
             // VStack/HStack is always measured at its final geometry and never
@@ -109,6 +130,12 @@ struct NotchContentView: View {
                 )
         }
         .frame(width: expandedSize.width, height: expandedSize.height, alignment: .top)
+        .onChange(of: timer.flashPulse) {
+            flashOpacity = 1
+            withAnimation(.easeOut(duration: 0.5)) {
+                flashOpacity = 0
+            }
+        }
         // Hover is intentionally NOT detected here via SwiftUI `.onHover`.
         // `NotchPanelController`'s `HoverTrackingView` (an AppKit
         // `NSTrackingArea` on the window's container view) drives
