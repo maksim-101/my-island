@@ -47,6 +47,15 @@ struct DurationField: NSViewRepresentable {
             parent.minutes = clamped
         }
 
+        /// Push the value to the binding on every keystroke — WITHOUT rewriting
+        /// the field text mid-edit — so clicking Start (with no Enter first)
+        /// uses the just-typed value instead of the previous one. The field
+        /// text is only clamped/normalized on end-editing.
+        func controlTextDidChange(_ obj: Notification) {
+            guard let field, let value = Int(field.stringValue) else { return }
+            parent.minutes = min(max(value, parent.range.lowerBound), parent.range.upperBound)
+        }
+
         func controlTextDidEndEditing(_ obj: Notification) {
             commit(field?.integerValue ?? parent.minutes)
         }
