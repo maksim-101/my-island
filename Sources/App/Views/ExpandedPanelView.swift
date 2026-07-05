@@ -5,6 +5,12 @@ import AppKit
 struct ExpandedPanelView: View {
     let timer: TimerViewModel
 
+    // Owned here (not in NotchPanelController) so the clipboard slice stays
+    // fully decoupled from the HUD/Timer slices (documented trade). Because
+    // history is in-memory and clears on quit anyway (D-14), the negligible
+    // reset on a rare screen-parameter rebuild of this view is acceptable.
+    @State private var clipboard = ClipboardViewModel()
+
     var body: some View {
         VStack(alignment: .leading, spacing: Tokens.Spacing.md) {
             Text("my-island")
@@ -12,6 +18,7 @@ struct ExpandedPanelView: View {
                 .foregroundStyle(Tokens.Color.text)
 
             TimerPanelView(timer: timer)
+            ClipboardPanelView(clipboard: clipboard)
         }
         .padding(Tokens.Spacing.lg)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
