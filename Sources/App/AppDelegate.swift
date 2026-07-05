@@ -55,6 +55,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             win.styleMask = [.titled, .closable]
             win.isReleasedWhenClosed = false
             win.delegate = self
+            win.setContentSize(NSSize(width: 420, height: 180))
             win.center()
             settingsWindow = win
         }
