@@ -71,7 +71,11 @@ final class BrightnessProvider {
     }
 
     private func startPolling() {
-        pollTimer = Timer.scheduledTimer(withTimeInterval: 0.3, repeats: true) { [weak self] _ in
+        // 0.12s (~8 Hz): fine enough to track a held brightness key smoothly
+        // (the old 0.3s sampled too coarsely, so the HUD bar jumped in big
+        // steps and stuttered) while still a negligible number of private-API
+        // reads at idle.
+        pollTimer = Timer.scheduledTimer(withTimeInterval: 0.12, repeats: true) { [weak self] _ in
             Task { @MainActor in
                 guard let self else { return }
                 let previous = self.level

@@ -6,8 +6,21 @@ import MyIslandCore
 @MainActor
 final class NotchPanelController: NSObject {
     private var panels: [NotchPanel] = []
+    // One per notched screen: the collapsed notch's "extended pill" — a single
+    // continuous black shape spanning the cutout plus equal ear strips, with the
+    // running-timer readout on the right (see NotchBarView). The collapsed strip
+    // over the cutout is invisible to the eye, so the readout must live in the
+    // visible ears; drawing it as one shape avoids seams. Kept separate from the
+    // notch panel so it never participates in the open/HUD morph.
+    private var barPanels: [NSPanel] = []
     private let logger = Logger(subsystem: AppIdentity.bundleID, category: "NotchPanelController")
     nonisolated(unsafe) private var screenObserver: NSObjectProtocol?
+    // Observe-only mouse monitors (never intercept clicks) that let a hover over
+    // the timer wings drive the same dwell-to-expand as a hover over the notch.
+    // The wing pill window itself is click-through (ignoresMouseEvents), so it
+    // can't host tracking areas — position monitoring is how we detect the hover.
+    nonisolated(unsafe) private var localMouseMonitor: Any?
+    nonisolated(unsafe) private var globalMouseMonitor: Any?
 
     // Owned ONCE here (not inside `rebuildPanels`) so a running timer
     // survives a screen-parameter change — every rebuilt panel is injected
@@ -49,6 +62,19 @@ final class NotchPanelController: NSObject {
 
         rebuildPanels()
 
+        // Mouse-position monitors (observe-only — return the event unmodified /
+        // consume nothing) so a hover over a timer wing expands the notch like a
+        // hover over the notch itself. Global fires while another app is active
+        // (the usual case for this accessory app); local fires while our own
+        // Settings window is key. Mouse-moved monitors need no special TCC grant.
+        localMouseMonitor = NSEvent.addLocalMonitorForEvents(matching: .mouseMoved) { [weak self] event in
+            self?.handleMouseMoved()
+            return event
+        }
+        globalMouseMonitor = NSEvent.addGlobalMonitorForEvents(matching: .mouseMoved) { [weak self] _ in
+            self?.handleMouseMoved()
+        }
+
         screenObserver = NotificationCenter.default.addObserver(
             forName: NSApplication.didChangeScreenParametersNotification,
             object: nil,
@@ -64,6 +90,8 @@ final class NotchPanelController: NSObject {
         if let screenObserver {
             NotificationCenter.default.removeObserver(screenObserver)
         }
+        if let localMouseMonitor { NSEvent.removeMonitor(localMouseMonitor) }
+        if let globalMouseMonitor { NSEvent.removeMonitor(globalMouseMonitor) }
     }
 
     /// Rebuilds `panels` from the current `NSScreen.screens` (SHELL-05,
@@ -79,6 +107,8 @@ final class NotchPanelController: NSObject {
             panel.orderOut(nil)
         }
         panels.removeAll()
+        barPanels.forEach { $0.orderOut(nil) }
+        barPanels.removeAll()
 
         for screen in NSScreen.screens {
             guard let notchFrame = screen.notchFrame else {
@@ -94,6 +124,10 @@ final class NotchPanelController: NSObject {
             }
             panels.append(panel)
             panel.orderFrontRegardless()
+
+            let bar = Self.makeBarPanel(notchFrame: notchFrame, anchorMaxY: screen.frame.maxY, timer: timer, model: model)
+            barPanels.append(bar)
+            bar.orderFrontRegardless()
         }
 
         logger.info("Initialized with \(self.panels.count, privacy: .public) notch panel(s)")
@@ -164,11 +198,20 @@ final class NotchPanelController: NSObject {
             width: expandedWidth,
             height: expandedHeight
         )
-        hostingView.autoresizingMask = [.minXMargin, .maxXMargin, .minYMargin]
+        // Horizontal centering + top-pinning across window resizes is owned by
+        // `HoverTrackingView.resizeSubviews(withOldSize:)`, NOT an
+        // `autoresizingMask`. The mask corrupts this: because the hosting view
+        // is WIDER than the collapsed container (expandedWidth 2.2× the notch),
+        // AppKit's autoresizing snaps the overflowing view to x=0 on the
+        // collapsed→HUD-bump `setFrame` (height grows, width stays notch-sized),
+        // which right-shifts the centered HUD content into the clipped right
+        // half of the notch (only half the bump shows). Verified via an
+        // offscreen render harness reproducing the exact geometry.
         container.addSubview(hostingView)
         container.onHoverChange = { [weak panel] hovering in
             guard let panel else { return }
-            NotchPanelController.handleHoverChange(panel: panel, hovering: hovering)
+            panel.notchHovering = hovering
+            NotchPanelController.applyHover(panel: panel)
         }
         panel.contentView = container
 
@@ -180,6 +223,49 @@ final class NotchPanelController: NSObject {
         panel.ignoresMouseEvents = false
         panel.isReleasedWhenClosed = false
 
+        return panel
+    }
+
+    /// The non-interactive "extended pill" window: spans the notch cutout plus
+    /// an equal ear strip on each side, and hosts `NotchBarView`, which draws a
+    /// single continuous black `NotchShape` across the whole span (seamless — no
+    /// join with the notch) with the running-timer readout on the right. The
+    /// symmetric left strip keeps the extended notch balanced.
+    /// How far the extended pill reaches into each ear beyond the cutout. Wide
+    /// enough for the longest readout (e.g. a 180-minute countdown, "180:00");
+    /// equal on both sides so the extended notch reads symmetric.
+    private static let barEar: CGFloat = 84
+
+    /// Global-coordinate frame of the extended pill (also the wing hover
+    /// region), shared by `makeBarPanel` and the wing mouse-monitor.
+    private static func barFrame(notchFrame: NSRect, anchorMaxY: CGFloat) -> NSRect {
+        NSRect(
+            x: notchFrame.minX - barEar,
+            y: anchorMaxY - notchFrame.height,
+            width: notchFrame.width + barEar * 2,
+            height: notchFrame.height
+        )
+    }
+
+    private static func makeBarPanel(notchFrame: NSRect, anchorMaxY: CGFloat, timer: TimerViewModel, model: NotchViewModel) -> NSPanel {
+        let frame = barFrame(notchFrame: notchFrame, anchorMaxY: anchorMaxY)
+        let panel = NSPanel(contentRect: frame, styleMask: [.borderless, .nonactivatingPanel, .utilityWindow], backing: .buffered, defer: false)
+
+        let container = NSView(frame: NSRect(origin: .zero, size: frame.size))
+        container.autoresizesSubviews = true
+        let hosting = NSHostingView(rootView: NotchBarView(timer: timer, model: model))
+        hosting.frame = NSRect(origin: .zero, size: frame.size)
+        hosting.autoresizingMask = [.width, .height]
+        container.addSubview(hosting)
+        panel.contentView = container
+
+        panel.level = NSWindow.Level(rawValue: NSWindow.Level.mainMenu.rawValue + 3)
+        panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary, .ignoresCycle]
+        panel.isOpaque = false
+        panel.backgroundColor = .clear
+        panel.hasShadow = false
+        panel.ignoresMouseEvents = true   // readout only — never intercept clicks
+        panel.isReleasedWhenClosed = false
         return panel
     }
 
@@ -307,6 +393,35 @@ final class NotchPanelController: NSObject {
             DispatchQueue.main.asyncAfter(deadline: .now() + NotchLayout.hoverCollapseGrace, execute: work)
         }
     }
+
+    /// Updates each panel's `wingHovering` from the current mouse position: the
+    /// mouse is "over a wing" when a timer is running (so the pill is visible)
+    /// and the cursor is inside the extended-pill frame but outside the notch's
+    /// own tracking region (which the `NSTrackingArea` already owns). Only fires
+    /// the dwell logic on an actual change, so this is cheap on every move.
+    private func handleMouseMoved() {
+        let mouse = NSEvent.mouseLocation
+        for panel in panels {
+            let inBar = timer.isRunning
+                && Self.barFrame(notchFrame: panel.notchFrame, anchorMaxY: panel.anchorMaxY).contains(mouse)
+            let inNotch = Self.collapsedFrame(notchFrame: panel.notchFrame, anchorMaxY: panel.anchorMaxY).contains(mouse)
+            let wing = inBar && !inNotch
+            if panel.wingHovering != wing {
+                panel.wingHovering = wing
+                Self.applyHover(panel: panel)
+            }
+        }
+    }
+
+    /// Collapses the notch-tracking-area and wing-monitor hover sources into a
+    /// single dwell state, so moving the cursor between the notch and a wing
+    /// never reads as a leave (which would flicker the panel closed).
+    private static func applyHover(panel: NotchPanel) {
+        let hovering = panel.notchHovering || panel.wingHovering
+        guard hovering != panel.lastHoverApplied else { return }
+        panel.lastHoverApplied = hovering
+        handleHoverChange(panel: panel, hovering: hovering)
+    }
 }
 
 /// Tracks hover over the container's full bounds via AppKit's
@@ -317,6 +432,19 @@ final class NotchPanelController: NSObject {
 /// collapsed notch size and the expanded panel size.
 private final class HoverTrackingView: NSView {
     var onHoverChange: ((Bool) -> Void)?
+
+    /// Keeps the (wider-than-container) hosting subview horizontally centered
+    /// and top-pinned on every window resize, replacing the `autoresizingMask`
+    /// that corrupted the hosting view's x (snapping it to 0 on the
+    /// collapsed→HUD-bump resize, clipping the HUD to the notch's right half).
+    /// Does NOT call `super` — this view owns its single subview's geometry.
+    override func resizeSubviews(withOldSize oldSize: NSSize) {
+        guard let hosting = subviews.first else { return }
+        hosting.setFrameOrigin(NSPoint(
+            x: ((bounds.width - hosting.frame.width) / 2).rounded(),
+            y: bounds.height - hosting.frame.height
+        ))
+    }
 
     override func updateTrackingAreas() {
         super.updateTrackingAreas()
@@ -342,6 +470,11 @@ private final class NotchPanel: NSPanel {
     var pendingCollapse: DispatchWorkItem?
     var pendingDwellOpen: DispatchWorkItem?
     var pendingHoverClose: DispatchWorkItem?
+    // Two independent hover sources unified into one dwell state (see
+    // `applyHover`): the notch's `NSTrackingArea` and the wing mouse-monitor.
+    var notchHovering = false
+    var wingHovering = false
+    var lastHoverApplied = false
 
     // Purely non-activating (Dicticus pattern): the hotkey recorder now lives
     // in a dedicated, activated Settings window (AppDelegate.showSettings),

@@ -22,6 +22,10 @@ struct HUDView: View {
                     RoundedRectangle(cornerRadius: Tokens.Radius.sm)
                         .fill(Tokens.Color.text)
                         .frame(width: proxy.size.width * max(0, min(1, hud.level)))
+                        // Interpolate each level change so poll-driven brightness
+                        // updates ramp smoothly instead of jumping in visible
+                        // steps (fixes the stutter on rapid brightness keys).
+                        .animation(.easeOut(duration: 0.18), value: hud.level)
                 }
             }
             .frame(height: 4)

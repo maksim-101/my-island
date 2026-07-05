@@ -5,7 +5,13 @@ import SwiftUI
 /// and the SwiftUI content sizing in `NotchContentView` so they cannot drift.
 enum NotchLayout {
     static let expandedWidthMultiplier: CGFloat = 2.2
-    static let expandedHeight: CGFloat = 160
+    // Tall enough to show ExpandedPanelView's full content stack — title +
+    // Timer group (mode switch, ring/readout, and the preset/Start row) +
+    // Clipboard group. At 160 the preset row (incl. the "Start" button and
+    // duration stepper) and the entire Clipboard section were clipped below
+    // the panel's masked bottom edge, so a countdown could not be started
+    // (measured natural height at width 407 ≈ 272pt; verified via render harness).
+    static let expandedHeight: CGFloat = 280
     static let morphAnimation: Animation = .interactiveSpring(response: 0.38, dampingFraction: 0.8)
 
     /// Delay before the expanded content fades in, so it visually trails the

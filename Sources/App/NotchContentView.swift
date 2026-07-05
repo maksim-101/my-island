@@ -67,6 +67,15 @@ struct NotchContentView: View {
         return CGSize(width: collapsedSize.width, height: collapsedSize.height + NotchLayout.hudBumpHeight)
     }
 
+    /// Bottom rounding for the drawn shape while collapsed. The Ambient HUD
+    /// bump uses a smaller radius so its sides stay more vertical and the bump
+    /// reads flush with the notch width (the default 14 tapered the bump in,
+    /// making it look narrower than the notch); the idle notch keeps 14 to
+    /// match the physical camera housing's rounding.
+    private var collapsedBottomCornerRadius: CGFloat {
+        hud.isShowingHUD ? 8 : 14
+    }
+
     var body: some View {
         let shapeSize = model.isOpen ? expandedSize : collapsedShapeSize
         // The OUTER frame is a CONSTANT size (always expandedSize, regardless
@@ -83,7 +92,7 @@ struct NotchContentView: View {
         // `updateAnimatedWindowSize` has nothing to animate — only the
         // `NotchShape` inside morphs visually.
         ZStack(alignment: .top) {
-            NotchShape(topCornerRadius: 6, bottomCornerRadius: model.isOpen ? 24 : 14)
+            NotchShape(topCornerRadius: 6, bottomCornerRadius: model.isOpen ? 24 : collapsedBottomCornerRadius)
                 .fill(Color.black)
                 .frame(width: shapeSize.width, height: shapeSize.height)
                 .overlay(alignment: .top) {
@@ -102,20 +111,14 @@ struct NotchContentView: View {
                         // — hidden while the HUD is taking over. Never
                         // widens the fixed notch shape — content lives
                         // inside the existing halves.
-                        HStack(spacing: 0) {
-                            Color.clear
-                            Color.clear
-                            Group {
-                                if hud.isShowingHUD {
-                                    Color.clear
-                                } else {
-                                    TimerCollapsedView(timer: timer)
-                                }
-                            }
-                            .frame(maxWidth: .infinity, alignment: .trailing)
-                        }
-                        .padding(.horizontal, 6)
-                        .frame(height: collapsedSize.height)
+                        // The camera row itself is deliberately contentless: the
+                        // running-timer readout that used to sit in the right
+                        // half of this strip drew over the invisible camera
+                        // cutout, so it now lives in `EarTimerView` (the visible
+                        // ear right of the notch). Left half stays reserved for
+                        // Phase 5 Now Playing.
+                        Color.clear
+                            .frame(height: collapsedSize.height)
 
                         if hud.isShowingHUD {
                             HUDView(hud: hud)
@@ -128,7 +131,7 @@ struct NotchContentView: View {
             // A brief neutral/indigo flash on timer completion (D-11) — NEVER
             // amber (that's reserved for the Claude "needs you" attention
             // signal) and never a system notification.
-            NotchShape(topCornerRadius: 6, bottomCornerRadius: model.isOpen ? 24 : 14)
+            NotchShape(topCornerRadius: 6, bottomCornerRadius: model.isOpen ? 24 : collapsedBottomCornerRadius)
                 .fill(Tokens.Color.accent)
                 .frame(width: shapeSize.width, height: shapeSize.height)
                 .opacity(flashOpacity)
@@ -145,7 +148,7 @@ struct NotchContentView: View {
             ExpandedPanelView(timer: timer)
                 .frame(width: expandedSize.width, height: expandedSize.height, alignment: .topLeading)
                 .mask(alignment: .top) {
-                    NotchShape(topCornerRadius: 6, bottomCornerRadius: model.isOpen ? 24 : 14)
+                    NotchShape(topCornerRadius: 6, bottomCornerRadius: model.isOpen ? 24 : collapsedBottomCornerRadius)
                         .frame(width: shapeSize.width, height: shapeSize.height)
                 }
                 .opacity(model.isOpen ? 1 : 0)
