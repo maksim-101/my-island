@@ -97,12 +97,26 @@ final class CalendarProvider {
     /// Requests access when not yet determined; otherwise routes to System
     /// Settings — NEVER re-calls `requestFullAccessToEvents()` once
     /// denied/restricted (Pitfall 2, T-04-05).
+    ///
+    /// Checkpoint result (real Tahoe hardware, plan 04-02 Task 3): clicking
+    /// Grant Access from the shipped non-activating `NSPanel` produced NO
+    /// dialog and no visible reaction whatsoever — confirming Assumption A4
+    /// is FALSE (Open Question 1). The first request is therefore routed
+    /// through the same `.regular`-activation trick `AppDelegate.showSettings`
+    /// already uses for the KeyboardShortcuts conflict-alert modal (the
+    /// Dicticus pattern, Pitfall 3): briefly promote to `.regular` + activate
+    /// so the OS has an actual foreground app to anchor the TCC sheet to,
+    /// then revert to `.accessory` (this app's `LSUIElement` default) once
+    /// the request completes, so no Dock icon is left behind.
     func requestOrOpenSettings() {
         switch authorizationState {
         case .notDetermined:
+            NSApp.setActivationPolicy(.regular)
+            NSApp.activate(ignoringOtherApps: true)
             Task {
                 _ = await service.requestAccess()
                 refreshAuthState()
+                NSApp.setActivationPolicy(.accessory)
             }
         case .denied, .restricted:
             openSystemSettings()
