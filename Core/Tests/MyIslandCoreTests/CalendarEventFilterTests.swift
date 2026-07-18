@@ -42,9 +42,9 @@ import Foundation
     #expect(result)
 }
 
-@Test func pendingFireDatesSkipsAlreadyPastThresholdFor16MinutesOut() {
+@Test func pendingFireDatesSkipsAlreadyPastThresholdFor14MinutesOut() {
     let now = Date(timeIntervalSince1970: 0)
-    let eventStart = now.addingTimeInterval(16 * 60)
+    let eventStart = now.addingTimeInterval(14 * 60)
     let result = ThresholdScheduler.pendingFireDates(eventStart: eventStart, now: now)
     let expected = [eventStart.addingTimeInterval(-5 * 60), eventStart.addingTimeInterval(-60)]
     #expect(result == expected)
