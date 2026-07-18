@@ -52,3 +52,4 @@ targets:
         CFBundleDisplayName: my-island
         CFBundleName: my-island
         NSAppleEventsUsageDescription: my-island sends Apple Events to verify Automation permission and, in later phases, to reveal the iTerm2 pane of a waiting Claude Code session.
+        NSCalendarsFullAccessUsageDescription: my-island reads your calendar to show a countdown to your next meeting and a one-click join link.
