@@ -38,6 +38,12 @@ final class NotchPanelController: NSObject {
     private let brightnessProvider = BrightnessProvider()
     private let hud = HUDViewModel()
 
+    // Owned ONCE here too, alongside the other providers above — the
+    // Calendar auth state (and, from plan 04-03 on, the fetched next event)
+    // must persist across a screen-parameter rebuild and later feed the HUD.
+    // No HUD/threshold callback wiring yet (that lands in plan 04-04).
+    private let calendarProvider = CalendarProvider()
+
     override init() {
         super.init()
 
@@ -118,7 +124,7 @@ final class NotchPanelController: NSObject {
             }
 
             let model = NotchViewModel()
-            let panel = Self.makePanel(notchFrame: notchFrame, screen: screen, model: model, timer: timer)
+            let panel = Self.makePanel(notchFrame: notchFrame, screen: screen, model: model, timer: timer, calendar: calendarProvider)
             model.onOpenChange = { [weak self, weak panel] isOpen in
                 guard let self, let panel else { return }
                 self.applyFrame(to: panel, isOpen: isOpen)
@@ -138,7 +144,7 @@ final class NotchPanelController: NSObject {
         logger.info("Initialized with \(self.panels.count, privacy: .public) notch panel(s)")
     }
 
-    private static func makePanel(notchFrame: NSRect, screen: NSScreen, model: NotchViewModel, timer: TimerViewModel) -> NotchPanel {
+    private static func makePanel(notchFrame: NSRect, screen: NSScreen, model: NotchViewModel, timer: TimerViewModel, calendar: CalendarProvider) -> NotchPanel {
         let anchorMaxY = screen.frame.maxY
         let collapsedFrame = Self.collapsedFrame(notchFrame: notchFrame, anchorMaxY: anchorMaxY)
         let styleMask: NSWindow.StyleMask = [.borderless, .nonactivatingPanel, .utilityWindow]
@@ -153,7 +159,7 @@ final class NotchPanelController: NSObject {
         panel.notchFrame = notchFrame
         panel.anchorMaxY = anchorMaxY
 
-        let hostingView = NSHostingView(rootView: NotchContentView(model: model, notchSize: notchFrame.size, timer: timer))
+        let hostingView = NSHostingView(rootView: NotchContentView(model: model, notchSize: notchFrame.size, timer: timer, calendar: calendar))
         // Decouple from the window's Auto Layout / constraint-update cycle:
         // `applyFrame` resizes the panel manually via `setFrame`, and letting
         // the hosting view participate in constraint-based sizing causes an

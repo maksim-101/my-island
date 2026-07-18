@@ -4,6 +4,7 @@ import AppKit
 @MainActor
 struct ExpandedPanelView: View {
     let timer: TimerViewModel
+    let calendar: CalendarProvider
 
     // Owned here (not in NotchPanelController) so the clipboard slice stays
     // fully decoupled from the HUD/Timer slices (documented trade). Because
@@ -18,6 +19,7 @@ struct ExpandedPanelView: View {
                 .foregroundStyle(Tokens.Color.text)
 
             TimerPanelView(timer: timer)
+            CalendarPanelView(calendar: calendar)
             // Let the clipboard take the panel's remaining vertical space so its
             // scroll area actually uses the height (otherwise the slack becomes
             // empty space at the bottom and only ~2 rows show).
