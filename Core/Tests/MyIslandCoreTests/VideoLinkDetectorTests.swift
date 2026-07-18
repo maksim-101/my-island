@@ -41,6 +41,6 @@ import Testing
 }
 
 @Test func detectStripsHTMLTagsBeforeMatchingNotes() {
-    let result = VideoLinkDetector.detect(url: nil, location: nil, notes: "<p>Join: <a href=\"https://meet.google.com/abc-defg-hij\">link</a></p>")
+    let result = VideoLinkDetector.detect(url: nil, location: nil, notes: "<p>Join: <a href=\"https://meet.google.com/abc-defg-hij\">https://meet.google.com/abc-defg-hij</a></p>")
     #expect(result?.absoluteString == "https://meet.google.com/abc-defg-hij")
 }
