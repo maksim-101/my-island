@@ -20,13 +20,30 @@ actor CalendarService {
     /// `.notDetermined`. Calling `requestFullAccessToEvents()` again after a
     /// denial returns `false` immediately with no OS prompt (Pitfall 2) — the
     /// caller must check status first and route denied/restricted elsewhere.
+    ///
+    /// DIAGNOSTIC INSTRUMENTATION (round 3, checkpoint still failing after the
+    /// round-2 `.regular`-activation fallback): brackets the actual
+    /// `requestFullAccessToEvents()` call with NSLog so a `log stream` capture
+    /// shows whether this actor method is even reached, what status it read
+    /// at entry, and what the completion result/error was.
     func requestAccess() async -> Bool {
-        switch EKEventStore.authorizationStatus(for: .event) {
+        let status = EKEventStore.authorizationStatus(for: .event)
+        NSLog("[CalendarService] requestAccess() entry, authorizationStatus=%@", String(describing: status))
+        switch status {
         case .fullAccess, .authorized:
             return true
         case .notDetermined:
-            return (try? await eventStore.requestFullAccessToEvents()) ?? false
+            NSLog("[CalendarService] status is .notDetermined — invoking requestFullAccessToEvents()")
+            do {
+                let granted = try await eventStore.requestFullAccessToEvents()
+                NSLog("[CalendarService] requestFullAccessToEvents() completed: granted=%@", String(granted))
+                return granted
+            } catch {
+                NSLog("[CalendarService] requestFullAccessToEvents() threw: %@", String(describing: error))
+                return false
+            }
         case .denied, .restricted, .writeOnly:
+            NSLog("[CalendarService] status is denied/restricted/writeOnly — NOT re-requesting (Pitfall 2)")
             return false
         @unknown default:
             return false
@@ -98,30 +115,93 @@ final class CalendarProvider {
     /// Settings — NEVER re-calls `requestFullAccessToEvents()` once
     /// denied/restricted (Pitfall 2, T-04-05).
     ///
-    /// Checkpoint result (real Tahoe hardware, plan 04-02 Task 3): clicking
-    /// Grant Access from the shipped non-activating `NSPanel` produced NO
-    /// dialog and no visible reaction whatsoever — confirming Assumption A4
-    /// is FALSE (Open Question 1). The first request is therefore routed
-    /// through the same `.regular`-activation trick `AppDelegate.showSettings`
-    /// already uses for the KeyboardShortcuts conflict-alert modal (the
-    /// Dicticus pattern, Pitfall 3): briefly promote to `.regular` + activate
-    /// so the OS has an actual foreground app to anchor the TCC sheet to,
-    /// then revert to `.accessory` (this app's `LSUIElement` default) once
-    /// the request completes, so no Dock icon is left behind.
+    /// Checkpoint result (real Tahoe hardware, plan 04-02 Task 3, round 1):
+    /// clicking Grant Access from the shipped non-activating `NSPanel`
+    /// produced NO dialog and no visible reaction whatsoever — confirming
+    /// Assumption A4 is FALSE (Open Question 1).
+    ///
+    /// Round 2 fix (`.regular`-activation, calling `requestAccess()`
+    /// synchronously in the very next line after `activate()`) ALSO produced
+    /// no dialog. Leading theory going into round 3: `setActivationPolicy`/
+    /// `activate(ignoringOtherApps:)` do not synchronously bring the app
+    /// frontmost before the next line runs — TCC may still see a
+    /// non-foreground requester at the moment `requestFullAccessToEvents()`
+    /// actually fires. Round 3 fix: wait for an actual foreground
+    /// confirmation (`NSApplication.didBecomeActiveNotification`) before
+    /// invoking the request, with a 0.3s fallback timer in case the
+    /// notification doesn't fire (e.g. the app was already active).
     func requestOrOpenSettings() {
+        NSLog(
+            "[CalendarProvider] requestOrOpenSettings() invoked, authorizationState=%@, activationPolicy(before)=%@, isActive(before)=%@",
+            String(describing: authorizationState),
+            String(describing: NSApp.activationPolicy()),
+            String(NSApp.isActive)
+        )
         switch authorizationState {
         case .notDetermined:
-            NSApp.setActivationPolicy(.regular)
-            NSApp.activate(ignoringOtherApps: true)
-            Task {
-                _ = await service.requestAccess()
-                refreshAuthState()
-                NSApp.setActivationPolicy(.accessory)
-            }
+            activateThenRequest()
         case .denied, .restricted:
             openSystemSettings()
         case .granted:
             break
+        }
+    }
+
+    /// Promotes to `.regular` + activates, then waits for an actual
+    /// foreground-confirmation signal (not just the next run-loop tick)
+    /// before invoking the privacy-gated request — see round 3 rationale
+    /// above `requestOrOpenSettings()`.
+    private func activateThenRequest() {
+        NSApp.setActivationPolicy(.regular)
+        NSApp.activate(ignoringOtherApps: true)
+        NSLog(
+            "[CalendarProvider] set .regular + activate() called, activationPolicy(immediately after)=%@, isActive(immediately after)=%@",
+            String(describing: NSApp.activationPolicy()),
+            String(NSApp.isActive)
+        )
+
+        var didFire = false
+        var observer: NSObjectProtocol?
+        let fireOnce: (String) -> Void = { [weak self] source in
+            guard !didFire else { return }
+            didFire = true
+            if let observer { NotificationCenter.default.removeObserver(observer) }
+            NSLog(
+                "[CalendarProvider] foreground-confirmation source=%@, isActive(at fire)=%@ — invoking request",
+                source, String(NSApp.isActive)
+            )
+            self?.performRequest()
+        }
+
+        observer = NotificationCenter.default.addObserver(
+            forName: NSApplication.didBecomeActiveNotification,
+            object: nil,
+            queue: .main
+        ) { _ in
+            fireOnce("didBecomeActiveNotification")
+        }
+
+        // Safety net: if the app was already active (no notification will
+        // fire) or the notification is otherwise missed, still proceed after
+        // one run-loop cycle's worth of settle time rather than hanging
+        // forever.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+            fireOnce("fallback-timeout-0.3s")
+        }
+    }
+
+    private func performRequest() {
+        NSLog(
+            "[CalendarProvider] about to call requestAccess(), activationPolicy=%@, isActive=%@",
+            String(describing: NSApp.activationPolicy()),
+            String(NSApp.isActive)
+        )
+        Task {
+            let granted = await service.requestAccess()
+            NSLog("[CalendarProvider] requestAccess() returned granted=%@", String(granted))
+            refreshAuthState()
+            NSApp.setActivationPolicy(.accessory)
+            NSLog("[CalendarProvider] reverted activationPolicy to .accessory")
         }
     }
 

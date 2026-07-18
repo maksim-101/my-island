@@ -1,4 +1,5 @@
 import SwiftUI
+import Foundation
 
 /// Expanded-panel Calendar group (CAL-01, D-03). This plan renders only the
 /// denied/not-determined access-gate state; `.granted` is a placeholder
@@ -31,6 +32,7 @@ struct CalendarPanelView: View {
                 .foregroundStyle(Tokens.Color.textMuted)
 
             Button {
+                NSLog("[CalendarPanelView] Grant Access button action fired")
                 calendar.requestOrOpenSettings()
             } label: {
                 Text("Grant Access")
