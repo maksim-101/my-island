@@ -491,6 +491,25 @@ private final class HoverTrackingView: NSView {
 
     override func mouseEntered(with event: NSEvent) { onHoverChange?(true) }
     override func mouseExited(with event: NSEvent) { onHoverChange?(false) }
+
+    // DIAGNOSTIC ONLY (plan 04-02 checkpoint round 4): the Calendar group's
+    // Grant Access button never fires its action closure, and the log
+    // capture from round 3 shows no CalendarProvider/CalendarPanelView log
+    // line at all after launch — the click event may never reach the
+    // SwiftUI hierarchy in the first place. These overrides are pure
+    // observation (call `super` immediately, never consume/alter the
+    // event) so normal hit-testing/click behavior is unchanged; they only
+    // NSLog what AppKit itself sees at this container's level.
+    override func hitTest(_ point: NSPoint) -> NSView? {
+        let result = super.hitTest(point)
+        NSLog("[HoverTrackingView] hitTest(%@) -> %@", NSStringFromPoint(point), result.map { String(describing: type(of: $0)) } ?? "nil")
+        return result
+    }
+
+    override func mouseDown(with event: NSEvent) {
+        NSLog("[HoverTrackingView] mouseDown at window-point=%@", NSStringFromPoint(event.locationInWindow))
+        super.mouseDown(with: event)
+    }
 }
 
 /// Each screen's panel owns its own `NotchViewModel` (IN-02) — hovering or
