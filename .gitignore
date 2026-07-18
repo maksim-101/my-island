@@ -5,3 +5,4 @@ Core/.build/
 .swiftpm/
 DerivedData/
 .DS_Store
+.planning/research/.cache/
