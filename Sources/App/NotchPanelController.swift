@@ -368,12 +368,27 @@ final class NotchPanelController: NSObject {
         panel.pendingCollapse?.cancel()
         panel.pendingCollapse = nil
 
+        // DIAGNOSTIC ONLY (plan 04-02 checkpoint round 5): correlate frame
+        // changes against the hover-transition log in NotchViewModel and the
+        // click-probe log lines from round 4 — testing whether the panel is
+        // collapsing right around the moment a click on Grant Access lands.
+        let frame = resolvedFrame(for: panel)
+        NSLog(
+            "[NotchPanelController] applyFrame isOpen=%@ at %.3f resolvedFrame=%@ path=%@",
+            String(isOpen), Date().timeIntervalSince1970, NSStringFromRect(frame), isOpen ? "immediate-open" : "deferred-collapse-scheduled"
+        )
+
         if isOpen {
-            panel.setFrame(resolvedFrame(for: panel), display: true)
+            panel.setFrame(frame, display: true)
         } else {
             let work = DispatchWorkItem { [weak self, weak panel] in
-                guard let self, let panel, panel.viewModel?.isOpen != true else { return }
-                panel.setFrame(self.resolvedFrame(for: panel), display: true)
+                guard let self, let panel, panel.viewModel?.isOpen != true else {
+                    NSLog("[NotchPanelController] deferred-collapse work item CANCELLED/skipped at %.3f (isOpen became true again)", Date().timeIntervalSince1970)
+                    return
+                }
+                let collapseFrame = self.resolvedFrame(for: panel)
+                NSLog("[NotchPanelController] deferred-collapse FIRING at %.3f frame=%@", Date().timeIntervalSince1970, NSStringFromRect(collapseFrame))
+                panel.setFrame(collapseFrame, display: true)
             }
             panel.pendingCollapse = work
             DispatchQueue.main.asyncAfter(deadline: .now() + NotchLayout.collapseWindowDelay, execute: work)
@@ -404,6 +419,9 @@ final class NotchPanelController: NSObject {
 
         guard let model = panel.viewModel else { return }
 
+        // DIAGNOSTIC ONLY (plan 04-02 checkpoint round 5).
+        NSLog("[NotchPanelController] handleHoverChange hovering=%@ at %.3f", String(hovering), Date().timeIntervalSince1970)
+
         if hovering {
             model.hoverBegan()
             let work = DispatchWorkItem { [weak panel] in
@@ -417,6 +435,7 @@ final class NotchPanelController: NSObject {
         } else {
             let work = DispatchWorkItem { [weak panel] in
                 guard let model = panel?.viewModel else { return }
+                NSLog("[NotchPanelController] hoverCollapseGrace elapsed -> hoverEnded() firing at %.3f", Date().timeIntervalSince1970)
                 withAnimation(NotchLayout.morphAnimation) {
                     model.hoverEnded()
                 }
@@ -452,6 +471,11 @@ final class NotchPanelController: NSObject {
         let hovering = panel.notchHovering || panel.wingHovering
         guard hovering != panel.lastHoverApplied else { return }
         panel.lastHoverApplied = hovering
+        // DIAGNOSTIC ONLY (plan 04-02 checkpoint round 5).
+        NSLog(
+            "[NotchPanelController] applyHover -> hovering=%@ (notchHovering=%@ wingHovering=%@) at %.3f",
+            String(hovering), String(panel.notchHovering), String(panel.wingHovering), Date().timeIntervalSince1970
+        )
         handleHoverChange(panel: panel, hovering: hovering)
     }
 }
