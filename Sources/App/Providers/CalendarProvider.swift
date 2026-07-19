@@ -189,6 +189,12 @@ final class CalendarProvider {
     /// re-querying EventKit (Pattern 4, Pitfall 7).
     private(set) var countdownText: String = ""
 
+    /// Fired exactly once per 15m/5m/1m threshold per event (Pattern 3) with a
+    /// "{title} in {N}m" string — `NotchPanelController` wires this into
+    /// `hud.showMeeting(text:)`, the same idiom as `volumeProvider.onChange`/
+    /// `brightnessProvider.onChange`.
+    var onThresholdCrossed: ((String) -> Void)?
+
     private let service = CalendarService()
     private let logger = Logger(subsystem: AppIdentity.bundleID, category: "CalendarProvider")
 
@@ -208,6 +214,14 @@ final class CalendarProvider {
     nonisolated(unsafe) private var fallbackTimer: Timer?
     nonisolated(unsafe) private var eventStoreChangedObserver: NSObjectProtocol?
     nonisolated(unsafe) private var dayChangedObserver: NSObjectProtocol?
+
+    // Single soonest-fire-date timer (re-armed after every fire), plus the
+    // per-event fired-threshold tracking (Pattern 3) — scoped to
+    // `firedThresholdsEventID` so a no-op `EKEventStoreChanged` (nextEvent
+    // unchanged) never re-fires a threshold already shown for this event.
+    nonisolated(unsafe) private var thresholdTimer: Timer?
+    private var firedThresholdsEventID: String?
+    private var firedThresholds: Set<Date> = []
 
     init() {
         authorizationState = Self.map(status: EKEventStore.authorizationStatus(for: .event))
@@ -238,6 +252,7 @@ final class CalendarProvider {
     deinit {
         tickTimer?.invalidate()
         fallbackTimer?.invalidate()
+        thresholdTimer?.invalidate()
         if let eventStoreChangedObserver {
             NotificationCenter.default.removeObserver(eventStoreChangedObserver)
         }
@@ -254,6 +269,7 @@ final class CalendarProvider {
         guard authorizationState == .granted else {
             nextEvent = nil
             computeCountdownText()
+            rescheduleThresholds()
             return
         }
         Task {
@@ -261,7 +277,60 @@ final class CalendarProvider {
             let event = await service.fetchNextUpcomingEvent(selectedCalendarIDs: ids)
             self.nextEvent = event
             self.computeCountdownText()
+            self.rescheduleThresholds()
         }
+    }
+
+    // MARK: - 15m/5m/1m threshold-bump scheduling (Pattern 3)
+
+    /// Invalidates any pending threshold timer and re-derives the pending fire
+    /// dates from the current `nextEvent` via `ThresholdScheduler.pendingFireDates`
+    /// — called whenever `nextEvent` changes (event rescheduled, cancelled, a
+    /// closer event appears, or auth revoked). Clears the fired-threshold set
+    /// only when the event's identity actually changes, so a no-op
+    /// `EKEventStoreChanged` never re-fires an already-shown threshold.
+    private func rescheduleThresholds() {
+        thresholdTimer?.invalidate()
+        thresholdTimer = nil
+
+        guard let event = nextEvent else {
+            firedThresholdsEventID = nil
+            firedThresholds = []
+            return
+        }
+
+        if firedThresholdsEventID != event.id {
+            firedThresholdsEventID = event.id
+            firedThresholds = []
+        }
+
+        armNextThreshold(for: event)
+    }
+
+    /// Arms a one-shot timer for the soonest not-yet-fired threshold, or does
+    /// nothing if every threshold for this event has already fired/passed.
+    private func armNextThreshold(for event: CalendarEventModel) {
+        let pending = ThresholdScheduler.pendingFireDates(eventStart: event.startDate, now: .now)
+            .filter { !firedThresholds.contains($0) }
+        guard let next = pending.first else { return }
+
+        let interval = max(0, next.timeIntervalSinceNow)
+        thresholdTimer = Timer.scheduledTimer(withTimeInterval: interval, repeats: false) { [weak self] _ in
+            Task { @MainActor in self?.fireThreshold(fireDate: next, event: event) }
+        }
+    }
+
+    /// Records the fired date, invokes `onThresholdCrossed` with the
+    /// "{title} in {N}m" text (title truncation is HUDPillView's job via
+    /// `.lineLimit(1)`), then arms the next pending threshold for the same
+    /// event. Guards against a stale timer firing after `nextEvent` has
+    /// already moved on to a different event.
+    private func fireThreshold(fireDate: Date, event: CalendarEventModel) {
+        guard nextEvent?.id == event.id else { return }
+        firedThresholds.insert(fireDate)
+        let minutes = max(1, Int((event.startDate.timeIntervalSince(fireDate) / 60).rounded()))
+        onThresholdCrossed?("\(event.title) in \(minutes)m")
+        armNextThreshold(for: event)
     }
 
     // MARK: - Per-calendar selection (Task 3)

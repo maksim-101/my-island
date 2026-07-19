@@ -68,6 +68,16 @@ final class NotchPanelController: NSObject {
         // window — the pill window is always present and shows/hides its content
         // as SwiftUI observes `hud.isShowingHUD`.
 
+        // Meeting bump (CAL-01/D-02): same [weak self] guard-let idiom as
+        // volumeProvider.onChange/brightnessProvider.onChange above — no new
+        // panel window, the bump reuses the existing detached hudPanels.
+        // calendarProvider's own init() already kicks off the initial
+        // fetch/scheduling when authorization is already granted.
+        calendarProvider.onThresholdCrossed = { [weak self] text in
+            guard let self else { return }
+            self.hud.showMeeting(text: text)
+        }
+
         rebuildPanels()
 
         // Mouse-position monitors (observe-only — return the event unmodified /
