@@ -373,9 +373,8 @@ final class NotchPanelController: NSObject {
         // click-probe log lines from round 4 — testing whether the panel is
         // collapsing right around the moment a click on Grant Access lands.
         let frame = resolvedFrame(for: panel)
-        NSLog(
-            "[NotchPanelController] applyFrame isOpen=%@ at %.3f resolvedFrame=%@ path=%@",
-            String(isOpen), Date().timeIntervalSince1970, NSStringFromRect(frame), isOpen ? "immediate-open" : "deferred-collapse-scheduled"
+        DebugLog.write(
+            "[NotchPanelController] applyFrame isOpen=\(isOpen) resolvedFrame=\(NSStringFromRect(frame)) path=\(isOpen ? "immediate-open" : "deferred-collapse-scheduled")"
         )
 
         if isOpen {
@@ -383,11 +382,11 @@ final class NotchPanelController: NSObject {
         } else {
             let work = DispatchWorkItem { [weak self, weak panel] in
                 guard let self, let panel, panel.viewModel?.isOpen != true else {
-                    NSLog("[NotchPanelController] deferred-collapse work item CANCELLED/skipped at %.3f (isOpen became true again)", Date().timeIntervalSince1970)
+                    DebugLog.write("[NotchPanelController] deferred-collapse work item CANCELLED/skipped (isOpen became true again)")
                     return
                 }
                 let collapseFrame = self.resolvedFrame(for: panel)
-                NSLog("[NotchPanelController] deferred-collapse FIRING at %.3f frame=%@", Date().timeIntervalSince1970, NSStringFromRect(collapseFrame))
+                DebugLog.write("[NotchPanelController] deferred-collapse FIRING frame=\(NSStringFromRect(collapseFrame))")
                 panel.setFrame(collapseFrame, display: true)
             }
             panel.pendingCollapse = work
@@ -420,7 +419,7 @@ final class NotchPanelController: NSObject {
         guard let model = panel.viewModel else { return }
 
         // DIAGNOSTIC ONLY (plan 04-02 checkpoint round 5).
-        NSLog("[NotchPanelController] handleHoverChange hovering=%@ at %.3f", String(hovering), Date().timeIntervalSince1970)
+        DebugLog.write("[NotchPanelController] handleHoverChange hovering=\(hovering)")
 
         if hovering {
             model.hoverBegan()
@@ -435,7 +434,7 @@ final class NotchPanelController: NSObject {
         } else {
             let work = DispatchWorkItem { [weak panel] in
                 guard let model = panel?.viewModel else { return }
-                NSLog("[NotchPanelController] hoverCollapseGrace elapsed -> hoverEnded() firing at %.3f", Date().timeIntervalSince1970)
+                DebugLog.write("[NotchPanelController] hoverCollapseGrace elapsed -> hoverEnded() firing")
                 withAnimation(NotchLayout.morphAnimation) {
                     model.hoverEnded()
                 }
@@ -472,9 +471,8 @@ final class NotchPanelController: NSObject {
         guard hovering != panel.lastHoverApplied else { return }
         panel.lastHoverApplied = hovering
         // DIAGNOSTIC ONLY (plan 04-02 checkpoint round 5).
-        NSLog(
-            "[NotchPanelController] applyHover -> hovering=%@ (notchHovering=%@ wingHovering=%@) at %.3f",
-            String(hovering), String(panel.notchHovering), String(panel.wingHovering), Date().timeIntervalSince1970
+        DebugLog.write(
+            "[NotchPanelController] applyHover -> hovering=\(hovering) (notchHovering=\(panel.notchHovering) wingHovering=\(panel.wingHovering))"
         )
         handleHoverChange(panel: panel, hovering: hovering)
     }
@@ -516,22 +514,19 @@ private final class HoverTrackingView: NSView {
     override func mouseEntered(with event: NSEvent) { onHoverChange?(true) }
     override func mouseExited(with event: NSEvent) { onHoverChange?(false) }
 
-    // DIAGNOSTIC ONLY (plan 04-02 checkpoint round 4): the Calendar group's
-    // Grant Access button never fires its action closure, and the log
-    // capture from round 3 shows no CalendarProvider/CalendarPanelView log
-    // line at all after launch — the click event may never reach the
-    // SwiftUI hierarchy in the first place. These overrides are pure
-    // observation (call `super` immediately, never consume/alter the
-    // event) so normal hit-testing/click behavior is unchanged; they only
-    // NSLog what AppKit itself sees at this container's level.
-    override func hitTest(_ point: NSPoint) -> NSView? {
-        let result = super.hitTest(point)
-        NSLog("[HoverTrackingView] hitTest(%@) -> %@", NSStringFromPoint(point), result.map { String(describing: type(of: $0)) } ?? "nil")
-        return result
-    }
-
+    // DIAGNOSTIC ONLY (plan 04-02 checkpoint round 4/6): round 4 added a
+    // `hitTest(_:)` override too, to rule out the click never reaching the
+    // SwiftUI hierarchy at all. Round 5's un-redacted Apple EventKit system
+    // log already answered that question (the click DOES reach the Button
+    // and DOES invoke `requestFullAccessToEvents()` — the real bug was TCC
+    // returning a synchronous NO, fixed in `CalendarProvider`), so `hitTest`
+    // — which fires on every mouse move and would flood the round-6 file log
+    // — is removed. `mouseDown` is kept (fires only on actual clicks) and
+    // switched to `DebugLog` (file-based, see round 5 rationale there) for
+    // consistency. Pure observation — calls `super` immediately, never
+    // consumes/alters the event.
     override func mouseDown(with event: NSEvent) {
-        NSLog("[HoverTrackingView] mouseDown at window-point=%@", NSStringFromPoint(event.locationInWindow))
+        DebugLog.write("[HoverTrackingView] mouseDown at window-point=\(NSStringFromPoint(event.locationInWindow))")
         super.mouseDown(with: event)
     }
 }

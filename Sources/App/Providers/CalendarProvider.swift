@@ -21,29 +21,31 @@ actor CalendarService {
     /// denial returns `false` immediately with no OS prompt (Pitfall 2) — the
     /// caller must check status first and route denied/restricted elsewhere.
     ///
-    /// DIAGNOSTIC INSTRUMENTATION (round 3, checkpoint still failing after the
-    /// round-2 `.regular`-activation fallback): brackets the actual
-    /// `requestFullAccessToEvents()` call with NSLog so a `log stream` capture
-    /// shows whether this actor method is even reached, what status it read
-    /// at entry, and what the completion result/error was.
+    /// DIAGNOSTIC INSTRUMENTATION (round 6 — file-based, see `DebugLog`):
+    /// round 5's real-hardware capture (Apple's own un-redacted EventKit
+    /// system log, not ours) proved this method IS reached, DOES read
+    /// `.notDetermined`, and DOES call the real `requestFullAccessToEvents()`
+    /// — but TCC returned a synchronous NO in ~4ms, too fast for a
+    /// human-seen dialog. That pointed at the caller's activation context,
+    /// not this method, so the round 6 fix lives in `CalendarProvider`.
     func requestAccess() async -> Bool {
         let status = EKEventStore.authorizationStatus(for: .event)
-        NSLog("[CalendarService] requestAccess() entry, authorizationStatus=%@", String(describing: status))
+        DebugLog.write("[CalendarService] requestAccess() entry, authorizationStatus=\(status)")
         switch status {
         case .fullAccess, .authorized:
             return true
         case .notDetermined:
-            NSLog("[CalendarService] status is .notDetermined — invoking requestFullAccessToEvents()")
+            DebugLog.write("[CalendarService] status is .notDetermined — invoking requestFullAccessToEvents()")
             do {
                 let granted = try await eventStore.requestFullAccessToEvents()
-                NSLog("[CalendarService] requestFullAccessToEvents() completed: granted=%@", String(granted))
+                DebugLog.write("[CalendarService] requestFullAccessToEvents() completed: granted=\(granted)")
                 return granted
             } catch {
-                NSLog("[CalendarService] requestFullAccessToEvents() threw: %@", String(describing: error))
+                DebugLog.write("[CalendarService] requestFullAccessToEvents() threw: \(error)")
                 return false
             }
         case .denied, .restricted, .writeOnly:
-            NSLog("[CalendarService] status is denied/restricted/writeOnly — NOT re-requesting (Pitfall 2)")
+            DebugLog.write("[CalendarService] status is denied/restricted/writeOnly — NOT re-requesting (Pitfall 2)")
             return false
         @unknown default:
             return false
@@ -86,6 +88,11 @@ final class CalendarProvider {
     private let service = CalendarService()
     private let logger = Logger(subsystem: AppIdentity.bundleID, category: "CalendarProvider")
 
+    /// Round 6: the temporary real `NSWindow` created solely so TCC has an
+    /// actual key window to anchor the permission sheet to. Held for the
+    /// duration of a single request, then closed and released.
+    private var accessRequestWindow: NSWindow?
+
     init() {
         authorizationState = Self.map(status: EKEventStore.authorizationStatus(for: .event))
     }
@@ -115,27 +122,27 @@ final class CalendarProvider {
     /// Settings — NEVER re-calls `requestFullAccessToEvents()` once
     /// denied/restricted (Pitfall 2, T-04-05).
     ///
-    /// Checkpoint result (real Tahoe hardware, plan 04-02 Task 3, round 1):
-    /// clicking Grant Access from the shipped non-activating `NSPanel`
-    /// produced NO dialog and no visible reaction whatsoever — confirming
-    /// Assumption A4 is FALSE (Open Question 1).
-    ///
-    /// Round 2 fix (`.regular`-activation, calling `requestAccess()`
-    /// synchronously in the very next line after `activate()`) ALSO produced
-    /// no dialog. Leading theory going into round 3: `setActivationPolicy`/
-    /// `activate(ignoringOtherApps:)` do not synchronously bring the app
-    /// frontmost before the next line runs — TCC may still see a
-    /// non-foreground requester at the moment `requestFullAccessToEvents()`
-    /// actually fires. Round 3 fix: wait for an actual foreground
-    /// confirmation (`NSApplication.didBecomeActiveNotification`) before
-    /// invoking the request, with a 0.3s fallback timer in case the
-    /// notification doesn't fire (e.g. the app was already active).
+    /// History (real Tahoe hardware, plan 04-02 Task 3 checkpoint):
+    /// - Round 1: no dialog, no reaction at all from the shipped
+    ///   non-activating `NSPanel` — confirmed Assumption A4 is FALSE.
+    /// - Round 2: `.regular`-activation, calling `requestAccess()`
+    ///   synchronously right after `activate()` — still no dialog.
+    /// - Round 3: waited for `didBecomeActiveNotification` before
+    ///   requesting (with a 0.3s fallback) — still no dialog.
+    /// - Round 4/5: click probes proved the click DOES reach the Button
+    ///   (round 5's un-redacted EventKit system log showed
+    ///   `requestFullAccessToEvents()` IS invoked and TCC returns a
+    ///   synchronous NO in ~4ms — far too fast for a human-seen dialog).
+    /// - Round 6 theory: TCC's eligibility check for showing a permission
+    ///   sheet requires an actual KEY window, not just `NSApp.isActive`/
+    ///   `.regular` policy — every window this app owns is a
+    ///   non-main-capable `NSPanel` (`canBecomeMain == false`), so
+    ///   `activate()` alone never produces one. Fix: create a minimal real
+    ///   `NSWindow`, make it key, wait for actual key-window confirmation,
+    ///   THEN fire the request.
     func requestOrOpenSettings() {
-        NSLog(
-            "[CalendarProvider] requestOrOpenSettings() invoked, authorizationState=%@, activationPolicy(before)=%@, isActive(before)=%@",
-            String(describing: authorizationState),
-            String(describing: NSApp.activationPolicy()),
-            String(NSApp.isActive)
+        DebugLog.write(
+            "[CalendarProvider] requestOrOpenSettings() invoked, authorizationState=\(authorizationState), activationPolicy(before)=\(NSApp.activationPolicy()), isActive(before)=\(NSApp.isActive)"
         )
         switch authorizationState {
         case .notDetermined:
@@ -147,18 +154,38 @@ final class CalendarProvider {
         }
     }
 
-    /// Promotes to `.regular` + activates, then waits for an actual
-    /// foreground-confirmation signal (not just the next run-loop tick)
-    /// before invoking the privacy-gated request — see round 3 rationale
-    /// above `requestOrOpenSettings()`.
+    /// Promotes to `.regular` + activates, creates a minimal real `NSWindow`
+    /// and makes it key (round 6 fix — see rationale above
+    /// `requestOrOpenSettings()`), then waits for actual key-window
+    /// confirmation before invoking the privacy-gated request.
     private func activateThenRequest() {
         NSApp.setActivationPolicy(.regular)
         NSApp.activate(ignoringOtherApps: true)
-        NSLog(
-            "[CalendarProvider] set .regular + activate() called, activationPolicy(immediately after)=%@, isActive(immediately after)=%@",
-            String(describing: NSApp.activationPolicy()),
-            String(NSApp.isActive)
+        DebugLog.write(
+            "[CalendarProvider] set .regular + activate() called, activationPolicy(immediately after)=\(NSApp.activationPolicy()), isActive(immediately after)=\(NSApp.isActive)"
         )
+
+        // A genuine NSWindow (NOT an NSPanel with .nonactivatingPanel) so it
+        // CAN become key/main — every window this app otherwise owns is a
+        // non-main-capable NSPanel (see NotchPanel.canBecomeMain == false).
+        // Visually unobtrusive: 1x1pt, fully transparent, no shadow — its
+        // only job is to give TCC a real key window to anchor the
+        // permission sheet to, not to show the user anything.
+        let window = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 1, height: 1),
+            styleMask: [.borderless],
+            backing: .buffered,
+            defer: false
+        )
+        window.isReleasedWhenClosed = false
+        window.alphaValue = 0.01
+        window.backgroundColor = .clear
+        window.hasShadow = false
+        window.level = .normal
+        if let screenFrame = NSScreen.main?.frame {
+            window.setFrameOrigin(NSPoint(x: screenFrame.minX, y: screenFrame.maxY))
+        }
+        accessRequestWindow = window
 
         var didFire = false
         var observer: NSObjectProtocol?
@@ -166,42 +193,42 @@ final class CalendarProvider {
             guard !didFire else { return }
             didFire = true
             if let observer { NotificationCenter.default.removeObserver(observer) }
-            NSLog(
-                "[CalendarProvider] foreground-confirmation source=%@, isActive(at fire)=%@ — invoking request",
-                source, String(NSApp.isActive)
+            DebugLog.write(
+                "[CalendarProvider] key-window-confirmation source=\(source), isKeyWindow=\(window.isKeyWindow), isActive=\(NSApp.isActive) — invoking request"
             )
             self?.performRequest()
         }
 
         observer = NotificationCenter.default.addObserver(
-            forName: NSApplication.didBecomeActiveNotification,
-            object: nil,
+            forName: NSWindow.didBecomeKeyNotification,
+            object: window,
             queue: .main
         ) { _ in
-            fireOnce("didBecomeActiveNotification")
+            fireOnce("didBecomeKeyNotification")
         }
 
-        // Safety net: if the app was already active (no notification will
-        // fire) or the notification is otherwise missed, still proceed after
-        // one run-loop cycle's worth of settle time rather than hanging
-        // forever.
+        window.makeKeyAndOrderFront(nil)
+        DebugLog.write("[CalendarProvider] created + ordered minimal key window, isKeyWindow(immediately)=\(window.isKeyWindow)")
+
+        // Safety net: proceed even if the notification is missed for some
+        // reason, rather than hanging forever.
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
             fireOnce("fallback-timeout-0.3s")
         }
     }
 
     private func performRequest() {
-        NSLog(
-            "[CalendarProvider] about to call requestAccess(), activationPolicy=%@, isActive=%@",
-            String(describing: NSApp.activationPolicy()),
-            String(NSApp.isActive)
+        DebugLog.write(
+            "[CalendarProvider] about to call requestAccess(), activationPolicy=\(NSApp.activationPolicy()), isActive=\(NSApp.isActive), isKeyWindow=\(accessRequestWindow?.isKeyWindow ?? false)"
         )
         Task {
             let granted = await service.requestAccess()
-            NSLog("[CalendarProvider] requestAccess() returned granted=%@", String(granted))
+            DebugLog.write("[CalendarProvider] requestAccess() returned granted=\(granted)")
             refreshAuthState()
+            accessRequestWindow?.close()
+            accessRequestWindow = nil
             NSApp.setActivationPolicy(.accessory)
-            NSLog("[CalendarProvider] reverted activationPolicy to .accessory")
+            DebugLog.write("[CalendarProvider] closed temp window + reverted activationPolicy to .accessory")
         }
     }
 

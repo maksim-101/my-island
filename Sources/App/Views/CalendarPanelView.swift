@@ -32,7 +32,7 @@ struct CalendarPanelView: View {
                 .foregroundStyle(Tokens.Color.textMuted)
 
             Button {
-                NSLog("[CalendarPanelView] Grant Access button action fired")
+                DebugLog.write("[CalendarPanelView] Grant Access button action fired")
                 calendar.requestOrOpenSettings()
             } label: {
                 Text("Grant Access")
@@ -56,7 +56,7 @@ struct CalendarPanelView: View {
         // the Button's own tap recognition is completely unaffected.
         .simultaneousGesture(
             TapGesture().onEnded {
-                NSLog("[CalendarPanelView] simultaneousGesture tap perceived on accessGateState VStack")
+                DebugLog.write("[CalendarPanelView] simultaneousGesture tap perceived on accessGateState VStack")
             }
         )
     }
