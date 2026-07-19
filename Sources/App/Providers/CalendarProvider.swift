@@ -168,23 +168,27 @@ final class CalendarProvider {
         // A genuine NSWindow (NOT an NSPanel with .nonactivatingPanel) so it
         // CAN become key/main — every window this app otherwise owns is a
         // non-main-capable NSPanel (see NotchPanel.canBecomeMain == false).
-        // Visually unobtrusive: 1x1pt, fully transparent, no shadow — its
-        // only job is to give TCC a real key window to anchor the
-        // permission sheet to, not to show the user anything.
+        //
+        // Round 6 attempt used `styleMask: [.borderless]` and never actually
+        // became key (`isKeyWindow` stayed false a full 0.3s later, so only
+        // the fallback timer fired) — a borderless window's `canBecomeKey`
+        // returns false by default; it needs an explicit override OR a style
+        // mask AppKit already treats as key-capable. Round 7: match this
+        // codebase's own PROVEN-working precedent exactly —
+        // `AppDelegate.showSettings()`'s window uses `styleMask: [.titled,
+        // .closable]`, which is key-capable with no subclass/override
+        // needed. A small-but-real, briefly visible window is acceptable
+        // for this one-time permission grant (per round-6 guidance) — this
+        // is not trying to be invisible anymore, it needs to actually work.
         let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 1, height: 1),
-            styleMask: [.borderless],
+            contentRect: NSRect(x: 0, y: 0, width: 120, height: 80),
+            styleMask: [.titled, .closable],
             backing: .buffered,
             defer: false
         )
+        window.title = "my-island"
         window.isReleasedWhenClosed = false
-        window.alphaValue = 0.01
-        window.backgroundColor = .clear
-        window.hasShadow = false
-        window.level = .normal
-        if let screenFrame = NSScreen.main?.frame {
-            window.setFrameOrigin(NSPoint(x: screenFrame.minX, y: screenFrame.maxY))
-        }
+        window.center()
         accessRequestWindow = window
 
         var didFire = false
