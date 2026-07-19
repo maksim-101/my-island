@@ -39,10 +39,13 @@ final class NotchPanelController: NSObject {
     private let hud = HUDViewModel()
 
     // Owned ONCE here too, alongside the other providers above — the
-    // Calendar auth state (and, from plan 04-03 on, the fetched next event)
-    // must persist across a screen-parameter rebuild and later feed the HUD.
-    // No HUD/threshold callback wiring yet (that lands in plan 04-04).
-    private let calendarProvider = CalendarProvider()
+    // Calendar auth state (and the fetched next event) must persist across a
+    // screen-parameter rebuild and later feed the HUD. No HUD/threshold
+    // callback wiring yet (that lands in plan 04-04). Exposed (not private)
+    // so `AppDelegate.showSettings()` can thread this SAME instance into
+    // `SettingsView`'s per-calendar picker (Task 3) rather than creating a
+    // second, unsynchronized `CalendarProvider`.
+    let calendarProvider = CalendarProvider()
 
     override init() {
         super.init()

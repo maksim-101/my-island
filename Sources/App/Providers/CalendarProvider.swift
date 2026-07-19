@@ -112,6 +112,26 @@ actor CalendarService {
         return nil
     }
 
+    /// Reads all calendars across all accounts, grouped by their `EKSource`,
+    /// as plain `String` id/title tuples — never an `EKCalendar`/`EKSource`
+    /// crosses the actor boundary (Pitfall 1 extended to the Settings
+    /// per-calendar picker). Touches the actor-isolated `eventStore`, so this
+    /// stays an ordinary actor-isolated method (an EventKit read cannot be
+    /// `nonisolated`) — callers `await` it like any other `CalendarService`
+    /// method.
+    func calendarsGroupedBySource() -> [(sourceName: String, calendars: [(id: String, title: String)])] {
+        let grouped = Dictionary(grouping: eventStore.calendars(for: .event)) { $0.source.sourceIdentifier }
+        return grouped.values
+            .compactMap { group -> (sourceName: String, calendars: [(id: String, title: String)])? in
+                guard let sourceName = group.first?.source.title else { return nil }
+                let calendarTuples = group
+                    .sorted { $0.title < $1.title }
+                    .map { (id: $0.calendarIdentifier, title: $0.title) }
+                return (sourceName: sourceName, calendars: calendarTuples)
+            }
+            .sorted { $0.sourceName < $1.sourceName }
+    }
+
     /// Adapts an `EKEvent` into the `Sendable` projection — NEVER returns the
     /// live `EKEvent` itself (Pitfall 1). Calls `VideoLinkDetector.detect` at
     /// this actor boundary so no EventKit type crosses into `CalendarProvider`.
@@ -237,10 +257,72 @@ final class CalendarProvider {
             return
         }
         Task {
-            let event = await service.fetchNextUpcomingEvent()
+            let ids = self.selectedCalendarIDs
+            let event = await service.fetchNextUpcomingEvent(selectedCalendarIDs: ids)
             self.nextEvent = event
             self.computeCountdownText()
         }
+    }
+
+    // MARK: - Per-calendar selection (Task 3)
+
+    private static let selectedCalendarIDsKey = "com.myisland.selectedCalendarIDs"
+
+    /// `nil` when the key has never been set (first-ever run) — resolves to
+    /// "all calendars" both here and in `CalendarService.fetchNextUpcomingEvent`,
+    /// so an existing granted user's next-meeting keeps working exactly as
+    /// before this feature until they actually open Settings and deselect
+    /// something (opt-out, not opt-in).
+    private var selectedCalendarIDs: Set<String>? {
+        get {
+            guard let ids = UserDefaults.standard.array(forKey: Self.selectedCalendarIDsKey) as? [String] else {
+                return nil
+            }
+            return Set(ids)
+        }
+        set {
+            if let newValue {
+                UserDefaults.standard.set(Array(newValue), forKey: Self.selectedCalendarIDsKey)
+            } else {
+                UserDefaults.standard.removeObject(forKey: Self.selectedCalendarIDsKey)
+            }
+        }
+    }
+
+    /// `true` when no selection has ever been persisted (opt-out default —
+    /// every calendar counts until the user actually touches a toggle).
+    func isCalendarSelected(_ id: String) -> Bool {
+        guard let selectedCalendarIDs else { return true }
+        return selectedCalendarIDs.contains(id)
+    }
+
+    /// Mutates the persisted selection and immediately triggers a
+    /// `refreshNextEvent()` so the toggle takes effect without an app
+    /// restart. On the FIRST toggle touch (no persisted set yet), the
+    /// current "all calendars" set is materialized first so calendars the
+    /// user hasn't yet seen aren't silently dropped by a partial selection.
+    func setCalendarSelected(_ id: String, selected: Bool) async {
+        var current: Set<String>
+        if let existing = selectedCalendarIDs {
+            current = existing
+        } else {
+            let allIDs = await service.calendarsGroupedBySource().flatMap { $0.calendars.map(\.id) }
+            current = Set(allIDs)
+        }
+        if selected {
+            current.insert(id)
+        } else {
+            current.remove(id)
+        }
+        selectedCalendarIDs = current
+        refreshNextEvent()
+    }
+
+    /// Delegates the actual `EKEventStore.calendars(for:)` read to the actor
+    /// — returns plain `String` id/title tuples only, never an
+    /// `EKCalendar`/`EKSource` (Pitfall 1 extended to the Settings picker).
+    func availableCalendarsGroupedBySource() async -> [(sourceName: String, calendars: [(id: String, title: String)])] {
+        await service.calendarsGroupedBySource()
     }
 
     /// Recomputes `countdownText` from the cached `nextEvent.startDate` only
