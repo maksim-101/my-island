@@ -58,6 +58,107 @@ actor CalendarService {
     nonisolated func currentStatus() -> EKAuthorizationStatus {
         EKEventStore.authorizationStatus(for: .event)
     }
+
+    /// Progressive date-window widths (RESEARCH.md Pattern 1) — searched in
+    /// order, starting from `now`, widening only when a window surfaces no
+    /// eligible event.
+    private static let progressiveWindows: [TimeInterval] = [
+        24 * 3600,
+        7 * 24 * 3600,
+        30 * 24 * 3600,
+        90 * 24 * 3600,
+        365 * 24 * 3600,
+    ]
+
+    /// Fetches the soonest surfaced event across a progressively widening
+    /// date window (Pattern 1). `selectedCalendarIDs` is `nil` before Task 3
+    /// wires per-calendar selection (or if the persisted set is somehow
+    /// empty/corrupt) — a `nil` value resolves to `nil` calendars, which
+    /// `predicateForEvents(withStart:end:calendars:)` treats as "search all
+    /// calendars," never an empty/broken query. Never returns an `EKEvent` —
+    /// only the `Sendable` `CalendarEventModel` projection crosses the actor
+    /// boundary (Pitfall 1).
+    func fetchNextUpcomingEvent(now: Date = .now, selectedCalendarIDs: Set<String>? = nil) async -> CalendarEventModel? {
+        guard await requestAccess() else { return nil }
+
+        let calendars: [EKCalendar]? = selectedCalendarIDs.map { ids in
+            eventStore.calendars(for: .event).filter { ids.contains($0.calendarIdentifier) }
+        }
+
+        for window in Self.progressiveWindows {
+            let end = now.addingTimeInterval(window)
+            let predicate = eventStore.predicateForEvents(withStart: now, end: end, calendars: calendars)
+            let surfaced = eventStore.events(matching: predicate)
+                .filter { event in
+                    let attendance = CalendarEventFilter.resolvedAttendance(
+                        isOrganizer: event.organizer?.isCurrentUser ?? false,
+                        hasAttendees: event.hasAttendees,
+                        currentUserStatus: Self.mapParticipantStatus(
+                            event.attendees?.first(where: { $0.isCurrentUser })?.participantStatus
+                        )
+                    )
+                    return CalendarEventFilter.shouldSurface(
+                        isCancelled: event.status == .canceled,
+                        isAllDay: event.isAllDay,
+                        attendance: attendance
+                    )
+                }
+                .sorted { $0.startDate < $1.startDate }
+
+            if let first = surfaced.first {
+                return mapToSendable(first)
+            }
+        }
+        return nil
+    }
+
+    /// Reads all calendars across all accounts, grouped by their `EKSource`,
+    /// as plain `String` id/title tuples — never an `EKCalendar`/`EKSource`
+    /// crosses the actor boundary (Pitfall 1 extended to the Settings
+    /// per-calendar picker). Touches the actor-isolated `eventStore`, so this
+    /// stays an ordinary actor-isolated method (an EventKit read cannot be
+    /// `nonisolated`) — callers `await` it like any other `CalendarService`
+    /// method.
+    func calendarsGroupedBySource() -> [(sourceName: String, calendars: [(id: String, title: String)])] {
+        let grouped = Dictionary(grouping: eventStore.calendars(for: .event)) { $0.source.sourceIdentifier }
+        return grouped.values
+            .compactMap { group -> (sourceName: String, calendars: [(id: String, title: String)])? in
+                guard let sourceName = group.first?.source.title else { return nil }
+                let calendarTuples = group
+                    .sorted { $0.title < $1.title }
+                    .map { (id: $0.calendarIdentifier, title: $0.title) }
+                return (sourceName: sourceName, calendars: calendarTuples)
+            }
+            .sorted { $0.sourceName < $1.sourceName }
+    }
+
+    /// Adapts an `EKEvent` into the `Sendable` projection — NEVER returns the
+    /// live `EKEvent` itself (Pitfall 1). Calls `VideoLinkDetector.detect` at
+    /// this actor boundary so no EventKit type crosses into `CalendarProvider`.
+    private func mapToSendable(_ event: EKEvent) -> CalendarEventModel {
+        let startDate = event.startDate ?? .now
+        let joinURL = VideoLinkDetector.detect(url: event.url?.absoluteString, location: event.location, notes: event.notes)
+        return CalendarEventModel(
+            id: "\(event.eventIdentifier ?? "")_\(startDate.timeIntervalSince1970)",
+            title: event.title ?? "",
+            startDate: startDate,
+            endDate: event.endDate ?? startDate,
+            location: event.location,
+            joinURL: joinURL
+        )
+    }
+
+    /// Adapts `EKParticipantStatus` onto the pure `CalendarEventFilter`
+    /// input type so no EventKit type crosses the actor boundary.
+    private static func mapParticipantStatus(_ status: EKParticipantStatus?) -> CalendarEventFilter.AttendanceStatus? {
+        guard let status else { return nil }
+        switch status {
+        case .accepted: return .accepted
+        case .declined: return .declined
+        case .tentative: return .tentative
+        default: return .other
+        }
+    }
 }
 
 /// Sendable projection of an `EKEvent` — never the live EventKit type itself
@@ -82,8 +183,11 @@ final class CalendarProvider {
     }
 
     private(set) var authorizationState: AuthorizationState
-    /// nil until plan 04-03 wires real fetches.
     private(set) var nextEvent: CalendarEventModel?
+    /// Live short-form ("{N}m") countdown to `nextEvent.startDate`, recomputed
+    /// every second by `tickTimer` from the cached `nextEvent` only — never by
+    /// re-querying EventKit (Pattern 4, Pitfall 7).
+    private(set) var countdownText: String = ""
 
     private let service = CalendarService()
     private let logger = Logger(subsystem: AppIdentity.bundleID, category: "CalendarProvider")
@@ -93,8 +197,167 @@ final class CalendarProvider {
     /// duration of a single request, then closed and released.
     private var accessRequestWindow: NSWindow?
 
+    // Cheap 1s tick: recomputes `countdownText` from the cached `nextEvent`
+    // only. Started when `nextEvent != nil`, stopped when `nil` (Pattern 4).
+    // Accessed from `deinit`, which runs nonisolated — safe because
+    // `Timer.invalidate()` is thread-agnostic (mirrors `TimerViewModel`).
+    nonisolated(unsafe) private var tickTimer: Timer?
+    // Coarse fallback re-fetch (~20 min) in case neither
+    // `EKEventStoreChanged` nor `NSCalendarDayChanged` fires while an event's
+    // window is open (mirrors `BrightnessProvider.pollTimer`).
+    nonisolated(unsafe) private var fallbackTimer: Timer?
+    nonisolated(unsafe) private var eventStoreChangedObserver: NSObjectProtocol?
+    nonisolated(unsafe) private var dayChangedObserver: NSObjectProtocol?
+
     init() {
         authorizationState = Self.map(status: EKEventStore.authorizationStatus(for: .event))
+
+        eventStoreChangedObserver = NotificationCenter.default.addObserver(
+            forName: NSNotification.Name.EKEventStoreChanged,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor in self?.refreshNextEvent() }
+        }
+        dayChangedObserver = NotificationCenter.default.addObserver(
+            forName: NSNotification.Name.NSCalendarDayChanged,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor in self?.refreshNextEvent() }
+        }
+        fallbackTimer = Timer.scheduledTimer(withTimeInterval: 20 * 60, repeats: true) { [weak self] _ in
+            Task { @MainActor in self?.refreshNextEvent() }
+        }
+
+        if authorizationState == .granted {
+            refreshNextEvent()
+        }
+    }
+
+    deinit {
+        tickTimer?.invalidate()
+        fallbackTimer?.invalidate()
+        if let eventStoreChangedObserver {
+            NotificationCenter.default.removeObserver(eventStoreChangedObserver)
+        }
+        if let dayChangedObserver {
+            NotificationCenter.default.removeObserver(dayChangedObserver)
+        }
+    }
+
+    /// Heavy fetch: re-queries EventKit via the actor and republishes
+    /// `nextEvent` + `countdownText` on the main actor. Call on init (when
+    /// granted), on `EKEventStoreChanged`, on `.NSCalendarDayChanged`, and
+    /// from the coarse fallback timer above — never from the cheap 1s tick.
+    func refreshNextEvent() {
+        guard authorizationState == .granted else {
+            nextEvent = nil
+            computeCountdownText()
+            return
+        }
+        Task {
+            let ids = self.selectedCalendarIDs
+            let event = await service.fetchNextUpcomingEvent(selectedCalendarIDs: ids)
+            self.nextEvent = event
+            self.computeCountdownText()
+        }
+    }
+
+    // MARK: - Per-calendar selection (Task 3)
+
+    private static let selectedCalendarIDsKey = "com.myisland.selectedCalendarIDs"
+
+    /// `nil` when the key has never been set (first-ever run) — resolves to
+    /// "all calendars" both here and in `CalendarService.fetchNextUpcomingEvent`,
+    /// so an existing granted user's next-meeting keeps working exactly as
+    /// before this feature until they actually open Settings and deselect
+    /// something (opt-out, not opt-in).
+    private var selectedCalendarIDs: Set<String>? {
+        get {
+            guard let ids = UserDefaults.standard.array(forKey: Self.selectedCalendarIDsKey) as? [String] else {
+                return nil
+            }
+            return Set(ids)
+        }
+        set {
+            if let newValue {
+                UserDefaults.standard.set(Array(newValue), forKey: Self.selectedCalendarIDsKey)
+            } else {
+                UserDefaults.standard.removeObject(forKey: Self.selectedCalendarIDsKey)
+            }
+        }
+    }
+
+    /// `true` when no selection has ever been persisted (opt-out default —
+    /// every calendar counts until the user actually touches a toggle).
+    func isCalendarSelected(_ id: String) -> Bool {
+        guard let selectedCalendarIDs else { return true }
+        return selectedCalendarIDs.contains(id)
+    }
+
+    /// Mutates the persisted selection and immediately triggers a
+    /// `refreshNextEvent()` so the toggle takes effect without an app
+    /// restart. On the FIRST toggle touch (no persisted set yet), the
+    /// current "all calendars" set is materialized first so calendars the
+    /// user hasn't yet seen aren't silently dropped by a partial selection.
+    func setCalendarSelected(_ id: String, selected: Bool) async {
+        var current: Set<String>
+        if let existing = selectedCalendarIDs {
+            current = existing
+        } else {
+            let allIDs = await service.calendarsGroupedBySource().flatMap { $0.calendars.map(\.id) }
+            current = Set(allIDs)
+        }
+        if selected {
+            current.insert(id)
+        } else {
+            current.remove(id)
+        }
+        selectedCalendarIDs = current
+        refreshNextEvent()
+    }
+
+    /// Delegates the actual `EKEventStore.calendars(for:)` read to the actor
+    /// — returns plain `String` id/title tuples only, never an
+    /// `EKCalendar`/`EKSource` (Pitfall 1 extended to the Settings picker).
+    func availableCalendarsGroupedBySource() async -> [(sourceName: String, calendars: [(id: String, title: String)])] {
+        await service.calendarsGroupedBySource()
+    }
+
+    /// Recomputes `countdownText` from the cached `nextEvent.startDate` only
+    /// — no EventKit call (Pitfall 7). Clamps at/near T-0 to a neutral "now"
+    /// label rather than ever rendering a negative value, and drops the
+    /// event from the slot once its `endDate` passes (backstop truth) —
+    /// dropping is cheap (no re-query) since the next heavy fetch will
+    /// refill it.
+    private func computeCountdownText(now: Date = .now) {
+        guard let event = nextEvent else {
+            countdownText = ""
+            stopTick()
+            return
+        }
+        if now >= event.endDate {
+            nextEvent = nil
+            countdownText = ""
+            stopTick()
+            return
+        }
+        let remaining = event.startDate.timeIntervalSince(now)
+        countdownText = remaining <= 0 ? "now" : "\(Int(remaining / 60))m"
+        startTickIfNeeded()
+    }
+
+    private func startTickIfNeeded() {
+        guard tickTimer == nil else { return }
+        tickTimer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
+            Task { @MainActor in self?.computeCountdownText() }
+        }
+    }
+
+    private func stopTick() {
+        tickTimer?.invalidate()
+        tickTimer = nil
     }
 
     private static func map(status: EKAuthorizationStatus) -> AuthorizationState {
@@ -229,6 +492,9 @@ final class CalendarProvider {
             let granted = await service.requestAccess()
             DebugLog.write("[CalendarProvider] requestAccess() returned granted=\(granted)")
             refreshAuthState()
+            if authorizationState == .granted {
+                refreshNextEvent()
+            }
             accessRequestWindow?.close()
             accessRequestWindow = nil
             NSApp.setActivationPolicy(.accessory)

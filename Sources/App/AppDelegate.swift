@@ -48,14 +48,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         NSApp.setActivationPolicy(.regular)
         NSApp.activate(ignoringOtherApps: true)
 
+        guard let calendarProvider = notchPanelController?.calendarProvider else {
+            logger.error("showSettings() called before notchPanelController was initialized")
+            return
+        }
+
         if settingsWindow == nil {
-            let hosting = NSHostingController(rootView: SettingsView())
+            let hosting = NSHostingController(rootView: SettingsView(calendar: calendarProvider))
             let win = NSWindow(contentViewController: hosting)
             win.title = "my-island Settings"
             win.styleMask = [.titled, .closable]
             win.isReleasedWhenClosed = false
             win.delegate = self
-            win.setContentSize(NSSize(width: 420, height: 180))
+            win.setContentSize(NSSize(width: 420, height: 460))
             win.center()
             settingsWindow = win
         }
