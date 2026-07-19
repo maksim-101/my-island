@@ -42,4 +42,10 @@ enum NotchLayout {
     /// before fading and reverting to the timer/idle collapsed content
     /// (D-05).
     static let hudFadeDelay: TimeInterval = 1.5
+
+    /// How long the meeting-countdown bump (CAL-01/D-02) stays up before
+    /// fading — longer than `hudFadeDelay` because a full "{title} in {N}m"
+    /// sentence needs more read time than the brightness/volume nudge; ~2.5s
+    /// matches the locked sketch's bump dwell.
+    static let meetingBumpFadeDelay: TimeInterval = 2.5
 }

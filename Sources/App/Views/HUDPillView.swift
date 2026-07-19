@@ -33,15 +33,26 @@ struct HUDPillView: View {
                 .font(Tokens.Font.data)
                 .foregroundStyle(Tokens.Color.text)
 
-            Capsule()
-                .fill(Tokens.Color.hairline)
-                .frame(width: barWidth, height: 4)
-                .overlay(alignment: .leading) {
-                    Capsule()
-                        .fill(Tokens.Color.text)
-                        .frame(width: barWidth * max(0, min(1, hud.level)))
-                        .animation(.easeOut(duration: 0.18), value: hud.level)
-                }
+            if let text = hud.text {
+                // Meeting bump (CAL-01/D-02): neutral truncating text row in
+                // place of the level bar — never accent/amber (T-04-07), and
+                // non-interactive (no tap target) per the plan's prohibitions.
+                Text(text)
+                    .font(Tokens.Font.label)
+                    .foregroundStyle(Tokens.Color.text)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+            } else {
+                Capsule()
+                    .fill(Tokens.Color.hairline)
+                    .frame(width: barWidth, height: 4)
+                    .overlay(alignment: .leading) {
+                        Capsule()
+                            .fill(Tokens.Color.text)
+                            .frame(width: barWidth * max(0, min(1, hud.level)))
+                            .animation(.easeOut(duration: 0.18), value: hud.level)
+                    }
+            }
         }
         .padding(.horizontal, Tokens.Spacing.lg)
         .padding(.vertical, Tokens.Spacing.sm)
