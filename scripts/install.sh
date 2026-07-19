@@ -21,7 +21,14 @@ xcodebuild -project MyIsland.xcodeproj -scheme MyIsland -configuration Release \
 APP="build.noindex/Build/Products/Release/my-island.app"
 
 echo "==> Ad-hoc signing"
-codesign --force --deep --options runtime --sign - "$APP"
+# --entitlements is REQUIRED here: xcodebuild's own signing step already
+# attaches Sources/App/MyIsland.entitlements (CODE_SIGN_ENTITLEMENTS in
+# project.yml), but this re-sign uses --force, which replaces the signature
+# wholesale — omitting --entitlements here would silently strip the
+# calendars entitlement that requestFullAccessToEvents() needs, causing TCC
+# to synchronously deny access with no prompt (plan 04-02 checkpoint root
+# cause: Hardened Runtime + a signature with zero entitlements attached).
+codesign --force --deep --options runtime --entitlements Sources/App/MyIsland.entitlements --sign - "$APP"
 
 echo "==> Installing to /Applications"
 osascript -e 'tell application "my-island" to quit' 2>/dev/null || true
