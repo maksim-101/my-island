@@ -8,6 +8,11 @@ enum Tokens {
         /// Identity color — every interactive/active affordance (primary
         /// buttons, now-playing accent, pane-jump arrow, selection).
         static let accent = SwiftUI.Color(hex: 0x7C6BFF)
+        /// On-accent text/label color (e.g. the Join button's label sitting
+        /// on an `accent` fill) — mirrors DESIGN.md
+        /// `components.button-primary.color`. Never a stand-in for
+        /// `Tokens.Color.text`.
+        static let accentInk = SwiftUI.Color(hex: 0xF4F2FF)
         /// Reserved exclusively for attention ("needs you", warnings) —
         /// never decorative.
         static let signal = SwiftUI.Color(hex: 0xFFB338)
