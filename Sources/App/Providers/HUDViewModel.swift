@@ -59,6 +59,7 @@ final class HUDViewModel {
     /// read time than the ~1.5s brightness/volume nudge) instead of
     /// `hudFadeDelay`.
     func showMeeting(text: String) {
+        DebugLog.write("[HUDViewModel] showMeeting(text=\"\(text)\") isShowingHUD(before)=\(isShowingHUD) fadeDelay=\(NotchLayout.meetingBumpFadeDelay)")
         show(glyph: .meeting, level: 0, text: text, fadeDelay: NotchLayout.meetingBumpFadeDelay)
     }
 

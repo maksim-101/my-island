@@ -78,8 +78,13 @@ actor CalendarService {
     /// calendars," never an empty/broken query. Never returns an `EKEvent` —
     /// only the `Sendable` `CalendarEventModel` projection crosses the actor
     /// boundary (Pitfall 1).
-    func fetchNextUpcomingEvent(now: Date = .now, selectedCalendarIDs: Set<String>? = nil) async -> CalendarEventModel? {
-        guard await requestAccess() else { return nil }
+    /// Returns the event currently in progress (if any) followed by the next
+    /// one that hasn't started yet (if any) — at most two. Returning both is
+    /// what lets a running meeting keep its Join button WITHOUT starving the
+    /// meeting behind it of its threshold bumps; `CalendarSlotSelector` decides
+    /// which of them the panel actually renders.
+    func fetchUpcomingSlots(now: Date = .now, selectedCalendarIDs: Set<String>? = nil) async -> [CalendarEventModel] {
+        guard await requestAccess() else { return [] }
 
         let calendars: [EKCalendar]? = selectedCalendarIDs.map { ids in
             eventStore.calendars(for: .event).filter { ids.contains($0.calendarIdentifier) }
@@ -105,11 +110,19 @@ actor CalendarService {
                 }
                 .sorted { $0.startDate < $1.startDate }
 
-            if let first = surfaced.first {
-                return mapToSendable(first)
+            guard !surfaced.isEmpty else { continue }
+
+            // The two earliest cover whatever the panel can render; the first
+            // not-yet-started event is appended when it isn't already among
+            // them, so thresholds can still arm while two meetings run at once.
+            var picked = Array(surfaced.prefix(2))
+            if let upcoming = surfaced.first(where: { $0.startDate > now }),
+               !picked.contains(where: { $0 === upcoming }) {
+                picked.append(upcoming)
             }
+            return picked.map(mapToSendable)
         }
-        return nil
+        return []
     }
 
     /// Reads all calendars across all accounts, grouped by their `EKSource`,
@@ -138,6 +151,11 @@ actor CalendarService {
     private func mapToSendable(_ event: EKEvent) -> CalendarEventModel {
         let startDate = event.startDate ?? .now
         let joinURL = VideoLinkDetector.detect(url: event.url?.absoluteString, location: event.location, notes: event.notes)
+        // DIAGNOSTIC (04-04 checkpoint): which field, if any, carried a
+        // joinable link — remove with the rest of DebugLog once confirmed.
+        DebugLog.write(
+            "[CalendarService] mapToSendable title=\(event.title ?? "") url=\(event.url?.absoluteString ?? "<nil>") location=\(event.location ?? "<nil>") notesLen=\(event.notes?.count ?? -1) joinURL=\(joinURL?.absoluteString ?? "<nil>")"
+        )
         return CalendarEventModel(
             id: "\(event.eventIdentifier ?? "")_\(startDate.timeIntervalSince1970)",
             title: event.title ?? "",
@@ -183,11 +201,17 @@ final class CalendarProvider {
     }
 
     private(set) var authorizationState: AuthorizationState
-    private(set) var nextEvent: CalendarEventModel?
-    /// Live short-form ("{N}m") countdown to `nextEvent.startDate`, recomputed
-    /// every second by `tickTimer` from the cached `nextEvent` only — never by
+    /// In-progress event (if any) + the next not-yet-started one (if any).
+    /// Both are kept even when only one is rendered, so thresholds can arm for
+    /// the upcoming meeting while a long one is still running.
+    private(set) var events: [CalendarEventModel] = []
+    /// What the panel renders: one row normally, two only while a running
+    /// meeting genuinely overlaps the next one.
+    private(set) var displayedEvents: [CalendarEventModel] = []
+    /// Live short-form ("{N}m" / "now") countdown per event id, recomputed every
+    /// second by `tickTimer` from the cached `events` only — never by
     /// re-querying EventKit (Pattern 4, Pitfall 7).
-    private(set) var countdownText: String = ""
+    private(set) var countdowns: [String: String] = [:]
 
     /// Fired exactly once per 15m/5m/1m threshold per event (Pattern 3) with a
     /// "{title} in {N}m" string — `NotchPanelController` wires this into
@@ -262,21 +286,21 @@ final class CalendarProvider {
     }
 
     /// Heavy fetch: re-queries EventKit via the actor and republishes
-    /// `nextEvent` + `countdownText` on the main actor. Call on init (when
+    /// `events` + `countdowns` on the main actor. Call on init (when
     /// granted), on `EKEventStoreChanged`, on `.NSCalendarDayChanged`, and
     /// from the coarse fallback timer above — never from the cheap 1s tick.
     func refreshNextEvent() {
         guard authorizationState == .granted else {
-            nextEvent = nil
-            computeCountdownText()
+            events = []
+            computeCountdowns()
             rescheduleThresholds()
             return
         }
         Task {
             let ids = self.selectedCalendarIDs
-            let event = await service.fetchNextUpcomingEvent(selectedCalendarIDs: ids)
-            self.nextEvent = event
-            self.computeCountdownText()
+            let fetched = await service.fetchUpcomingSlots(selectedCalendarIDs: ids)
+            self.events = fetched
+            self.computeCountdowns()
             self.rescheduleThresholds()
         }
     }
@@ -293,7 +317,10 @@ final class CalendarProvider {
         thresholdTimer?.invalidate()
         thresholdTimer = nil
 
-        guard let event = nextEvent else {
+        // The event that hasn't started yet — NOT `events.first`, which is the
+        // in-progress one whenever a meeting is running. Arming off the running
+        // meeting is what silently starved the next one of its bumps.
+        guard let event = events.first(where: { $0.startDate > .now }) else {
             firedThresholdsEventID = nil
             firedThresholds = []
             return
@@ -315,9 +342,19 @@ final class CalendarProvider {
         guard let next = pending.first else { return }
 
         let interval = max(0, next.timeIntervalSinceNow)
-        thresholdTimer = Timer.scheduledTimer(withTimeInterval: interval, repeats: false) { [weak self] _ in
+        DebugLog.write(
+            "[CalendarProvider] armNextThreshold event=\(event.title) start=\(event.startDate) pending=\(pending) armed=\(next) inSeconds=\(interval)"
+        )
+        let timer = Timer(fire: next, interval: 0, repeats: false) { [weak self] _ in
             Task { @MainActor in self?.fireThreshold(fireDate: next, event: event) }
         }
+        // Absolute fire date + .common mode: a `scheduledTimer` interval timer in
+        // .default mode is silently starved while the run loop sits in event
+        // tracking (hover/menu), and an idle agent app's timers get coalesced by
+        // App Nap — both would drop a bump on the floor.
+        timer.tolerance = 1
+        RunLoop.main.add(timer, forMode: .common)
+        thresholdTimer = timer
     }
 
     /// Records the fired date, invokes `onThresholdCrossed` with the
@@ -326,9 +363,14 @@ final class CalendarProvider {
     /// event. Guards against a stale timer firing after `nextEvent` has
     /// already moved on to a different event.
     private func fireThreshold(fireDate: Date, event: CalendarEventModel) {
-        guard nextEvent?.id == event.id else { return }
+        DebugLog.write("[CalendarProvider] fireThreshold ENTRY fireDate=\(fireDate) event=\(event.title) knownIDs=\(events.map(\.id)) expectedID=\(event.id)")
+        guard events.contains(where: { $0.id == event.id }) else {
+            DebugLog.write("[CalendarProvider] fireThreshold BAILED — nextEvent identity changed")
+            return
+        }
         firedThresholds.insert(fireDate)
         let minutes = max(1, Int((event.startDate.timeIntervalSince(fireDate) / 60).rounded()))
+        DebugLog.write("[CalendarProvider] fireThreshold -> onThresholdCrossed(\"\(event.title) in \(minutes)m\") isNil=\(onThresholdCrossed == nil)")
         onThresholdCrossed?("\(event.title) in \(minutes)m")
         armNextThreshold(for: event)
     }
@@ -394,33 +436,48 @@ final class CalendarProvider {
         await service.calendarsGroupedBySource()
     }
 
-    /// Recomputes `countdownText` from the cached `nextEvent.startDate` only
-    /// — no EventKit call (Pitfall 7). Clamps at/near T-0 to a neutral "now"
-    /// label rather than ever rendering a negative value, and drops the
-    /// event from the slot once its `endDate` passes (backstop truth) —
-    /// dropping is cheap (no re-query) since the next heavy fetch will
-    /// refill it.
-    private func computeCountdownText(now: Date = .now) {
-        guard let event = nextEvent else {
-            countdownText = ""
+    /// Recomputes every cached event's countdown from its `startDate` only — no
+    /// EventKit call (Pitfall 7). Clamps at/near T-0 to a neutral "now" label
+    /// rather than ever rendering a negative value, and drops an event once its
+    /// `endDate` passes (backstop truth). Also re-derives `displayedEvents`, so
+    /// the second row appears/disappears as a meeting starts or ends without
+    /// waiting on a heavy re-fetch.
+    private func computeCountdowns(now: Date = .now) {
+        let stillLive = events.filter { now < $0.endDate }
+        let dropped = stillLive.count != events.count
+        events = stillLive
+
+        guard !events.isEmpty else {
+            displayedEvents = []
+            countdowns = [:]
             stopTick()
+            if dropped { refreshNextEvent() }
             return
         }
-        if now >= event.endDate {
-            nextEvent = nil
-            countdownText = ""
-            stopTick()
-            return
-        }
-        let remaining = event.startDate.timeIntervalSince(now)
-        countdownText = remaining <= 0 ? "now" : "\(Int(remaining / 60))m"
+
+        countdowns = Dictionary(uniqueKeysWithValues: events.map { event in
+            let remaining = event.startDate.timeIntervalSince(now)
+            return (event.id, remaining <= 0 ? "now" : "\(Int(remaining / 60))m")
+        })
+
+        let selection = CalendarSlotSelector.select(
+            slots: events.map { EventSlot(start: $0.startDate, end: $0.endDate) },
+            now: now
+        )
+        displayedEvents = [selection.primary, selection.secondary]
+            .compactMap { $0 }
+            .map { events[$0] }
+
         startTickIfNeeded()
+        // A finished event frees its slot — re-query so the one behind it
+        // (and its threshold bumps) takes over immediately.
+        if dropped { refreshNextEvent() }
     }
 
     private func startTickIfNeeded() {
         guard tickTimer == nil else { return }
         tickTimer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
-            Task { @MainActor in self?.computeCountdownText() }
+            Task { @MainActor in self?.computeCountdowns() }
         }
     }
 

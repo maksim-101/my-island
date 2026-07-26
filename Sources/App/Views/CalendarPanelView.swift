@@ -29,8 +29,15 @@ struct CalendarPanelView: View {
 
     @ViewBuilder
     private var grantedState: some View {
-        if let event = calendar.nextEvent {
-            UpcomingChipView(event: event, countdownText: calendar.countdownText)
+        if !calendar.displayedEvents.isEmpty {
+            // Two rows only while a running meeting overlaps the next one —
+            // the running one keeps its Join button, the upcoming one gets a
+            // real countdown instead of being hidden for the full hour.
+            VStack(alignment: .leading, spacing: Tokens.Spacing.xs) {
+                ForEach(calendar.displayedEvents) { event in
+                    UpcomingChipView(event: event, countdownText: calendar.countdowns[event.id] ?? "")
+                }
+            }
         } else {
             Text("No upcoming meetings.")
                 .font(Tokens.Font.bodyMD)
