@@ -20,32 +20,19 @@ actor CalendarService {
     /// `.notDetermined`. Calling `requestFullAccessToEvents()` again after a
     /// denial returns `false` immediately with no OS prompt (Pitfall 2) — the
     /// caller must check status first and route denied/restricted elsewhere.
-    ///
-    /// DIAGNOSTIC INSTRUMENTATION (round 6 — file-based, see `DebugLog`):
-    /// round 5's real-hardware capture (Apple's own un-redacted EventKit
-    /// system log, not ours) proved this method IS reached, DOES read
-    /// `.notDetermined`, and DOES call the real `requestFullAccessToEvents()`
-    /// — but TCC returned a synchronous NO in ~4ms, too fast for a
-    /// human-seen dialog. That pointed at the caller's activation context,
-    /// not this method, so the round 6 fix lives in `CalendarProvider`.
     func requestAccess() async -> Bool {
         let status = EKEventStore.authorizationStatus(for: .event)
-        DebugLog.write("[CalendarService] requestAccess() entry, authorizationStatus=\(status)")
         switch status {
         case .fullAccess, .authorized:
             return true
         case .notDetermined:
-            DebugLog.write("[CalendarService] status is .notDetermined — invoking requestFullAccessToEvents()")
             do {
                 let granted = try await eventStore.requestFullAccessToEvents()
-                DebugLog.write("[CalendarService] requestFullAccessToEvents() completed: granted=\(granted)")
                 return granted
             } catch {
-                DebugLog.write("[CalendarService] requestFullAccessToEvents() threw: \(error)")
                 return false
             }
         case .denied, .restricted, .writeOnly:
-            DebugLog.write("[CalendarService] status is denied/restricted/writeOnly — NOT re-requesting (Pitfall 2)")
             return false
         @unknown default:
             return false
@@ -151,11 +138,6 @@ actor CalendarService {
     private func mapToSendable(_ event: EKEvent) -> CalendarEventModel {
         let startDate = event.startDate ?? .now
         let joinURL = VideoLinkDetector.detect(url: event.url?.absoluteString, location: event.location, notes: event.notes)
-        // DIAGNOSTIC (04-04 checkpoint): which field, if any, carried a
-        // joinable link — remove with the rest of DebugLog once confirmed.
-        DebugLog.write(
-            "[CalendarService] mapToSendable title=\(event.title ?? "") url=\(event.url?.absoluteString ?? "<nil>") location=\(event.location ?? "<nil>") notesLen=\(event.notes?.count ?? -1) joinURL=\(joinURL?.absoluteString ?? "<nil>")"
-        )
         return CalendarEventModel(
             id: "\(event.eventIdentifier ?? "")_\(startDate.timeIntervalSince1970)",
             title: event.title ?? "",
@@ -342,9 +324,6 @@ final class CalendarProvider {
         guard let next = pending.first else { return }
 
         let interval = max(0, next.timeIntervalSinceNow)
-        DebugLog.write(
-            "[CalendarProvider] armNextThreshold event=\(event.title) start=\(event.startDate) pending=\(pending) armed=\(next) inSeconds=\(interval)"
-        )
         let timer = Timer(fire: next, interval: 0, repeats: false) { [weak self] _ in
             Task { @MainActor in self?.fireThreshold(fireDate: next, event: event) }
         }
@@ -363,14 +342,11 @@ final class CalendarProvider {
     /// event. Guards against a stale timer firing after `nextEvent` has
     /// already moved on to a different event.
     private func fireThreshold(fireDate: Date, event: CalendarEventModel) {
-        DebugLog.write("[CalendarProvider] fireThreshold ENTRY fireDate=\(fireDate) event=\(event.title) knownIDs=\(events.map(\.id)) expectedID=\(event.id)")
         guard events.contains(where: { $0.id == event.id }) else {
-            DebugLog.write("[CalendarProvider] fireThreshold BAILED — nextEvent identity changed")
             return
         }
         firedThresholds.insert(fireDate)
         let minutes = max(1, Int((event.startDate.timeIntervalSince(fireDate) / 60).rounded()))
-        DebugLog.write("[CalendarProvider] fireThreshold -> onThresholdCrossed(\"\(event.title) in \(minutes)m\") isNil=\(onThresholdCrossed == nil)")
         onThresholdCrossed?("\(event.title) in \(minutes)m")
         armNextThreshold(for: event)
     }
@@ -530,9 +506,6 @@ final class CalendarProvider {
     ///   `NSWindow`, make it key, wait for actual key-window confirmation,
     ///   THEN fire the request.
     func requestOrOpenSettings() {
-        DebugLog.write(
-            "[CalendarProvider] requestOrOpenSettings() invoked, authorizationState=\(authorizationState), activationPolicy(before)=\(NSApp.activationPolicy()), isActive(before)=\(NSApp.isActive)"
-        )
         switch authorizationState {
         case .notDetermined:
             activateThenRequest()
@@ -550,9 +523,6 @@ final class CalendarProvider {
     private func activateThenRequest() {
         NSApp.setActivationPolicy(.regular)
         NSApp.activate(ignoringOtherApps: true)
-        DebugLog.write(
-            "[CalendarProvider] set .regular + activate() called, activationPolicy(immediately after)=\(NSApp.activationPolicy()), isActive(immediately after)=\(NSApp.isActive)"
-        )
 
         // A genuine NSWindow (NOT an NSPanel with .nonactivatingPanel) so it
         // CAN become key/main — every window this app otherwise owns is a
@@ -586,9 +556,6 @@ final class CalendarProvider {
             guard !didFire else { return }
             didFire = true
             if let observer { NotificationCenter.default.removeObserver(observer) }
-            DebugLog.write(
-                "[CalendarProvider] key-window-confirmation source=\(source), isKeyWindow=\(window.isKeyWindow), isActive=\(NSApp.isActive) — invoking request"
-            )
             self?.performRequest()
         }
 
@@ -601,7 +568,6 @@ final class CalendarProvider {
         }
 
         window.makeKeyAndOrderFront(nil)
-        DebugLog.write("[CalendarProvider] created + ordered minimal key window, isKeyWindow(immediately)=\(window.isKeyWindow)")
 
         // Safety net: proceed even if the notification is missed for some
         // reason, rather than hanging forever.
@@ -611,12 +577,8 @@ final class CalendarProvider {
     }
 
     private func performRequest() {
-        DebugLog.write(
-            "[CalendarProvider] about to call requestAccess(), activationPolicy=\(NSApp.activationPolicy()), isActive=\(NSApp.isActive), isKeyWindow=\(accessRequestWindow?.isKeyWindow ?? false)"
-        )
         Task {
             let granted = await service.requestAccess()
-            DebugLog.write("[CalendarProvider] requestAccess() returned granted=\(granted)")
             refreshAuthState()
             if authorizationState == .granted {
                 refreshNextEvent()
@@ -624,7 +586,6 @@ final class CalendarProvider {
             accessRequestWindow?.close()
             accessRequestWindow = nil
             NSApp.setActivationPolicy(.accessory)
-            DebugLog.write("[CalendarProvider] closed temp window + reverted activationPolicy to .accessory")
         }
     }
 

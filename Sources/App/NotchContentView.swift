@@ -18,40 +18,25 @@ final class NotchViewModel {
         return false
     }
 
-    // DIAGNOSTIC ONLY (plan 04-02 checkpoint round 5/6): correlating hover-state
-    // transitions with the Grant Access click-miss theory ("brief flickering,
-    // then nothing happens" — the panel may be collapsing right as the click
-    // lands). Logs to the round-6 file-based `DebugLog` (round 5 found our
-    // own NSLog content was redacted as `<private>` by unified logging) so
-    // it can be cross-referenced against `applyFrame` calls in
-    // `NotchPanelController` and the click-probe log lines.
-    private static func logTransition(_ name: String, wasOpen: Bool, isOpenNow: Bool) {
-        DebugLog.write("[NotchViewModel] \(name) wasOpen=\(wasOpen) isOpenNow=\(isOpenNow)")
-    }
-
     func hoverBegan() {
-        DebugLog.write("[NotchViewModel] hoverBegan() isOpen=\(isOpen)")
         dwell.hoverBegan()
     }
 
     func dwellElapsed() {
         let wasOpen = isOpen
         dwell.dwellElapsed()
-        Self.logTransition("dwellElapsed()", wasOpen: wasOpen, isOpenNow: isOpen)
         if isOpen != wasOpen { onOpenChange?(isOpen) }
     }
 
     func hoverEnded() {
         let wasOpen = isOpen
         dwell.hoverEnded()
-        Self.logTransition("hoverEnded()", wasOpen: wasOpen, isOpenNow: isOpen)
         if isOpen != wasOpen { onOpenChange?(isOpen) }
     }
 
     func toggle() {
         let wasOpen = isOpen
         dwell.toggle()
-        Self.logTransition("toggle()", wasOpen: wasOpen, isOpenNow: isOpen)
         if isOpen != wasOpen { onOpenChange?(isOpen) }
     }
 }

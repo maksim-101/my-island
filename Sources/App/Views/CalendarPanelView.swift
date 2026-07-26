@@ -52,7 +52,6 @@ struct CalendarPanelView: View {
                 .foregroundStyle(Tokens.Color.textMuted)
 
             Button {
-                DebugLog.write("[CalendarPanelView] Grant Access button action fired")
                 calendar.requestOrOpenSettings()
             } label: {
                 Text("Grant Access")
@@ -68,17 +67,6 @@ struct CalendarPanelView: View {
             .buttonStyle(.plain)
             .help("Grant Calendar access")
         }
-        // DIAGNOSTIC ONLY (plan 04-02 checkpoint round 4): a raw tap probe on
-        // the surrounding VStack, NOT the Button itself, so we can tell
-        // whether SwiftUI's own gesture system perceives ANY tap in this
-        // region at all — independent of whether the Button specifically
-        // recognizes it. `.simultaneousGesture` never consumes the event, so
-        // the Button's own tap recognition is completely unaffected.
-        .simultaneousGesture(
-            TapGesture().onEnded {
-                DebugLog.write("[CalendarPanelView] simultaneousGesture tap perceived on accessGateState VStack")
-            }
-        )
     }
 }
 
