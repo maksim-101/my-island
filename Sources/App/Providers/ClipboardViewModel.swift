@@ -48,6 +48,16 @@ final class ClipboardViewModel {
         // entry).
         guard entries.first?.text != text else { return }
 
+        // Promote an existing entry rather than storing a second copy of it.
+        // Consecutive-only de-duplication was not enough: dictation tools,
+        // password managers and launchers commonly stash the pasteboard, write
+        // their own text, then RESTORE the original — which lands as
+        // A → B → A and left the history showing A twice, at two different
+        // timestamps, for a copy the user only made once.
+        if let duplicate = entries.firstIndex(where: { $0.text == text }) {
+            entries.remove(at: duplicate)
+        }
+
         entries.insert(ClipboardEntry(text: text, copiedAt: .now), at: 0)
         if entries.count > 10 { entries.removeLast(entries.count - 10) }   // D-13
         logger.debug("Recorded clipboard entry")

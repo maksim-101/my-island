@@ -144,10 +144,15 @@ struct TimerPanelView: View {
     /// No readout and no ring while idle — there is nothing to read out.
     private var idleRow: some View {
         HStack(spacing: Tokens.Spacing.xs) {
+            // fixedSize on both: DurationField is an NSViewRepresentable with no
+            // width of its own, so SwiftUI hands it the free space and squeezes
+            // the segments until "25" truncates to an ellipsis.
             segmentedPresets
+                .fixedSize()
 
-            HStack(spacing: 1) {
+            HStack(spacing: 3) {
                 DurationField(minutes: $customMinutes)
+                    .frame(width: 34)
                     .accessibilityLabel("Duration in minutes")
                 Text("min")
                     .font(Tokens.Font.bodyMD)
@@ -155,6 +160,7 @@ struct TimerPanelView: View {
             }
             .padding(.horizontal, Tokens.Spacing.sm)
             .frame(height: 28)
+            .fixedSize()
             .background(Tokens.Color.surfaceRaised)
             .clipShape(RoundedRectangle(cornerRadius: Tokens.Radius.sm))
             .help("Type or scroll to set minutes")
@@ -234,7 +240,7 @@ struct TimerPanelView: View {
             .frame(height: 24)
             .accessibilityElement()
             .accessibilityLabel("Timer progress")
-            .accessibilityValue("\(formatted(elapsed)) of \(Int(timer.startedDuration / 60)) minutes")
+            .accessibilityValue("\(Int(elapsed / 60)) of \(Int(timer.startedDuration / 60)) minutes")
 
             Text("\(Int(timer.startedDuration / 60))m")
                 .font(Tokens.Font.label)
@@ -245,7 +251,9 @@ struct TimerPanelView: View {
     }
 
     private var knob: some View {
-        Text(formatted(elapsed))
+        // Minutes only — the collapsed notch's right wing carries the precise
+        // m:ss, so seconds here would just be a second, noisier copy of it.
+        Text("\(Int(elapsed / 60))m")
             .font(Tokens.Font.label)
             .monospacedDigit()
             .foregroundStyle(Tokens.Color.background)
@@ -254,7 +262,7 @@ struct TimerPanelView: View {
             .overlay(Capsule().strokeBorder(Tokens.Color.surface, lineWidth: 2))
     }
 
-    private static let knobWidth: CGFloat = 46
+    private static let knobWidth: CGFloat = 52
 
     /// Centre the knob on its position, but pin it inside the track at both
     /// ends — otherwise it hangs off the left at 0% and collides with the

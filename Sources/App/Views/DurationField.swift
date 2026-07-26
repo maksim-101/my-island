@@ -8,7 +8,9 @@ struct DurationField: NSViewRepresentable {
     /// `nil` renders the field empty (placeholder only) — the idle picker starts
     /// with no duration chosen rather than a silent default.
     @Binding var minutes: Int?
-    var range: ClosedRange<Int> = 1...180
+    /// Up to 24h — the old 180-minute ceiling silently clamped anything longer
+    /// with no feedback, so typing 1000 became 180.
+    var range: ClosedRange<Int> = 1...1440
 
     func makeCoordinator() -> Coordinator { Coordinator(self) }
 
@@ -83,7 +85,9 @@ struct DurationField: NSViewRepresentable {
 
 /// `NSTextField` that steps its integer value on scroll (up = more).
 final class ScrollableIntField: NSTextField {
-    var range: ClosedRange<Int> = 1...180
+    /// Up to 24h — the old 180-minute ceiling silently clamped anything longer
+    /// with no feedback, so typing 1000 became 180.
+    var range: ClosedRange<Int> = 1...1440
     var onScrollChange: ((Int) -> Void)?
     private var accumulated: CGFloat = 0
 
@@ -104,6 +108,6 @@ final class ScrollableIntField: NSTextField {
     }
 
     override var intrinsicContentSize: NSSize {
-        NSSize(width: 26, height: super.intrinsicContentSize.height)
+        NSSize(width: 34, height: super.intrinsicContentSize.height)
     }
 }
