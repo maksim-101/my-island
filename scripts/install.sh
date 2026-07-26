@@ -20,7 +20,21 @@ xcodebuild -project MyIsland.xcodeproj -scheme MyIsland -configuration Release \
 
 APP="build.noindex/Build/Products/Release/my-island.app"
 
-echo "==> Ad-hoc signing"
+# Prefer a stable Developer ID identity over ad-hoc. Ad-hoc (`--sign -`) mints a
+# fresh cdhash on every build, and TCC keys its grants to that hash — so each
+# reinstall silently revoked Calendar/Accessibility access and the app degraded
+# to its permission-gate state with no error (four re-grants in one Phase 4 UAT
+# session). A real certificate keeps the designated requirement constant across
+# rebuilds, so grants persist. Falls back to ad-hoc when no cert is present.
+SIGN_ID="$(security find-identity -v -p codesigning 2>/dev/null \
+  | awk -F'"' '/Developer ID Application/ {print $2; exit}')"
+if [[ -n "$SIGN_ID" ]]; then
+  echo "==> Signing with stable identity: $SIGN_ID"
+else
+  SIGN_ID="-"
+  echo "==> No Developer ID found — falling back to ad-hoc (TCC grants will reset each build)"
+fi
+
 # --entitlements is REQUIRED here: xcodebuild's own signing step already
 # attaches Sources/App/MyIsland.entitlements (CODE_SIGN_ENTITLEMENTS in
 # project.yml), but this re-sign uses --force, which replaces the signature
@@ -28,7 +42,7 @@ echo "==> Ad-hoc signing"
 # calendars entitlement that requestFullAccessToEvents() needs, causing TCC
 # to synchronously deny access with no prompt (plan 04-02 checkpoint root
 # cause: Hardened Runtime + a signature with zero entitlements attached).
-codesign --force --deep --options runtime --entitlements Sources/App/MyIsland.entitlements --sign - "$APP"
+codesign --force --deep --options runtime --entitlements Sources/App/MyIsland.entitlements --sign "$SIGN_ID" "$APP"
 
 echo "==> Installing to /Applications"
 osascript -e 'tell application "my-island" to quit' 2>/dev/null || true
