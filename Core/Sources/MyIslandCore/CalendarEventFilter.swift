@@ -31,6 +31,55 @@ public enum CalendarEventFilter {
     }
 }
 
+/// Start/end pair for one surfaced event — the only shape the slot selector
+/// needs, so no EventKit or app-layer type crosses into this pure logic.
+public struct EventSlot: Equatable, Sendable {
+    public let start: Date
+    public let end: Date
+
+    public init(start: Date, end: Date) {
+        self.start = start
+        self.end = end
+    }
+}
+
+/// Picks which events own the Calendar slot (CAL-01).
+///
+/// A meeting that has already started must not hide the one coming up behind
+/// it: `predicateForEvents(withStart:end:)` matches any event *overlapping* the
+/// window, so a running 09:00–10:00 meeting sorts ahead of a 09:15 one and
+/// would otherwise own the slot — and starve it of threshold bumps — for a
+/// full hour.
+///
+/// The rule is purely about time, never about started-vs-upcoming: take the two
+/// earliest events that haven't ended, and show the second only when it starts
+/// before the first ends. That covers a running meeting plus an upcoming one
+/// AND two meetings running concurrently — an earlier in-progress/upcoming
+/// split silently dropped the concurrent case. A meeting running now plus one
+/// tomorrow afternoon is not an overlap, and stays a single row.
+public enum CalendarSlotSelector {
+    public struct Selection: Equatable, Sendable {
+        public let primary: Int?
+        /// Non-nil only when it genuinely overlaps `primary`.
+        public let secondary: Int?
+    }
+
+    /// `slots` is assumed sorted by start ascending (the caller's fetch already
+    /// sorts). Indices refer back into that array.
+    public static func select(slots: [EventSlot], now: Date) -> Selection {
+        let live = slots.indices.filter { now < slots[$0].end }
+
+        guard let primary = live.first else {
+            return Selection(primary: nil, secondary: nil)
+        }
+        guard let candidate = live.dropFirst().first,
+              slots[candidate].start < slots[primary].end else {
+            return Selection(primary: primary, secondary: nil)
+        }
+        return Selection(primary: primary, secondary: candidate)
+    }
+}
+
 /// Pure threshold-bump scheduler for the 15m/5m/1m meeting-countdown bump (CAL-01).
 /// `now` is always an injected parameter — no live-clock calls inside — so a
 /// just-launched app never fires a threshold that's already in the past.

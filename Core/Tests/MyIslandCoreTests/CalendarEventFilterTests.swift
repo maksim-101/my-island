@@ -61,3 +61,70 @@ import Foundation
     ]
     #expect(result == expected)
 }
+
+// MARK: - CalendarSlotSelector (overlapping meetings)
+
+/// The 06:00–07:00 / 06:15 case from real-hardware UAT: the running meeting
+/// must not hide the one starting behind it.
+@Test func selectSurfacesBothWhenUpcomingStartsBeforeRunningEnds() {
+    let now = Date(timeIntervalSince1970: 0)
+    let slots = [
+        EventSlot(start: now.addingTimeInterval(-4 * 60), end: now.addingTimeInterval(56 * 60)),
+        EventSlot(start: now.addingTimeInterval(11 * 60), end: now.addingTimeInterval(41 * 60)),
+    ]
+    let result = CalendarSlotSelector.select(slots: slots, now: now)
+    #expect(result.primary == 0)
+    #expect(result.secondary == 1)
+}
+
+/// Two meetings running AT THE SAME TIME — the case an in-progress/upcoming
+/// split dropped, because neither of them is "upcoming".
+@Test func selectSurfacesBothWhenTwoMeetingsRunConcurrently() {
+    let now = Date(timeIntervalSince1970: 0)
+    let slots = [
+        EventSlot(start: now.addingTimeInterval(-28 * 60), end: now.addingTimeInterval(32 * 60)),
+        EventSlot(start: now.addingTimeInterval(-8 * 60), end: now.addingTimeInterval(17 * 60)),
+    ]
+    let result = CalendarSlotSelector.select(slots: slots, now: now)
+    #expect(result.primary == 0)
+    #expect(result.secondary == 1)
+}
+
+@Test func selectDoesNotTreatLaterNonOverlappingEventAsOverlap() {
+    let now = Date(timeIntervalSince1970: 0)
+    let slots = [
+        EventSlot(start: now.addingTimeInterval(-5 * 60), end: now.addingTimeInterval(25 * 60)),
+        EventSlot(start: now.addingTimeInterval(24 * 3600), end: now.addingTimeInterval(25 * 3600)),
+    ]
+    let result = CalendarSlotSelector.select(slots: slots, now: now)
+    #expect(result.primary == 0)
+    #expect(result.secondary == nil)
+}
+
+@Test func selectReturnsOnlyUpcomingWhenNothingRunning() {
+    let now = Date(timeIntervalSince1970: 0)
+    let slots = [EventSlot(start: now.addingTimeInterval(10 * 60), end: now.addingTimeInterval(70 * 60))]
+    let result = CalendarSlotSelector.select(slots: slots, now: now)
+    #expect(result.primary == 0)
+    #expect(result.secondary == nil)
+}
+
+/// An event whose end has just passed is neither primary nor secondary.
+@Test func selectIgnoresAlreadyEndedEvent() {
+    let now = Date(timeIntervalSince1970: 0)
+    let slots = [
+        EventSlot(start: now.addingTimeInterval(-60 * 60), end: now.addingTimeInterval(-60)),
+        EventSlot(start: now.addingTimeInterval(5 * 60), end: now.addingTimeInterval(35 * 60)),
+    ]
+    let result = CalendarSlotSelector.select(slots: slots, now: now)
+    #expect(result.primary == 1)
+    #expect(result.secondary == nil)
+}
+
+@Test func selectReturnsNothingWhenAllEventsEnded() {
+    let now = Date(timeIntervalSince1970: 0)
+    let slots = [EventSlot(start: now.addingTimeInterval(-90 * 60), end: now.addingTimeInterval(-30 * 60))]
+    let result = CalendarSlotSelector.select(slots: slots, now: now)
+    #expect(result.primary == nil)
+    #expect(result.secondary == nil)
+}
