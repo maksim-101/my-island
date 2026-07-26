@@ -14,7 +14,8 @@ struct TimerPanelView: View {
     }
 
     @State private var selectedMode: ModeSelection
-    @State private var customMinutes: Int = 10
+    @State private var customMinutes: Int?
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     init(timer: TimerViewModel) {
         self.timer = timer
@@ -29,12 +30,17 @@ struct TimerPanelView: View {
                 .foregroundStyle(Tokens.Color.textMuted)
 
             modeSwitch
-            timerCard
 
             if selectedMode == .pomodoro {
+                timerCard
                 cycleStrip
+            } else if timer.isRunning {
+                // Running countdown: the readout is the axis, not a number —
+                // the collapsed notch's right wing already carries the
+                // remaining time (BL-05 / NotchBarView).
+                axisRow
             } else {
-                presetRow
+                idleRow
             }
         }
     }
@@ -132,48 +138,167 @@ struct TimerPanelView: View {
         .clipShape(RoundedRectangle(cornerRadius: Tokens.Radius.md))
     }
 
-    private var presetRow: some View {
-        HStack(spacing: Tokens.Spacing.xs) {
-            presetButton(minutes: 5)
-            presetButton(minutes: 15)
-            presetButton(minutes: 25)
+    // MARK: - Countdown, idle (BL-05 variant F)
 
-            // Type a value or scroll (wheel/trackpad) to adjust — replaces the
-            // fiddly Stepper.
+    /// One line: segmented presets, an EMPTY minutes field, and a filled Start.
+    /// No readout and no ring while idle — there is nothing to read out.
+    private var idleRow: some View {
+        HStack(spacing: Tokens.Spacing.xs) {
+            segmentedPresets
+
             HStack(spacing: 1) {
                 DurationField(minutes: $customMinutes)
-                Text("m")
+                    .accessibilityLabel("Duration in minutes")
+                Text("min")
                     .font(Tokens.Font.bodyMD)
                     .foregroundStyle(Tokens.Color.textMuted)
             }
             .padding(.horizontal, Tokens.Spacing.sm)
-            .padding(.vertical, Tokens.Spacing.xs)
+            .frame(height: 28)
             .background(Tokens.Color.surfaceRaised)
             .clipShape(RoundedRectangle(cornerRadius: Tokens.Radius.sm))
             .help("Type or scroll to set minutes")
 
-            Button("Start") {
+            Spacer(minLength: Tokens.Spacing.xs)
+
+            Button {
+                guard let customMinutes else { return }
                 timer.startCountdown(minutes: Double(customMinutes))
+            } label: {
+                // 14pt bold, not 12.5 semibold: no text color reaches 4.5:1 on
+                // the indigo accent, so Start must qualify as LARGE text (3:1).
+                Text("Start")
+                    .font(.system(size: 14, weight: .bold))
+                    .foregroundStyle(.white)
+                    .padding(.horizontal, Tokens.Spacing.md)
+                    .frame(height: 28)
+                    .background(Tokens.Color.accent)
+                    .clipShape(RoundedRectangle(cornerRadius: Tokens.Radius.sm))
             }
             .buttonStyle(.plain)
-            .font(Tokens.Font.bodyMD)
-            .foregroundStyle(Tokens.Color.accent)
+            .disabled(customMinutes == nil)
+            .opacity(customMinutes == nil ? 0.45 : 1)
         }
     }
 
-    private func presetButton(minutes: Double) -> some View {
-        Button {
-            timer.startCountdown(minutes: minutes)
-        } label: {
-            Text("\(Int(minutes))m")
-                .font(Tokens.Font.bodyMD)
-                .foregroundStyle(Tokens.Color.textMuted)
-                .padding(.horizontal, Tokens.Spacing.sm)
-                .padding(.vertical, Tokens.Spacing.xs)
-                .background(Tokens.Color.surfaceRaised)
-                .clipShape(RoundedRectangle(cornerRadius: Tokens.Radius.sm))
+    /// The four presets read as one "pick a duration" control rather than four
+    /// loose buttons — one tab stop instead of four.
+    private var segmentedPresets: some View {
+        HStack(spacing: 0) {
+            ForEach(Array([5, 15, 25, 45].enumerated()), id: \.offset) { index, minutes in
+                if index > 0 {
+                    Rectangle()
+                        .fill(Tokens.Color.hairline)
+                        .frame(width: 1, height: 28)
+                }
+                Button {
+                    timer.startCountdown(minutes: Double(minutes))
+                } label: {
+                    Text("\(minutes)")
+                        .font(Tokens.Font.bodyMD)
+                        .foregroundStyle(Tokens.Color.text)
+                        .padding(.horizontal, Tokens.Spacing.md)
+                        .frame(height: 28)
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("\(minutes) minute timer")
+            }
         }
-        .buttonStyle(.plain)
+        .background(Tokens.Color.surfaceRaised)
+        .clipShape(RoundedRectangle(cornerRadius: Tokens.Radius.sm))
+    }
+
+    // MARK: - Countdown, running (BL-05 variant I)
+
+    /// Progress axis: nothing at the left (zero is implied), a labelled knob
+    /// carrying elapsed time, and the full duration anchored right as what
+    /// 100% means.
+    private var axisRow: some View {
+        HStack(spacing: Tokens.Spacing.sm) {
+            GeometryReader { geo in
+                let width = geo.size.width
+                let fraction = progressFraction
+                ZStack(alignment: .leading) {
+                    Capsule()
+                        .fill(Tokens.Color.hairline)
+                        .frame(height: 6)
+                    Capsule()
+                        .fill(Tokens.timerColor(for: timer.tokenState))
+                        .frame(width: max(0, width * fraction), height: 6)
+                    knob
+                        .offset(x: knobOffset(width: width, fraction: fraction))
+                }
+                .frame(height: geo.size.height, alignment: .center)
+                .animation(reduceMotion ? nil : .linear(duration: 0.3), value: fraction)
+            }
+            .frame(height: 24)
+            .accessibilityElement()
+            .accessibilityLabel("Timer progress")
+            .accessibilityValue("\(formatted(elapsed)) of \(Int(timer.startedDuration / 60)) minutes")
+
+            Text("\(Int(timer.startedDuration / 60))m")
+                .font(Tokens.Font.label)
+                .foregroundStyle(Tokens.Color.textMuted)
+
+            transportControls
+        }
+    }
+
+    private var knob: some View {
+        Text(formatted(elapsed))
+            .font(Tokens.Font.label)
+            .monospacedDigit()
+            .foregroundStyle(Tokens.Color.background)
+            .frame(width: Self.knobWidth, height: 18)
+            .background(Capsule().fill(Tokens.timerColor(for: timer.tokenState)))
+            .overlay(Capsule().strokeBorder(Tokens.Color.surface, lineWidth: 2))
+    }
+
+    private static let knobWidth: CGFloat = 46
+
+    /// Centre the knob on its position, but pin it inside the track at both
+    /// ends — otherwise it hangs off the left at 0% and collides with the
+    /// total label at 100%.
+    private func knobOffset(width: CGFloat, fraction: Double) -> CGFloat {
+        let centered = width * fraction - Self.knobWidth / 2
+        return min(max(centered, 0), max(0, width - Self.knobWidth))
+    }
+
+    private var elapsed: TimeInterval {
+        max(0, timer.startedDuration - timer.remaining)
+    }
+
+    private var progressFraction: Double {
+        guard timer.startedDuration > 0 else { return 0 }
+        return min(1, max(0, elapsed / timer.startedDuration))
+    }
+
+    private var transportControls: some View {
+        HStack(spacing: Tokens.Spacing.xs) {
+            Button {
+                if timer.isPaused { timer.resume() } else { timer.pause() }
+            } label: {
+                Image(systemName: timer.isPaused ? "play.fill" : "pause.fill")
+                    .foregroundStyle(Tokens.Color.text)
+                    .frame(width: 28, height: 28)
+                    .background(Tokens.Color.surfaceRaised)
+                    .clipShape(RoundedRectangle(cornerRadius: Tokens.Radius.sm))
+            }
+            .buttonStyle(.plain)
+            .help(timer.isPaused ? "Resume" : "Pause")
+
+            Button {
+                timer.reset()
+            } label: {
+                Image(systemName: "arrow.counterclockwise")
+                    .foregroundStyle(Tokens.Color.text)
+                    .frame(width: 28, height: 28)
+                    .background(Tokens.Color.surfaceRaised)
+                    .clipShape(RoundedRectangle(cornerRadius: Tokens.Radius.sm))
+            }
+            .buttonStyle(.plain)
+            .help("Reset")
+        }
     }
 
     private var cycleStrip: some View {

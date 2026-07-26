@@ -47,5 +47,5 @@ enum NotchLayout {
     /// fading — longer than `hudFadeDelay` because a full "{title} in {N}m"
     /// sentence needs more read time than the brightness/volume nudge; ~2.5s
     /// matches the locked sketch's bump dwell.
-    static let meetingBumpFadeDelay: TimeInterval = 2.5
+    static let meetingBumpFadeDelay: TimeInterval = 6.0
 }

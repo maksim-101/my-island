@@ -5,7 +5,9 @@ import AppKit
 /// (mouse wheel / trackpad), replacing the fiddly `Stepper`. Backed by a native
 /// `NSTextField` subclass so the scroll wheel and keyboard land on one control.
 struct DurationField: NSViewRepresentable {
-    @Binding var minutes: Int
+    /// `nil` renders the field empty (placeholder only) — the idle picker starts
+    /// with no duration chosen rather than a silent default.
+    @Binding var minutes: Int?
     var range: ClosedRange<Int> = 1...180
 
     func makeCoordinator() -> Coordinator { Coordinator(self) }
@@ -20,7 +22,8 @@ struct DurationField: NSViewRepresentable {
         field.font = .monospacedSystemFont(ofSize: 12, weight: .medium)
         field.textColor = NSColor(Tokens.Color.text)
         field.delegate = context.coordinator
-        field.integerValue = minutes
+        field.placeholderString = "\u{2013}\u{2013}"
+        field.stringValue = minutes.map(String.init) ?? ""
         field.onScrollChange = { [weak coordinator = context.coordinator] value in
             coordinator?.commit(value)
         }
@@ -30,8 +33,10 @@ struct DurationField: NSViewRepresentable {
 
     func updateNSView(_ nsView: ScrollableIntField, context: Context) {
         // Don't stomp the value while the user is typing in it.
-        if nsView.currentEditor() == nil, nsView.integerValue != minutes {
-            nsView.integerValue = minutes
+        guard nsView.currentEditor() == nil else { return }
+        let shown = nsView.stringValue.isEmpty ? nil : Int(nsView.stringValue)
+        if shown != minutes {
+            nsView.stringValue = minutes.map(String.init) ?? ""
         }
     }
 
@@ -47,17 +52,31 @@ struct DurationField: NSViewRepresentable {
             parent.minutes = clamped
         }
 
+        func clear() {
+            field?.stringValue = ""
+            parent.minutes = nil
+        }
+
         /// Push the value to the binding on every keystroke — WITHOUT rewriting
         /// the field text mid-edit — so clicking Start (with no Enter first)
         /// uses the just-typed value instead of the previous one. The field
         /// text is only clamped/normalized on end-editing.
         func controlTextDidChange(_ obj: Notification) {
-            guard let field, let value = Int(field.stringValue) else { return }
+            guard let field else { return }
+            if field.stringValue.isEmpty {
+                parent.minutes = nil
+                return
+            }
+            guard let value = Int(field.stringValue) else { return }
             parent.minutes = min(max(value, parent.range.lowerBound), parent.range.upperBound)
         }
 
         func controlTextDidEndEditing(_ obj: Notification) {
-            commit(field?.integerValue ?? parent.minutes)
+            if field?.stringValue.isEmpty ?? true {
+                clear()
+                return
+            }
+            commit(field?.integerValue ?? parent.range.lowerBound)
         }
     }
 }

@@ -13,18 +13,38 @@ import SwiftUI
 struct HUDPillView: View {
     let hud: HUDViewModel
 
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
     private let barWidth: CGFloat = 88
+
+    /// A meeting bump is INTERRUPTIVE — it has to win attention you haven't
+    /// given it — whereas a brightness/volume HUD is confirmatory: you just
+    /// pressed the key and you're already looking. Same mechanics, opposite
+    /// jobs, so the meeting variant slides in, sits larger and carries an
+    /// accent rim (BL-05 / bump variant B3). Amber stays reserved for
+    /// "needs you" per DESIGN.md, so the indigo accent does the work.
+    private var isMeeting: Bool { hud.text != nil }
 
     var body: some View {
         ZStack {
             if hud.isShowingHUD {
                 pill
-                    .transition(.opacity.combined(with: .scale(scale: 0.92)))
+                    .transition(transition)
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         .padding(.top, 2)
-        .animation(.easeOut(duration: 0.22), value: hud.isShowingHUD)
+        .animation(.easeOut(duration: isMeeting && !reduceMotion ? 0.34 : 0.22), value: hud.isShowingHUD)
+    }
+
+    /// Peripheral vision detects motion far better than opacity change, which
+    /// is why the meeting bump slides out from behind the notch instead of
+    /// fading in place. Reduce Motion falls back to the plain fade.
+    private var transition: AnyTransition {
+        if isMeeting && !reduceMotion {
+            return .move(edge: .top).combined(with: .opacity)
+        }
+        return .opacity.combined(with: .scale(scale: 0.92))
     }
 
     private var pill: some View {
@@ -38,7 +58,7 @@ struct HUDPillView: View {
                 // place of the level bar — never accent/amber (T-04-07), and
                 // non-interactive (no tap target) per the plan's prohibitions.
                 Text(text)
-                    .font(Tokens.Font.label)
+                    .font(Tokens.Font.data)
                     .foregroundStyle(Tokens.Color.text)
                     .lineLimit(1)
                     .truncationMode(.tail)
@@ -54,14 +74,19 @@ struct HUDPillView: View {
                     }
             }
         }
-        .padding(.horizontal, Tokens.Spacing.lg)
-        .padding(.vertical, Tokens.Spacing.sm)
+        .padding(.horizontal, isMeeting ? Tokens.Spacing.xl : Tokens.Spacing.lg)
+        .padding(.vertical, isMeeting ? Tokens.Spacing.md : Tokens.Spacing.sm)
         // A touch of tint gives the glass more presence on bright wallpapers.
         .glassEffect(.regular.tint(Color.black.opacity(0.12)), in: .capsule)
         // Bright rim + soft outer glow make it read clearly against any
         // background; the dark shadow separates it from the wallpaper.
-        .overlay { Capsule().strokeBorder(.white.opacity(0.4), lineWidth: 0.75) }
-        .shadow(color: .black.opacity(0.35), radius: 6, y: 2)
-        .shadow(color: .white.opacity(0.22), radius: 9)
+        .overlay {
+            Capsule().strokeBorder(
+                isMeeting ? Tokens.Color.accent.opacity(0.85) : .white.opacity(0.4),
+                lineWidth: isMeeting ? 1 : 0.75
+            )
+        }
+        .shadow(color: .black.opacity(isMeeting ? 0.4 : 0.35), radius: 6, y: 2)
+        .shadow(color: isMeeting ? Tokens.Color.accent.opacity(0.5) : .white.opacity(0.22), radius: isMeeting ? 16 : 9)
     }
 }
