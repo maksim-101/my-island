@@ -29,6 +29,9 @@ public enum VideoLinkDetector {
         #"https?://meet\.google\.com/[a-z]{3}-[a-z]{4}-[a-z]{3}[^\s"']*"#,
         #"https?://(?:[a-zA-Z0-9-]+\.)?teams\.microsoft\.com/l/meetup-join/[^\s"']+"#,
         #"https?://[a-zA-Z0-9-]+\.webex\.com/[a-zA-Z0-9-]+/j\.php\?[^\s"']*MTID=[a-f0-9]+"#,
+        // The fragment carries the call key (#v=1&p=…&k=…), so the pattern must
+        // run past `#` — a fragment-terminated match yields an unjoinable URL.
+        #"https?://facetime\.apple\.com/join[^\s"']*"#,
     ]
     private static let blacklistFragments = ["/rec/share/", "/rec/play/", "/u/", "/profile", "/settings", "/download", "/about"]
 

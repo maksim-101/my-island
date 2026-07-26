@@ -16,6 +16,21 @@ import Testing
     #expect(result?.absoluteString == "https://teams.microsoft.com/l/meetup-join/abcdef")
 }
 
+@Test func detectFindsFaceTimeLinkWithFragmentKey() {
+    let link = "https://facetime.apple.com/join#v=1&p=abc123&k=xYz_-9"
+    let result = VideoLinkDetector.detect(url: link, location: nil, notes: nil)
+    #expect(result?.absoluteString == link)
+}
+
+@Test func detectFindsFaceTimeLinkInNotes() {
+    let result = VideoLinkDetector.detect(
+        url: nil,
+        location: nil,
+        notes: "Join: https://facetime.apple.com/join#v=1&p=abc123&k=xYz_-9 — see you there"
+    )
+    #expect(result?.absoluteString == "https://facetime.apple.com/join#v=1&p=abc123&k=xYz_-9")
+}
+
 @Test func detectPrefersURLOverLocationWhenBothPresent() {
     let result = VideoLinkDetector.detect(
         url: "https://zoom.us/j/1111111111",
