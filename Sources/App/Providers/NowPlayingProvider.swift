@@ -206,6 +206,13 @@ final class NowPlayingProvider {
     private(set) var artwork: NSImage?
     private(set) var isAvailable: Bool = true
 
+    /// The expanded-panel progress-bar fill fraction (D-08), computed via `NowPlayingElapsed` from
+    /// `currentModel`'s elapsed/timestamp/rate/duration fields — `nil` when there is no session or
+    /// no usable duration, which `NowPlayingPanelView` reads as "omit the bar entirely." Recomputed
+    /// on every model update AND on a cheap 1-second tick (below) so the bar advances smoothly
+    /// between the adapter's own (non-per-second) events rather than sitting still and jumping.
+    private(set) var elapsedFraction: Double?
+
     /// The classifier's current verdict (D-06/D-07/D-12) — the single source of truth `displayEar`,
     /// `displayPanel` and `isPausedInGrace` all read from.
     private(set) var classification = NowPlayingClassification(visibility: .hidden, graceDeadline: nil)
@@ -218,6 +225,13 @@ final class NowPlayingProvider {
     /// of its own. `nonisolated(unsafe)` + `deinit` cancellation mirrors `CalendarProvider`'s timer
     /// convention for anything a `@MainActor` provider schedules onto a queue.
     nonisolated(unsafe) private var pendingGraceExpiry: DispatchWorkItem?
+
+    /// Recomputes `elapsedFraction` from the cached `currentModel` only — never re-reads the
+    /// adapter (T-05-13). Started only while `classification.visibility == .playing` and stopped
+    /// for `.pausedInGrace`/`.hidden` (see `updateProgressTick`), so the bar freezes during the
+    /// grace window and nothing ticks at idle. `nonisolated(unsafe)` + `deinit` invalidation
+    /// mirrors `CalendarProvider`'s `tickTimer` convention.
+    nonisolated(unsafe) private var progressTickTimer: Timer?
 
     /// Drives `NotchBarView`'s D-05 disjunction gate — true while the session is playing or within
     /// its post-stop grace window (D-06/D-07), false once it is hidden.
@@ -312,8 +326,54 @@ final class NowPlayingProvider {
         classification = newClassification
         currentIdentity = identity
         scheduleGraceExpiry(identity: identity)
+        updateElapsedFraction()
+        updateProgressTick(for: newClassification.visibility)
 
         logger.debug("Now Playing visibility transition — visibility=\(String(describing: newClassification.visibility), privacy: .public)")
+    }
+
+    /// Recomputes `elapsedFraction` from `currentModel`'s cached elapsed/timestamp/rate/duration
+    /// fields via `NowPlayingElapsed`. When `currentModel` is `isPlaying == false` (paused-in-grace
+    /// or a session that simply isn't playing), `NowPlayingElapsed.currentMicros` already returns
+    /// the snapshot's elapsed value unchanged — so calling this again while paused naturally holds
+    /// the bar at its last known position rather than requiring separate freeze logic here.
+    private func updateElapsedFraction() {
+        guard let currentModel else {
+            elapsedFraction = nil
+            return
+        }
+        let micros = NowPlayingElapsed.currentMicros(
+            elapsedTimeMicros: currentModel.elapsedTimeMicros,
+            timestampEpochMicros: currentModel.timestampEpochMicros,
+            playbackRate: currentModel.playbackRate,
+            isPlaying: currentModel.isPlaying,
+            now: Date()
+        )
+        elapsedFraction = NowPlayingElapsed.fraction(elapsedMicros: micros, durationMicros: currentModel.durationMicros)
+    }
+
+    /// Starts the progress tick only while actually playing; stops it for paused-in-grace or
+    /// hidden — there is nothing to interpolate forward in either of those states, and running the
+    /// tick anyway would just be wasted CPU (T-05-13).
+    private func updateProgressTick(for visibility: NowPlayingVisibility) {
+        switch visibility {
+        case .playing:
+            startProgressTickIfNeeded()
+        case .pausedInGrace, .hidden:
+            stopProgressTick()
+        }
+    }
+
+    private func startProgressTickIfNeeded() {
+        guard progressTickTimer == nil else { return }
+        progressTickTimer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
+            Task { @MainActor in self?.updateElapsedFraction() }
+        }
+    }
+
+    private func stopProgressTick() {
+        progressTickTimer?.invalidate()
+        progressTickTimer = nil
     }
 
     /// `HUDViewModel`'s cancel-then-reschedule `DispatchWorkItem` idiom: cancel any pending expiry
@@ -345,5 +405,6 @@ final class NowPlayingProvider {
 
     deinit {
         pendingGraceExpiry?.cancel()
+        progressTickTimer?.invalidate()
     }
 }

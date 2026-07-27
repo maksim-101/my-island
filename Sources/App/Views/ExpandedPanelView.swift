@@ -5,6 +5,7 @@ import AppKit
 struct ExpandedPanelView: View {
     let timer: TimerViewModel
     let calendar: CalendarProvider
+    let nowPlaying: NowPlayingProvider
 
     // Owned here (not in NotchPanelController) so the clipboard slice stays
     // fully decoupled from the HUD/Timer slices (documented trade). Because
@@ -20,6 +21,11 @@ struct ExpandedPanelView: View {
 
             TimerPanelView(timer: timer)
             CalendarPanelView(calendar: calendar)
+            // D-12: the group's absence (not an internal empty branch) is how the "no session"
+            // empty state is expressed — NowPlayingPanelView itself has no empty-state branch.
+            if nowPlaying.displayPanel {
+                NowPlayingPanelView(nowPlaying: nowPlaying)
+            }
             // Let the clipboard take the panel's remaining vertical space so its
             // scroll area actually uses the height (otherwise the slack becomes
             // empty space at the bottom and only ~2 rows show).
