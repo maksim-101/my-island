@@ -79,10 +79,15 @@ private struct NowPlayingEarView: View {
     var body: some View {
         HStack(spacing: Tokens.Spacing.sm) {
             artworkTile
-            ScrollingEarText(text: earText, viewportWidth: Self.textViewportWidth)
+            ScrollingEarText(text: earText, viewportWidth: Self.textViewportWidth, isFrozen: nowPlaying.isPausedInGrace)
         }
         .padding(.leading, Tokens.Spacing.sm)
         .padding(.trailing, Tokens.Spacing.sm)
+        // UI-SPEC "Paused-in-grace visual distinction" (D-06/D-07): the whole ear — artwork tile and
+        // text together — dims to 55% opacity during the 30s post-stop grace window. No new icon,
+        // border or badge; the existing content just dims, and there is no exit animation when the
+        // window expires (it simply stops rendering, per NotchBarView's existing show/hide gate).
+        .opacity(nowPlaying.isPausedInGrace ? 0.55 : 1)
     }
 
     private var earText: String {
@@ -126,8 +131,17 @@ private struct NowPlayingEarView: View {
 private struct ScrollingEarText: View {
     let text: String
     let viewportWidth: CGFloat
+    /// True during the paused-in-grace window (UI-SPEC): halts the scroll pass immediately at
+    /// whatever offset it currently holds and suppresses any further animation while set.
+    let isFrozen: Bool
 
     @State private var offset: CGFloat = 0
+    /// Live mirror of `isFrozen`, kept current via `.onChange` — read from inside `runScrollPass()`
+    /// instead of `isFrozen` directly, because the pass's `.task(id:)` is keyed on the text alone and
+    /// does NOT restart when `isFrozen` changes, so a plain captured `let` would go stale the moment
+    /// the grace window opens or closes mid-pass. `@State`'s storage is shared across renders, so this
+    /// mirror stays live even inside a task launched by an earlier render.
+    @State private var frozenNow = false
 
     /// A hostile source (an arbitrary web page) could publish an extremely
     /// long title/artist string — cap the text handed to measurement/layout
@@ -162,6 +176,9 @@ private struct ScrollingEarText: View {
             .offset(x: offset)
             .frame(width: viewportWidth, alignment: .leading)
             .clipped()
+            .onChange(of: isFrozen, initial: true) { _, newValue in
+                frozenNow = newValue
+            }
             .task(id: boundedText) {
                 await runScrollPass()
             }
@@ -173,16 +190,16 @@ private struct ScrollingEarText: View {
         guard overflow > 0 else { return }
 
         try? await Task.sleep(for: .seconds(Self.startHoldSeconds))
-        guard !Task.isCancelled else { return }
+        guard !Task.isCancelled, !frozenNow else { return }
 
         withAnimation(.linear(duration: Self.scrollSeconds)) {
             offset = -overflow
         }
         try? await Task.sleep(for: .seconds(Self.scrollSeconds))
-        guard !Task.isCancelled else { return }
+        guard !Task.isCancelled, !frozenNow else { return }
 
         try? await Task.sleep(for: .seconds(Self.endHoldSeconds))
-        guard !Task.isCancelled else { return }
+        guard !Task.isCancelled, !frozenNow else { return }
 
         withAnimation(.easeInOut(duration: Self.snapBackSeconds)) {
             offset = 0
