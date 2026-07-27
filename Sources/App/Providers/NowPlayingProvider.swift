@@ -73,7 +73,14 @@ actor NowPlayingService {
 
         pipe.fileHandleForReading.readabilityHandler = { [weak self] handle in
             let data = handle.availableData
-            guard !data.isEmpty else { return }
+            guard !data.isEmpty else {
+                // Empty `availableData` signals EOF. The dispatch source backing
+                // `readabilityHandler` is level-triggered, so leaving the handler installed here
+                // would keep firing back-to-back for as long as the fd stays open and un-drained —
+                // clear it so an EOF-without-immediate-exit can't spin the read queue.
+                handle.readabilityHandler = nil
+                return
+            }
             // Re-enters actor isolation via Task — never mutate actor state from this
             // non-isolated closure context directly (Swift 6 strict concurrency).
             Task { await self?.append(rawChunk: data) }
