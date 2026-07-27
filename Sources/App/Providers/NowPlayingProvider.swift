@@ -29,6 +29,11 @@ actor NowPlayingService {
     private var buffer = Data()
     private var session: NowPlayingPayload?
     private var restartAttempts = 0
+    /// The pending backoff-restart `Task` scheduled by `handleTermination()` — stored so `stop()` can
+    /// cancel it. Without this, `stop()` clears `process`/`pipe` (already `nil` by the time a restart
+    /// is pending) but has no handle on the scheduled `Task.sleep` + `start()` call, so a crash-then-
+    /// quit sequence can relaunch the subprocess after the app has told it to stop.
+    private var restartTask: Task<Void, Never>?
 
     private let onUpdate: (NowPlayingModel?) -> Void
     private let logger = Logger(subsystem: AppIdentity.bundleID, category: "NowPlayingService")
@@ -94,7 +99,11 @@ actor NowPlayingService {
     }
 
     /// Clears the readability handler, terminates the process, and nils both — used at app quit.
+    /// Also cancels any pending backoff-restart `Task` so a subprocess crash immediately before quit
+    /// cannot relaunch the adapter after the app has already asked it to stop.
     func stop() {
+        restartTask?.cancel()
+        restartTask = nil
         pipe?.fileHandleForReading.readabilityHandler = nil
         process?.terminationHandler = nil
         process?.terminate()
@@ -170,8 +179,9 @@ actor NowPlayingService {
         let attempt = restartAttempts
         restartAttempts += 1
         let delay = Self.baseBackoffSeconds * pow(2.0, Double(attempt))
-        Task { [weak self] in
+        restartTask = Task { [weak self] in
             try? await Task.sleep(for: .seconds(delay))
+            guard !Task.isCancelled else { return }
             await self?.start()
         }
     }
