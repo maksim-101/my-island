@@ -23,10 +23,19 @@ struct NotchBarView: View {
     let timer: TimerViewModel
     let model: NotchViewModel
     let nowPlaying: NowPlayingProvider
+    let fullscreen: FullscreenObserver
 
     var body: some View {
         Group {
-            if (timer.isRunning || nowPlaying.displayEar) && !model.isOpen {
+            // D-10/D-11: the Now Playing ear is suppressed — absent, not
+            // dimmed — while the frontmost app is fullscreen, so a film's
+            // title never scrolls over the film. The `timer.isRunning ||`
+            // disjunct is deliberately OUTSIDE the suppressed parenthesis —
+            // a running timer still shows in fullscreen and still keeps the
+            // pill up on its own. Do not "simplify" this into a single
+            // shared condition; that would silently re-suppress the timer
+            // too and break Phase 4 D-01.
+            if (timer.isRunning || (nowPlaying.displayEar && !fullscreen.isFrontmostFullscreen)) && !model.isOpen {
                 NotchShape(topCornerRadius: 6, bottomCornerRadius: 14)
                     .fill(Color.black)
                     .overlay(alignment: .trailing) {
@@ -44,7 +53,7 @@ struct NotchBarView: View {
                         }
                     }
                     .overlay(alignment: .leading) {
-                        if nowPlaying.displayEar {
+                        if nowPlaying.displayEar && !fullscreen.isFrontmostFullscreen {
                             NowPlayingEarView(nowPlaying: nowPlaying)
                         }
                     }
