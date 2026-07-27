@@ -47,6 +47,13 @@ final class NotchPanelController: NSObject {
     // second, unsynchronized `CalendarProvider`.
     let calendarProvider = CalendarProvider()
 
+    // Owned ONCE here too (Phase 5, D-05/D-13): the adapter subprocess must
+    // survive a screen-parameter rebuild exactly like the other providers
+    // above, and must be a SINGLE instance so its subprocess is never
+    // launched twice. Exposed (not private) so `AppDelegate` can stop the
+    // adapter subprocess at quit (D-13's "stopped at quit").
+    let nowPlayingProvider = NowPlayingProvider()
+
     override init() {
         super.init()
 
@@ -145,7 +152,7 @@ final class NotchPanelController: NSObject {
             panels.append(panel)
             panel.orderFrontRegardless()
 
-            let bar = Self.makeBarPanel(notchFrame: notchFrame, anchorMaxY: screen.frame.maxY, timer: timer, model: model)
+            let bar = Self.makeBarPanel(notchFrame: notchFrame, anchorMaxY: screen.frame.maxY, timer: timer, model: model, nowPlaying: nowPlayingProvider)
             barPanels.append(bar)
             bar.orderFrontRegardless()
 
@@ -311,13 +318,13 @@ final class NotchPanelController: NSObject {
         return panel
     }
 
-    private static func makeBarPanel(notchFrame: NSRect, anchorMaxY: CGFloat, timer: TimerViewModel, model: NotchViewModel) -> NSPanel {
+    private static func makeBarPanel(notchFrame: NSRect, anchorMaxY: CGFloat, timer: TimerViewModel, model: NotchViewModel, nowPlaying: NowPlayingProvider) -> NSPanel {
         let frame = barFrame(notchFrame: notchFrame, anchorMaxY: anchorMaxY)
         let panel = NSPanel(contentRect: frame, styleMask: [.borderless, .nonactivatingPanel, .utilityWindow], backing: .buffered, defer: false)
 
         let container = NSView(frame: NSRect(origin: .zero, size: frame.size))
         container.autoresizesSubviews = true
-        let hosting = NSHostingView(rootView: NotchBarView(timer: timer, model: model))
+        let hosting = NSHostingView(rootView: NotchBarView(timer: timer, model: model, nowPlaying: nowPlaying))
         hosting.frame = NSRect(origin: .zero, size: frame.size)
         hosting.autoresizingMask = [.width, .height]
         container.addSubview(hosting)
@@ -450,14 +457,15 @@ final class NotchPanelController: NSObject {
     }
 
     /// Updates each panel's `wingHovering` from the current mouse position: the
-    /// mouse is "over a wing" when a timer is running (so the pill is visible)
-    /// and the cursor is inside the extended-pill frame but outside the notch's
-    /// own tracking region (which the `NSTrackingArea` already owns). Only fires
-    /// the dwell logic on an actual change, so this is cheap on every move.
+    /// mouse is "over a wing" when the pill is visible — a timer is running OR
+    /// the Now Playing ear has content (D-05 disjunction) — and the cursor is
+    /// inside the extended-pill frame but outside the notch's own tracking
+    /// region (which the `NSTrackingArea` already owns). Only fires the dwell
+    /// logic on an actual change, so this is cheap on every move.
     private func handleMouseMoved() {
         let mouse = NSEvent.mouseLocation
         for panel in panels {
-            let inBar = timer.isRunning
+            let inBar = (timer.isRunning || nowPlayingProvider.displayEar)
                 && Self.barFrame(notchFrame: panel.notchFrame, anchorMaxY: panel.anchorMaxY).contains(mouse)
             let inNotch = Self.collapsedFrame(notchFrame: panel.notchFrame, anchorMaxY: panel.anchorMaxY).contains(mouse)
             let wing = inBar && !inNotch

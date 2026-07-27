@@ -40,6 +40,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         .terminateNow
     }
 
+    // D-13: the adapter subprocess runs for the app's whole lifetime, started
+    // at launch (NowPlayingProvider.init()) and stopped at quit — without
+    // this, the perl subprocess would outlive the app as an orphan process.
+    func applicationWillTerminate(_ notification: Notification) {
+        notchPanelController?.nowPlayingProvider.stopService()
+    }
+
     // Promotes the app to `.regular` and activates it while the Settings
     // window is open — the notch panel is a non-activating overlay, so its
     // hosted KeyboardShortcuts.Recorder (and the system's conflict-alert
