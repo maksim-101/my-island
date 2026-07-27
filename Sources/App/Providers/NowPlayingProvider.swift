@@ -257,10 +257,9 @@ final class NowPlayingProvider {
     }
 
     /// The expanded panel group follows the SAME grace as the ear (assumptions block: fullscreen
-    /// suppression is ear-only and layered on in plan 05-05, not here).
-    var displayPanel: Bool {
-        classification.visibility != .hidden
-    }
+    /// suppression is ear-only and layered on in plan 05-05, not here) — derived directly from
+    /// `displayEar` so the invariant can't silently diverge if only one of the two is edited later.
+    var displayPanel: Bool { displayEar }
 
     /// Drives the ear's 55% opacity dim and frozen scroll (UI-SPEC "Paused-in-grace visual
     /// distinction").
