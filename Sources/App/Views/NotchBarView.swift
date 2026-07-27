@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 import MyIslandCore
 
@@ -97,29 +98,96 @@ private struct NowPlayingEarView: View {
                 .frame(width: Self.artworkSize, height: Self.artworkSize)
                 .clipShape(RoundedRectangle(cornerRadius: Self.artworkCornerRadius))
         } else {
-            // Footprint preserved even without artwork (D-01) — Task 2 adds
-            // the styled `surfaceRaised` + `music.note` placeholder tile.
-            Color.clear
+            // No-artwork fallback (D-01, UI-SPEC "Collapsed left ear"): the
+            // exact same 20x20 footprint, never removed — a real session with
+            // no artwork (spike 002: the Apple TV app) must read as "playing,
+            // no art" rather than snapping to the empty-ear treatment.
+            RoundedRectangle(cornerRadius: Self.artworkCornerRadius)
+                .fill(Tokens.Color.surfaceRaised)
                 .frame(width: Self.artworkSize, height: Self.artworkSize)
+                .overlay {
+                    Image(systemName: "music.note")
+                        .font(.system(size: 9, weight: .medium))
+                        .foregroundStyle(Tokens.Color.textFaint)
+                }
         }
     }
 }
 
-/// The ear's "Title — Artist" text (D-04). This tracer-slice version renders
-/// statically, clipped to the fixed viewport width so overflow is hidden
-/// rather than widening the ear (D-03) — Task 2 replaces this with the
-/// restrained single-pass scroll mechanics.
+/// The ear's "Title — Artist" text (D-04, resolved scroll mechanics per
+/// UI-SPEC "Collapsed left ear"). Static (no motion at all) when the text
+/// fits the viewport; otherwise exactly ONE restrained pass per track change:
+/// hold at the start 4s, scroll left ~6s to reveal the end, hold at the end
+/// 2s, then a 200ms fade-cut back to the start — never a repeating marquee
+/// (the user's own words: "don't loop too quickly... not necessary to have
+/// like an ad banner all the time"). Keyed on the text value via `.task(id:)`
+/// so the pass re-triggers only on a track change or when the view reappears
+/// after being absent — never on a decorative timer.
 private struct ScrollingEarText: View {
     let text: String
     let viewportWidth: CGFloat
 
+    @State private var offset: CGFloat = 0
+
+    /// A hostile source (an arbitrary web page) could publish an extremely
+    /// long title/artist string — cap the text handed to measurement/layout
+    /// before the ear ever lays it out; the viewport only ever reveals a
+    /// couple hundred points of text, so a longer string contributes nothing
+    /// but layout cost (T-05-07).
+    private static let maxCharacters = 300
+    private static let startHoldSeconds: Double = 4
+    private static let scrollSeconds: Double = 6
+    private static let endHoldSeconds: Double = 2
+    private static let snapBackSeconds: Double = 0.2
+    /// Matches `Tokens.Font.bodyMD` (`SwiftUI.Font.system(size: 12.5, weight:
+    /// .regular)`) — measured directly via `NSFont`/`NSString` sizing rather
+    /// than a `GeometryReader` round-trip, so the scroll decision is made
+    /// synchronously with no first-layout race.
+    private static let measuringFont = NSFont.systemFont(ofSize: 12.5, weight: .regular)
+
+    private var boundedText: String {
+        String(text.prefix(Self.maxCharacters))
+    }
+
+    private var measuredWidth: CGFloat {
+        (boundedText as NSString).size(withAttributes: [.font: Self.measuringFont]).width
+    }
+
     var body: some View {
-        Text(text)
+        Text(boundedText)
             .font(Tokens.Font.bodyMD)
             .foregroundStyle(Tokens.Color.text)
             .lineLimit(1)
             .fixedSize(horizontal: true, vertical: false)
+            .offset(x: offset)
             .frame(width: viewportWidth, alignment: .leading)
             .clipped()
+            .task(id: boundedText) {
+                await runScrollPass()
+            }
+    }
+
+    private func runScrollPass() async {
+        offset = 0
+        let overflow = measuredWidth - viewportWidth
+        guard overflow > 0 else { return }
+
+        try? await Task.sleep(for: .seconds(Self.startHoldSeconds))
+        guard !Task.isCancelled else { return }
+
+        withAnimation(.linear(duration: Self.scrollSeconds)) {
+            offset = -overflow
+        }
+        try? await Task.sleep(for: .seconds(Self.scrollSeconds))
+        guard !Task.isCancelled else { return }
+
+        try? await Task.sleep(for: .seconds(Self.endHoldSeconds))
+        guard !Task.isCancelled else { return }
+
+        withAnimation(.easeInOut(duration: Self.snapBackSeconds)) {
+            offset = 0
+        }
+        // Stays parked at the start indefinitely after this — one pass only,
+        // never a looping/re-arming animation (D-04).
     }
 }
