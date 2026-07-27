@@ -54,6 +54,12 @@ final class NotchPanelController: NSObject {
     // adapter subprocess at quit (D-13's "stopped at quit").
     let nowPlayingProvider = NowPlayingProvider()
 
+    // Owned ONCE here too (Phase 5, D-10/D-11): the fullscreen signal must
+    // survive a screen-parameter rebuild exactly like the other providers
+    // above — creating it inside `rebuildPanels` would tear down and restart
+    // its poll timer on every clamshell open/close or display change.
+    private let fullscreenObserver = FullscreenObserver()
+
     override init() {
         super.init()
 
@@ -152,7 +158,7 @@ final class NotchPanelController: NSObject {
             panels.append(panel)
             panel.orderFrontRegardless()
 
-            let bar = Self.makeBarPanel(notchFrame: notchFrame, anchorMaxY: screen.frame.maxY, timer: timer, model: model, nowPlaying: nowPlayingProvider)
+            let bar = Self.makeBarPanel(notchFrame: notchFrame, anchorMaxY: screen.frame.maxY, timer: timer, model: model, nowPlaying: nowPlayingProvider, fullscreen: fullscreenObserver)
             barPanels.append(bar)
             bar.orderFrontRegardless()
 
@@ -318,13 +324,13 @@ final class NotchPanelController: NSObject {
         return panel
     }
 
-    private static func makeBarPanel(notchFrame: NSRect, anchorMaxY: CGFloat, timer: TimerViewModel, model: NotchViewModel, nowPlaying: NowPlayingProvider) -> NSPanel {
+    private static func makeBarPanel(notchFrame: NSRect, anchorMaxY: CGFloat, timer: TimerViewModel, model: NotchViewModel, nowPlaying: NowPlayingProvider, fullscreen: FullscreenObserver) -> NSPanel {
         let frame = barFrame(notchFrame: notchFrame, anchorMaxY: anchorMaxY)
         let panel = NSPanel(contentRect: frame, styleMask: [.borderless, .nonactivatingPanel, .utilityWindow], backing: .buffered, defer: false)
 
         let container = NSView(frame: NSRect(origin: .zero, size: frame.size))
         container.autoresizesSubviews = true
-        let hosting = NSHostingView(rootView: NotchBarView(timer: timer, model: model, nowPlaying: nowPlaying))
+        let hosting = NSHostingView(rootView: NotchBarView(timer: timer, model: model, nowPlaying: nowPlaying, fullscreen: fullscreen))
         hosting.frame = NSRect(origin: .zero, size: frame.size)
         hosting.autoresizingMask = [.width, .height]
         container.addSubview(hosting)
@@ -465,7 +471,10 @@ final class NotchPanelController: NSObject {
     private func handleMouseMoved() {
         let mouse = NSEvent.mouseLocation
         for panel in panels {
-            let inBar = (timer.isRunning || nowPlayingProvider.displayEar)
+            // Mirrors NotchBarView's pill gate exactly (D-10/D-11): the timer
+            // disjunct sits OUTSIDE the fullscreen suppression, so the wing
+            // hover region never disappears out from under a running timer.
+            let inBar = (timer.isRunning || (nowPlayingProvider.displayEar && !fullscreenObserver.isFrontmostFullscreen))
                 && Self.barFrame(notchFrame: panel.notchFrame, anchorMaxY: panel.anchorMaxY).contains(mouse)
             let inNotch = Self.collapsedFrame(notchFrame: panel.notchFrame, anchorMaxY: panel.anchorMaxY).contains(mouse)
             let wing = inBar && !inNotch
