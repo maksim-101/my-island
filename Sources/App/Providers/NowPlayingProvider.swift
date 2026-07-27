@@ -196,9 +196,9 @@ struct NowPlayingModel: Sendable, Equatable {
     let artworkMimeType: String?
 }
 
-/// Mirrors `CalendarProvider`'s `@MainActor @Observable` shape. Owns the grace/stale rules'
-/// eventual home (D-06/D-07 land in plan 05-03 and extend `displayEar`) — for this tracer slice,
-/// the ear shows exactly when a session exists and is playing.
+/// Mirrors `CalendarProvider`'s `@MainActor @Observable` shape. Owns the grace/stale rules
+/// (D-06/D-07/D-12): every model update — including the adapter's own empty state — is classified by
+/// `NowPlayingSessionClassifier`, and `displayEar`/`displayPanel`/`isPausedInGrace` read the result.
 @MainActor
 @Observable
 final class NowPlayingProvider {
@@ -206,9 +206,35 @@ final class NowPlayingProvider {
     private(set) var artwork: NSImage?
     private(set) var isAvailable: Bool = true
 
-    /// Drives `NotchBarView`'s D-05 disjunction gate. Grace/stale extensions land in plan 05-03.
+    /// The classifier's current verdict (D-06/D-07/D-12) — the single source of truth `displayEar`,
+    /// `displayPanel` and `isPausedInGrace` all read from.
+    private(set) var classification = NowPlayingClassification(visibility: .hidden, graceDeadline: nil)
+    /// The identity the current `classification` was computed against — passed back into `classify`
+    /// on the next update so a different session never inherits this one's grace deadline.
+    private var currentIdentity: NowPlayingSessionIdentity?
+    /// Grace deadline arithmetic lives entirely in `NowPlayingSessionClassifier.classify` — this file
+    /// only schedules a `DispatchWorkItem` for `NowPlayingSessionClassifier.gracePeriod`'s window and
+    /// re-runs that same pure `classify()` call when it fires; it defines no competing grace constant
+    /// of its own. `nonisolated(unsafe)` + `deinit` cancellation mirrors `CalendarProvider`'s timer
+    /// convention for anything a `@MainActor` provider schedules onto a queue.
+    nonisolated(unsafe) private var pendingGraceExpiry: DispatchWorkItem?
+
+    /// Drives `NotchBarView`'s D-05 disjunction gate — true while the session is playing or within
+    /// its post-stop grace window (D-06/D-07), false once it is hidden.
     var displayEar: Bool {
-        currentModel?.isPlaying == true
+        classification.visibility != .hidden
+    }
+
+    /// The expanded panel group follows the SAME grace as the ear (assumptions block: fullscreen
+    /// suppression is ear-only and layered on in plan 05-05, not here).
+    var displayPanel: Bool {
+        classification.visibility != .hidden
+    }
+
+    /// Drives the ear's 55% opacity dim and frozen scroll (UI-SPEC "Paused-in-grace visual
+    /// distinction").
+    var isPausedInGrace: Bool {
+        classification.visibility == .pausedInGrace
     }
 
     // `@ObservationIgnored`: a `lazy var` whose initializer closure captures
@@ -232,28 +258,92 @@ final class NowPlayingProvider {
         }
     }
 
-    /// Applies a model update from the service. Decodes `artwork` from `artworkData` via
-    /// `NSImage(data:)` ONLY when the bytes differ from the previously decoded bytes (cheap `Data`
-    /// equality check first) — this is the one and only decode site, on the main actor (D-17,
-    /// RESEARCH.md Pitfall 3). A nil decode result is treated exactly like "no artwork."
+    /// Applies a model update from the service: builds the session identity, classifies it against
+    /// the previous classification/identity (D-06/D-07/D-12), then hands off to `handle` for the
+    /// shared model/artwork/scheduling side effects.
     private func apply(model: NowPlayingModel?) {
-        guard let model else {
+        let identity = model.map {
+            NowPlayingSessionIdentity(bundleIdentifier: $0.bundleIdentifier, title: $0.title, artist: $0.artist)
+        }
+        let newClassification = NowPlayingSessionClassifier.classify(
+            identity: identity,
+            isPlaying: model?.isPlaying ?? false,
+            previous: classification,
+            previousIdentity: currentIdentity,
+            now: Date()
+        )
+        handle(newClassification: newClassification, identity: identity, model: model)
+    }
+
+    /// Re-runs the classifier at the current instant against the SAME session identity and its
+    /// last-known non-playing state — the grace expiry goes through the exact same pure rules as
+    /// every other transition rather than a hand-rolled "just hide it" shortcut. Any resume in the
+    /// meantime already went through `apply(model:)`, which cancelled and replaced this work item, so
+    /// this only ever fires for a session that is still not playing.
+    private func reEvaluateGraceExpiry(identity: NowPlayingSessionIdentity?) {
+        let newClassification = NowPlayingSessionClassifier.classify(
+            identity: identity,
+            isPlaying: false,
+            previous: classification,
+            previousIdentity: currentIdentity,
+            now: Date()
+        )
+        handle(newClassification: newClassification, identity: identity, model: currentModel)
+    }
+
+    /// Shared side effects for a freshly computed classification: decodes `artwork` from
+    /// `artworkData` via `NSImage(data:)` ONLY when the bytes differ from the previously decoded
+    /// bytes (cheap `Data` equality check first) — this is the one and only decode site, on the main
+    /// actor (D-17, RESEARCH.md Pitfall 3) — clears both `currentModel` and `artwork` the moment the
+    /// session goes hidden (no stale bytes retained, D-17), stores the new classification/identity,
+    /// (re)schedules the grace-expiry work item, and logs the transition by visibility name only —
+    /// never a title, artist, album or source-app name (T-05-02).
+    private func handle(newClassification: NowPlayingClassification, identity: NowPlayingSessionIdentity?, model: NowPlayingModel?) {
+        if newClassification.visibility == .hidden {
             currentModel = nil
             artwork = nil
+        } else if let model {
+            if model.artworkData != currentModel?.artworkData {
+                artwork = model.artworkData.flatMap { NSImage(data: $0) }
+            }
+            currentModel = model
+        }
+
+        classification = newClassification
+        currentIdentity = identity
+        scheduleGraceExpiry(identity: identity)
+
+        logger.debug("Now Playing visibility transition — visibility=\(String(describing: newClassification.visibility), privacy: .public)")
+    }
+
+    /// `HUDViewModel`'s cancel-then-reschedule `DispatchWorkItem` idiom: cancel any pending expiry
+    /// first, then — only when the current classification is paused-in-grace with a deadline — build
+    /// a new work item and dispatch it after the remaining interval. A resume inside the window (a
+    /// fresh `apply(model:)` call) cancels this before it ever fires; a different session's arrival
+    /// replaces it outright.
+    private func scheduleGraceExpiry(identity: NowPlayingSessionIdentity?) {
+        pendingGraceExpiry?.cancel()
+        pendingGraceExpiry = nil
+
+        guard classification.visibility == .pausedInGrace, let deadline = classification.graceDeadline else {
             return
         }
-        if model.artworkData != currentModel?.artworkData {
-            artwork = model.artworkData.flatMap { NSImage(data: $0) }
+
+        let workItem = DispatchWorkItem { [weak self] in
+            self?.reEvaluateGraceExpiry(identity: identity)
         }
-        currentModel = model
-        // Status, byte counts, attempt numbers only — never a title, artist, album or
-        // application-name value (T-05-02).
-        logger.debug("Now Playing model updated — isPlaying=\(model.isPlaying, privacy: .public), artworkBytes=\(model.artworkData?.count ?? 0, privacy: .public)")
+        pendingGraceExpiry = workItem
+        let delay = max(0, deadline.timeIntervalSince(Date()))
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: workItem)
     }
 
     /// Stops the adapter subprocess — called from `AppDelegate` at quit, mirroring the app's other
     /// providers' teardown expectations.
     func stopService() {
         Task { await service.stop() }
+    }
+
+    deinit {
+        pendingGraceExpiry?.cancel()
     }
 }
