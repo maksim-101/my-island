@@ -162,6 +162,12 @@ private struct ScrollingEarText: View {
     private static let scrollSeconds: Double = 6
     private static let endHoldSeconds: Double = 2
     private static let snapBackSeconds: Double = 0.2
+    /// The scroll-out phase below drives `offset` via manual, un-animated per-tick assignment rather
+    /// than a single `withAnimation(.linear(duration: scrollSeconds))` block, specifically so
+    /// `frozenNow` can be sampled every tick — this is what makes the `isFrozen` doc comment's
+    /// "halts the scroll pass immediately" claim true, instead of only true at the three coarse
+    /// `await` points a single animated block would leave.
+    private static let scrollTickInterval: Double = 1.0 / 30.0
     /// Matches `Tokens.Font.bodyMD` (`SwiftUI.Font.system(size: 12.5, weight:
     /// .regular)`) — measured directly via `NSFont`/`NSString` sizing rather
     /// than a `GeometryReader` round-trip, so the scroll decision is made
@@ -201,11 +207,15 @@ private struct ScrollingEarText: View {
         try? await Task.sleep(for: .seconds(Self.startHoldSeconds))
         guard !Task.isCancelled, !frozenNow else { return }
 
-        withAnimation(.linear(duration: Self.scrollSeconds)) {
-            offset = -overflow
+        let scrollStart = Date()
+        while true {
+            guard !Task.isCancelled, !frozenNow else { return }
+            let elapsed = Date().timeIntervalSince(scrollStart)
+            guard elapsed < Self.scrollSeconds else { break }
+            offset = -overflow * CGFloat(elapsed / Self.scrollSeconds)
+            try? await Task.sleep(for: .seconds(Self.scrollTickInterval))
         }
-        try? await Task.sleep(for: .seconds(Self.scrollSeconds))
-        guard !Task.isCancelled, !frozenNow else { return }
+        offset = -overflow
 
         try? await Task.sleep(for: .seconds(Self.endHoldSeconds))
         guard !Task.isCancelled, !frozenNow else { return }
