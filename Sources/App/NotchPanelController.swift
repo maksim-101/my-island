@@ -144,7 +144,7 @@ final class NotchPanelController: NSObject {
             }
 
             let model = NotchViewModel()
-            let panel = Self.makePanel(notchFrame: notchFrame, screen: screen, model: model, timer: timer, calendar: calendarProvider)
+            let panel = Self.makePanel(notchFrame: notchFrame, screen: screen, model: model, timer: timer, calendar: calendarProvider, nowPlaying: nowPlayingProvider)
             model.onOpenChange = { [weak self, weak panel] isOpen in
                 guard let self, let panel else { return }
                 self.applyFrame(to: panel, isOpen: isOpen)
@@ -164,7 +164,7 @@ final class NotchPanelController: NSObject {
         logger.info("Initialized with \(self.panels.count, privacy: .public) notch panel(s)")
     }
 
-    private static func makePanel(notchFrame: NSRect, screen: NSScreen, model: NotchViewModel, timer: TimerViewModel, calendar: CalendarProvider) -> NotchPanel {
+    private static func makePanel(notchFrame: NSRect, screen: NSScreen, model: NotchViewModel, timer: TimerViewModel, calendar: CalendarProvider, nowPlaying: NowPlayingProvider) -> NotchPanel {
         let anchorMaxY = screen.frame.maxY
         let collapsedFrame = Self.collapsedFrame(notchFrame: notchFrame, anchorMaxY: anchorMaxY)
         let styleMask: NSWindow.StyleMask = [.borderless, .nonactivatingPanel, .utilityWindow]
@@ -179,7 +179,7 @@ final class NotchPanelController: NSObject {
         panel.notchFrame = notchFrame
         panel.anchorMaxY = anchorMaxY
 
-        let hostingView = NSHostingView(rootView: NotchContentView(model: model, notchSize: notchFrame.size, timer: timer, calendar: calendar))
+        let hostingView = NSHostingView(rootView: NotchContentView(model: model, notchSize: notchFrame.size, timer: timer, calendar: calendar, nowPlaying: nowPlaying))
         // Decouple from the window's Auto Layout / constraint-update cycle:
         // `applyFrame` resizes the panel manually via `setFrame`, and letting
         // the hosting view participate in constraint-based sizing causes an

@@ -47,6 +47,7 @@ struct NotchContentView: View {
     let notchSize: CGSize
     let timer: TimerViewModel
     let calendar: CalendarProvider
+    let nowPlaying: NowPlayingProvider
 
     @State private var flashOpacity: Double = 0
 
@@ -100,7 +101,7 @@ struct NotchContentView: View {
             // ONE unit and is masked to a shape sized to the currently
             // morphing box (`shapeSize`) so it never paints outside the still
             // growing/shrinking black notch.
-            ExpandedPanelView(timer: timer, calendar: calendar)
+            ExpandedPanelView(timer: timer, calendar: calendar, nowPlaying: nowPlaying)
                 .frame(width: expandedSize.width, height: expandedSize.height, alignment: .topLeading)
                 .mask(alignment: .top) {
                     NotchShape(topCornerRadius: 6, bottomCornerRadius: model.isOpen ? 24 : 14)
