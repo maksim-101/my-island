@@ -5,7 +5,7 @@ import MyIslandCore
 /// The collapsed notch's "extended pill": a SINGLE continuous black shape that
 /// spans the notch cutout AND equal strips of the visible menu-bar ears on both
 /// sides, with the running-timer readout on the right and the Now Playing ear
-/// (artwork + "Title — Artist", D-01/D-02) on the left.
+/// (artwork tile only — see supersede note below) on the left.
 ///
 /// Why one shape (not separate wings): the collapsed strip over the camera
 /// cutout has no visible pixels, so the timer readout must live in the ears —
@@ -18,6 +18,12 @@ import MyIslandCore
 /// disjunction), and the panel is collapsed (the expanded panel already shows
 /// both). Rendered by its own window, sized to span the cutout plus both ear
 /// strips.
+///
+/// **SUPERSEDED (2026-07-27, quick task 260727-sf0):** the left ear originally
+/// carried both artwork and a scrolling "Title — Artist" text row (D-01/D-02).
+/// The user compared the shipped ear against Alcove and found the text banner
+/// distracting; the ear now shows the artwork tile alone. Full track identity
+/// remains available in the expanded panel (D-08).
 @MainActor
 struct NotchBarView: View {
     let timer: TimerViewModel
@@ -68,39 +74,32 @@ struct NotchBarView: View {
     }
 }
 
-/// The left ear's content (D-01): a fixed 20x20 artwork square plus the
-/// "Title — Artist" text (D-02), laid out to match the symmetric 84pt
-/// `NotchPanelController.barEar` ear exactly (D-03) — 8pt leading pad, the
-/// 20pt tile, an 8pt gap (`Tokens.Spacing.sm`, UI-SPEC's off-grid exception),
-/// a clipped text viewport, and an 8pt trailing pad before the notch cutout
-/// edge (84 − (8+20+8+8) = 40pt of viewport). Never widens the ear (D-03) —
-/// overflow is absorbed entirely inside the clipped viewport.
+/// The left ear's content: a fixed 20x20 artwork square (or its no-artwork
+/// fallback), inset `Tokens.Spacing.lg` (16pt) from the pill's outer left
+/// edge — mirroring the timer readout's 16pt inset on the opposite ear so the
+/// pill reads as balanced. Laid out within the symmetric 84pt
+/// `NotchPanelController.barEar` ear (D-03, unchanged) but no longer fills it
+/// with track-identity text.
+///
+/// **SUPERSEDED (2026-07-27, quick task 260727-sf0):** this ear originally
+/// also carried a scrolling "Title — Artist" text row alongside the artwork,
+/// with the layout arithmetic (leading pad, tile, gap, clipped text viewport,
+/// trailing pad) that implied. The track-identity text row was removed; the
+/// ear now carries the artwork tile alone.
 private struct NowPlayingEarView: View {
     let nowPlaying: NowPlayingProvider
 
     private static let artworkSize: CGFloat = 20
     private static let artworkCornerRadius: CGFloat = 4
-    private static let totalEarWidth: CGFloat = 84
-    static var textViewportWidth: CGFloat {
-        totalEarWidth - Tokens.Spacing.sm - artworkSize - Tokens.Spacing.sm - Tokens.Spacing.sm
-    }
 
     var body: some View {
-        HStack(spacing: Tokens.Spacing.sm) {
-            artworkTile
-            ScrollingEarText(text: earText, viewportWidth: Self.textViewportWidth, isFrozen: nowPlaying.isPausedInGrace)
-        }
-        .padding(.leading, Tokens.Spacing.sm)
-        .padding(.trailing, Tokens.Spacing.sm)
-        // UI-SPEC "Paused-in-grace visual distinction" (D-06/D-07): the whole ear — artwork tile and
-        // text together — dims to 55% opacity during the 30s post-stop grace window. No new icon,
-        // border or badge; the existing content just dims, and there is no exit animation when the
-        // window expires (it simply stops rendering, per NotchBarView's existing show/hide gate).
-        .opacity(nowPlaying.isPausedInGrace ? 0.55 : 1)
-    }
-
-    private var earText: String {
-        NowPlayingFormatting.earText(title: nowPlaying.currentModel?.title, artist: nowPlaying.currentModel?.artist)
+        artworkTile
+            .padding(.leading, Tokens.Spacing.lg)
+            // UI-SPEC "Paused-in-grace visual distinction" (D-06/D-07): the artwork tile dims to 55%
+            // opacity during the 30s post-stop grace window. No new icon, border or badge; the
+            // existing content just dims, and there is no exit animation when the window expires (it
+            // simply stops rendering, per NotchBarView's existing show/hide gate).
+            .opacity(nowPlaying.isPausedInGrace ? 0.55 : 1)
     }
 
     @ViewBuilder
@@ -125,105 +124,5 @@ private struct NowPlayingEarView: View {
                         .foregroundStyle(Tokens.Color.textFaint)
                 }
         }
-    }
-}
-
-/// The ear's "Title — Artist" text (D-04, resolved scroll mechanics per
-/// UI-SPEC "Collapsed left ear"). Static (no motion at all) when the text
-/// fits the viewport; otherwise exactly ONE restrained pass per track change:
-/// hold at the start 4s, scroll left ~6s to reveal the end, hold at the end
-/// 2s, then a 200ms fade-cut back to the start — never a repeating marquee
-/// (the user's own words: "don't loop too quickly... not necessary to have
-/// like an ad banner all the time"). Keyed on the text value via `.task(id:)`
-/// so the pass re-triggers only on a track change or when the view reappears
-/// after being absent — never on a decorative timer.
-private struct ScrollingEarText: View {
-    let text: String
-    let viewportWidth: CGFloat
-    /// True during the paused-in-grace window (UI-SPEC): halts the scroll pass immediately at
-    /// whatever offset it currently holds and suppresses any further animation while set.
-    let isFrozen: Bool
-
-    @State private var offset: CGFloat = 0
-    /// Live mirror of `isFrozen`, kept current via `.onChange` — read from inside `runScrollPass()`
-    /// instead of `isFrozen` directly, because the pass's `.task(id:)` is keyed on the text alone and
-    /// does NOT restart when `isFrozen` changes, so a plain captured `let` would go stale the moment
-    /// the grace window opens or closes mid-pass. `@State`'s storage is shared across renders, so this
-    /// mirror stays live even inside a task launched by an earlier render.
-    @State private var frozenNow = false
-
-    /// A hostile source (an arbitrary web page) could publish an extremely
-    /// long title/artist string — cap the text handed to measurement/layout
-    /// before the ear ever lays it out; the viewport only ever reveals a
-    /// couple hundred points of text, so a longer string contributes nothing
-    /// but layout cost (T-05-07).
-    private static let maxCharacters = 300
-    private static let startHoldSeconds: Double = 4
-    private static let scrollSeconds: Double = 6
-    private static let endHoldSeconds: Double = 2
-    private static let snapBackSeconds: Double = 0.2
-    /// The scroll-out phase below drives `offset` via manual, un-animated per-tick assignment rather
-    /// than a single `withAnimation(.linear(duration: scrollSeconds))` block, specifically so
-    /// `frozenNow` can be sampled every tick — this is what makes the `isFrozen` doc comment's
-    /// "halts the scroll pass immediately" claim true, instead of only true at the three coarse
-    /// `await` points a single animated block would leave.
-    private static let scrollTickInterval: Double = 1.0 / 30.0
-    /// Matches `Tokens.Font.bodyMD` (`SwiftUI.Font.system(size: 12.5, weight:
-    /// .regular)`) — measured directly via `NSFont`/`NSString` sizing rather
-    /// than a `GeometryReader` round-trip, so the scroll decision is made
-    /// synchronously with no first-layout race.
-    private static let measuringFont = NSFont.systemFont(ofSize: 12.5, weight: .regular)
-
-    private var boundedText: String {
-        String(text.prefix(Self.maxCharacters))
-    }
-
-    private var measuredWidth: CGFloat {
-        (boundedText as NSString).size(withAttributes: [.font: Self.measuringFont]).width
-    }
-
-    var body: some View {
-        Text(boundedText)
-            .font(Tokens.Font.bodyMD)
-            .foregroundStyle(Tokens.Color.text)
-            .lineLimit(1)
-            .fixedSize(horizontal: true, vertical: false)
-            .offset(x: offset)
-            .frame(width: viewportWidth, alignment: .leading)
-            .clipped()
-            .onChange(of: isFrozen, initial: true) { _, newValue in
-                frozenNow = newValue
-            }
-            .task(id: boundedText) {
-                await runScrollPass()
-            }
-    }
-
-    private func runScrollPass() async {
-        offset = 0
-        let overflow = measuredWidth - viewportWidth
-        guard overflow > 0 else { return }
-
-        try? await Task.sleep(for: .seconds(Self.startHoldSeconds))
-        guard !Task.isCancelled, !frozenNow else { return }
-
-        let scrollStart = Date()
-        while true {
-            guard !Task.isCancelled, !frozenNow else { return }
-            let elapsed = Date().timeIntervalSince(scrollStart)
-            guard elapsed < Self.scrollSeconds else { break }
-            offset = -overflow * CGFloat(elapsed / Self.scrollSeconds)
-            try? await Task.sleep(for: .seconds(Self.scrollTickInterval))
-        }
-        offset = -overflow
-
-        try? await Task.sleep(for: .seconds(Self.endHoldSeconds))
-        guard !Task.isCancelled, !frozenNow else { return }
-
-        withAnimation(.easeInOut(duration: Self.snapBackSeconds)) {
-            offset = 0
-        }
-        // Stays parked at the start indefinitely after this — one pass only,
-        // never a looping/re-arming animation (D-04).
     }
 }
