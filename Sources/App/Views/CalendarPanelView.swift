@@ -125,15 +125,39 @@ private struct EventPillView: View {
         }
     }
 
-    /// Opens the event in Calendar.app. `calshow:` takes an INTEGER count of
-    /// seconds since the reference date (2001-01-01); interpolating the raw
-    /// `Double` emits a trailing ".0" (e.g. `calshow:807120000.0`) that
-    /// LaunchServices can't parse — hence the "no application set to open the
-    /// URL" dialog. Truncating to `Int` is what makes the deep link resolve.
+    /// Opens Calendar.app and navigates it to the event's day. The documented
+    /// `calshow:` URL scheme is NOT registered on this Mac (verified: even
+    /// `/usr/bin/open calshow:…` returns `kLSApplicationNotFoundErr`), so
+    /// `NSWorkspace.open` can't route it. Instead we drive Calendar via an
+    /// Apple Event, matching this codebase's subprocess-`osascript` convention
+    /// (`CCMetrics/SessionFocuser`). Only integer date components are
+    /// interpolated — never any event string (T-05-01) — and the date is built
+    /// day-first so a short month can't overflow. Triggers a one-time Automation
+    /// (Apple Events → Calendar) permission prompt on first use.
     private func openInCalendar() {
-        let seconds = Int(event.startDate.timeIntervalSinceReferenceDate)
-        guard let url = URL(string: "calshow:\(seconds)") else { return }
-        NSWorkspace.shared.open(url)
+        let c = Foundation.Calendar.current.dateComponents(
+            [.year, .month, .day, .hour, .minute], from: event.startDate
+        )
+        guard let y = c.year, let mo = c.month, let d = c.day,
+              let h = c.hour, let mi = c.minute else { return }
+        let script = """
+        set d to current date
+        set day of d to 1
+        set year of d to \(y)
+        set month of d to \(mo)
+        set day of d to \(d)
+        set hours of d to \(h)
+        set minutes of d to \(mi)
+        set seconds of d to 0
+        tell application "Calendar"
+        activate
+        view calendar at d
+        end tell
+        """
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
+        process.arguments = ["-e", script]
+        try? process.run()
     }
 
     private var chipText: String {
