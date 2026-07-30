@@ -100,17 +100,14 @@ private struct NowPlayingEarView: View {
     private static let artworkCornerRadius: CGFloat = 5
 
     var body: some View {
-        // Shared ArtworkTile so the hairline ring + artwork-derived bloom live
-        // once (also used by the 44pt panel tile). Gentle bloom on the ear
-        // (radius 6, opacity 0.5). The no-artwork fallback keeps the identical
+        // Shared ArtworkTile so the neon-edge treatment lives once (also used by
+        // the 44pt panel tile). The no-artwork fallback keeps the identical
         // 20x20 footprint — a real session with no art (spike 002: the Apple TV
         // app) reads as "playing, no art," never the empty-ear treatment.
         ArtworkTile(
             artwork: nowPlaying.artwork,
             size: Self.artworkSize,
-            cornerRadius: Self.artworkCornerRadius,
-            bloomRadius: 6,
-            bloomOpacity: 0.5
+            cornerRadius: Self.artworkCornerRadius
         )
         .padding(.leading, Tokens.Spacing.lg)
         // UI-SPEC "Paused-in-grace visual distinction" (D-06/D-07): the artwork tile dims to 55%

@@ -58,9 +58,16 @@ private struct ClipboardRowView: View {
     let onSelect: () -> Void
 
     @State private var isHovering = false
+    @State private var justCopied = false
+    // Cancels an in-flight "Copied" reset if the row is clicked again before the
+    // previous flash has expired, so rapid re-copies don't clear early.
+    @State private var flashResetTask: Task<Void, Never>?
 
     var body: some View {
-        Button(action: onSelect) {
+        // A single click already re-copies the entry to the system clipboard
+        // (there is no separate "copy" button) — the trailing label flips to
+        // "Copied ✓" for ~1.4s so the action is unmistakable.
+        Button(action: copy) {
             HStack(spacing: Tokens.Spacing.sm) {
                 Text(displayText)
                     .font(Tokens.Font.data)
@@ -70,8 +77,12 @@ private struct ClipboardRowView: View {
 
                 Spacer()
 
-                if isHovering {
-                    Text("copy")
+                if justCopied {
+                    Text("Copied \u{2713}")
+                        .font(Tokens.Font.label)
+                        .foregroundStyle(Tokens.Color.accentCool)
+                } else if isHovering {
+                    Text("click to copy")
                         .font(Tokens.Font.label)
                         .foregroundStyle(Tokens.Color.accent)
                 } else {
@@ -82,11 +93,22 @@ private struct ClipboardRowView: View {
             }
             .padding(.horizontal, Tokens.Spacing.sm)
             .padding(.vertical, Tokens.Spacing.xs)
-            .background(isHovering ? Tokens.Color.surfaceRaised : SwiftUI.Color.clear)
+            .background((isHovering || justCopied) ? Tokens.Color.surfaceRaised : SwiftUI.Color.clear)
             .clipShape(RoundedRectangle(cornerRadius: Tokens.Radius.sm))
         }
         .buttonStyle(.plain)
         .onHover { isHovering = $0 }
+    }
+
+    private func copy() {
+        onSelect()
+        justCopied = true
+        flashResetTask?.cancel()
+        flashResetTask = Task {
+            try? await Task.sleep(nanoseconds: 1_400_000_000)
+            guard !Task.isCancelled else { return }
+            justCopied = false
+        }
     }
 
     /// Truncated to ~200 characters with control/non-printable characters

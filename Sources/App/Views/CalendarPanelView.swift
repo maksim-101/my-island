@@ -125,11 +125,13 @@ private struct EventPillView: View {
         }
     }
 
-    /// Opens the event in Calendar.app. `calshow:` takes seconds since the
-    /// reference date (2001-01-01) — `timeIntervalSinceReferenceDate` is exactly
-    /// that quantity.
+    /// Opens the event in Calendar.app. `calshow:` takes an INTEGER count of
+    /// seconds since the reference date (2001-01-01); interpolating the raw
+    /// `Double` emits a trailing ".0" (e.g. `calshow:807120000.0`) that
+    /// LaunchServices can't parse — hence the "no application set to open the
+    /// URL" dialog. Truncating to `Int` is what makes the deep link resolve.
     private func openInCalendar() {
-        let seconds = event.startDate.timeIntervalSinceReferenceDate
+        let seconds = Int(event.startDate.timeIntervalSinceReferenceDate)
         guard let url = URL(string: "calshow:\(seconds)") else { return }
         NSWorkspace.shared.open(url)
     }
