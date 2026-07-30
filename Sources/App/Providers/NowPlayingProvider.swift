@@ -295,6 +295,11 @@ final class NowPlayingProvider {
         let identity = model.map {
             NowPlayingSessionIdentity(bundleIdentifier: $0.bundleIdentifier, title: $0.title, artist: $0.artist)
         }
+        // Diagnostic (.info so it persists to `log show`, unlike .debug): the
+        // adapter's raw play-state that drives the ear/panel gate. Bools only —
+        // never a title/artist/app name (T-05-02). Lets a UAT repro of "ear not
+        // showing while music plays" be pinned to whether isPlaying arrives true.
+        logger.info("Now Playing apply — hasModel=\(model != nil, privacy: .public) isPlaying=\(model?.isPlaying ?? false, privacy: .public)")
         let newClassification = NowPlayingSessionClassifier.classify(
             identity: identity,
             isPlaying: model?.isPlaying ?? false,
@@ -345,7 +350,7 @@ final class NowPlayingProvider {
         updateElapsedFraction()
         updateProgressTick(for: newClassification.visibility)
 
-        logger.debug("Now Playing visibility transition — visibility=\(String(describing: newClassification.visibility), privacy: .public)")
+        logger.info("Now Playing visibility transition — visibility=\(String(describing: newClassification.visibility), privacy: .public)")
     }
 
     /// Recomputes `elapsedFraction` from `currentModel`'s cached elapsed/timestamp/rate/duration
