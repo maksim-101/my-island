@@ -10,7 +10,7 @@ struct ClipboardPanelView: View {
     let clipboard: ClipboardViewModel
 
     var body: some View {
-        VStack(alignment: .leading, spacing: Tokens.Spacing.sm) {
+        VStack(alignment: .leading, spacing: Tokens.Spacing.xs) {
             HStack {
                 Text("Clipboard")
                     .font(Tokens.Font.label)
@@ -23,19 +23,21 @@ struct ClipboardPanelView: View {
                     .foregroundStyle(Tokens.Color.textFaint)
             }
 
-            // Bounded, scrollable so all up-to-10 entries are reachable without
-            // the panel growing unbounded — the full history was previously
-            // clipped to ~2 rows by the fixed panel height.
+            // Cockpit-3: the stage above sizes to its content, so the Clipboard
+            // takes whatever vertical space remains (top-aligned) — the list
+            // fills it and only scrolls once the up-to-10 history exceeds it,
+            // never leaving a dead whitespace band under a compact stage.
             ScrollView {
-                VStack(alignment: .leading, spacing: Tokens.Spacing.xs) {
+                VStack(alignment: .leading, spacing: 1) {
                     ForEach(clipboard.entries) { entry in
                         ClipboardRowView(entry: entry) {
                             clipboard.select(entry)
                         }
                     }
                 }
+                .frame(maxWidth: .infinity, alignment: .top)
             }
-            .frame(maxHeight: .infinity)
+            .frame(maxHeight: .infinity, alignment: .top)
             .scrollIndicators(.visible)
             .scrollBounceBehavior(.basedOnSize)
 
@@ -43,6 +45,7 @@ struct ClipboardPanelView: View {
                 .font(Tokens.Font.label)
                 .foregroundStyle(Tokens.Color.textFaint)
         }
+        .frame(maxHeight: .infinity, alignment: .top)
     }
 }
 
