@@ -1,9 +1,12 @@
 import SwiftUI
 
-/// Expanded-panel Timer group (TIME-01): mode switch, ring + readout, state
-/// chip, pause/reset, and either the countdown preset row or the Pomodoro
-/// cycle strip depending on the selected mode. Styled entirely from
-/// `Tokens` — never a hardcoded color/spacing/typography value.
+/// The Timer stage body (popup-cockpit3-FINAL.html "Timer selected"): a
+/// `Countdown | Pomodoro` segmented toggle pinned top-right, then the selected
+/// mode's compact body. Countdown-idle = presets + minutes field + Start;
+/// Countdown-running = the progress axis; Pomodoro = a single segmented
+/// cycle-axis row + one-line caption. One unified content size (~12.5–13pt) —
+/// the timer is never larger than the panel's other sections. Styled entirely
+/// from `Tokens` — never a hardcoded color/spacing/typography value.
 @MainActor
 struct TimerPanelView: View {
     let timer: TimerViewModel
@@ -24,16 +27,12 @@ struct TimerPanelView: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: Tokens.Spacing.sm) {
-            Text("Timer")
-                .font(Tokens.Font.label)
-                .foregroundStyle(Tokens.Color.textMuted)
-
+        VStack(alignment: .leading, spacing: Tokens.Spacing.md) {
             modeSwitch
+                .frame(maxWidth: .infinity, alignment: .trailing)
 
             if selectedMode == .pomodoro {
-                timerCard
-                cycleStrip
+                pomodoroBody
             } else if timer.isRunning {
                 // Running countdown: the readout is the axis, not a number —
                 // the collapsed notch's right wing already carries the
@@ -46,10 +45,13 @@ struct TimerPanelView: View {
     }
 
     private var modeSwitch: some View {
-        HStack(spacing: Tokens.Spacing.xs) {
+        HStack(spacing: 2) {
             modeButton(title: "Countdown", mode: .countdown)
             modeButton(title: "Pomodoro", mode: .pomodoro)
         }
+        .padding(2)
+        .background(Tokens.Color.surfaceRaised)
+        .clipShape(RoundedRectangle(cornerRadius: Tokens.Radius.sm))
     }
 
     private func modeButton(title: String, mode: ModeSelection) -> some View {
@@ -63,85 +65,16 @@ struct TimerPanelView: View {
                 .padding(.horizontal, Tokens.Spacing.sm)
                 .padding(.vertical, Tokens.Spacing.xs)
                 .background(selected ? Tokens.Color.accent.opacity(0.2) : SwiftUI.Color.clear)
-                .clipShape(RoundedRectangle(cornerRadius: Tokens.Radius.sm))
+                .clipShape(RoundedRectangle(cornerRadius: Tokens.Radius.sm - 2))
         }
         .buttonStyle(.plain)
-    }
-
-    private var ringFraction: Double {
-        guard timer.startedDuration > 0 else { return 0 }
-        return max(0, min(1, timer.remaining / timer.startedDuration))
-    }
-
-    private var stateChipText: String? {
-        switch timer.mode {
-        case .countdown: return "Countdown"
-        case .pomodoroFocus: return "Focus"
-        case .pomodoroBreak: return "Break"
-        case nil: return nil
-        }
-    }
-
-    private var timerCard: some View {
-        HStack(spacing: Tokens.Spacing.md) {
-            ZStack {
-                Circle()
-                    .stroke(Tokens.Color.hairline, lineWidth: 4)
-                Circle()
-                    .trim(from: 0, to: ringFraction)
-                    .stroke(Tokens.timerColor(for: timer.tokenState), style: StrokeStyle(lineWidth: 4, lineCap: .round))
-                    .rotationEffect(.degrees(-90))
-            }
-            .frame(width: 40, height: 40)
-
-            VStack(alignment: .leading, spacing: 2) {
-                Text(formatted(timer.remaining))
-                    .font(Tokens.Font.data)
-                    .foregroundStyle(Tokens.Color.text)
-
-                if let stateChipText {
-                    Text(stateChipText)
-                        .font(Tokens.Font.label)
-                        .foregroundStyle(Tokens.timerColor(for: timer.tokenState))
-                }
-            }
-
-            Spacer()
-
-            HStack(spacing: Tokens.Spacing.xs) {
-                Button {
-                    if timer.isPaused {
-                        timer.resume()
-                    } else {
-                        timer.pause()
-                    }
-                } label: {
-                    Image(systemName: timer.isPaused ? "play.fill" : "pause.fill")
-                        .foregroundStyle(Tokens.Color.textMuted)
-                }
-                .buttonStyle(.plain)
-                .disabled(!timer.isRunning)
-                .help(timer.isPaused ? "Resume" : "Pause")
-
-                Button {
-                    timer.reset()
-                } label: {
-                    Image(systemName: "arrow.counterclockwise")
-                        .foregroundStyle(Tokens.Color.textMuted)
-                }
-                .buttonStyle(.plain)
-                .help("Reset")
-            }
-        }
-        .padding(Tokens.Spacing.sm)
-        .background(Tokens.Color.surfaceRaised)
-        .clipShape(RoundedRectangle(cornerRadius: Tokens.Radius.md))
     }
 
     // MARK: - Countdown, idle (BL-05 variant F)
 
     /// One line: segmented presets, an EMPTY minutes field, and a filled Start.
-    /// No readout and no ring while idle — there is nothing to read out.
+    /// No readout and no ring while idle — there is nothing to read out. All at
+    /// the unified content size (Start is NOT oversized here).
     private var idleRow: some View {
         HStack(spacing: Tokens.Spacing.xs) {
             // fixedSize on both: DurationField is an NSViewRepresentable with no
@@ -171,10 +104,8 @@ struct TimerPanelView: View {
                 guard let customMinutes else { return }
                 timer.startCountdown(minutes: Double(customMinutes))
             } label: {
-                // 14pt bold, not 12.5 semibold: no text color reaches 4.5:1 on
-                // the indigo accent, so Start must qualify as LARGE text (3:1).
                 Text("Start")
-                    .font(.system(size: 14, weight: .bold))
+                    .font(Tokens.Font.bodyMD.weight(.bold))
                     .foregroundStyle(.white)
                     .padding(.horizontal, Tokens.Spacing.md)
                     .frame(height: 28)
@@ -283,61 +214,113 @@ struct TimerPanelView: View {
 
     private var transportControls: some View {
         HStack(spacing: Tokens.Spacing.xs) {
-            Button {
+            iconButton(systemName: timer.isPaused ? "play.fill" : "pause.fill", help: timer.isPaused ? "Resume" : "Pause") {
                 if timer.isPaused { timer.resume() } else { timer.pause() }
-            } label: {
-                Image(systemName: timer.isPaused ? "play.fill" : "pause.fill")
-                    .foregroundStyle(Tokens.Color.text)
-                    .frame(width: 28, height: 28)
-                    .background(Tokens.Color.surfaceRaised)
-                    .clipShape(RoundedRectangle(cornerRadius: Tokens.Radius.sm))
             }
-            .buttonStyle(.plain)
-            .help(timer.isPaused ? "Resume" : "Pause")
-
-            Button {
+            iconButton(systemName: "arrow.counterclockwise", help: "Reset") {
                 timer.reset()
-            } label: {
-                Image(systemName: "arrow.counterclockwise")
-                    .foregroundStyle(Tokens.Color.text)
-                    .frame(width: 28, height: 28)
-                    .background(Tokens.Color.surfaceRaised)
-                    .clipShape(RoundedRectangle(cornerRadius: Tokens.Radius.sm))
             }
-            .buttonStyle(.plain)
-            .help("Reset")
         }
     }
 
-    private var cycleStrip: some View {
-        HStack(spacing: Tokens.Spacing.xs) {
-            ForEach(1...max(timer.totalCycles, 1), id: \.self) { index in
-                Circle()
-                    .fill(dotColor(for: index))
-                    .frame(width: 6, height: 6)
-            }
+    // MARK: - Pomodoro (compact single row)
 
-            Text("cycle \(timer.cycle) of \(timer.totalCycles) \u{00B7} \(Int(timer.focusDuration / 60))m focus / \(Int(timer.breakDuration / 60))m break")
-                .font(Tokens.Font.label)
-                .foregroundStyle(Tokens.Color.textMuted)
+    /// The compacted Pomodoro body: the mono readout (colored by state) + a
+    /// segmented cycle axis (coral focus / mint break, elapsed at full opacity,
+    /// future dimmed) + transport, then a one-line caption. Replaces the old
+    /// 40pt ring + big-readout card + dot cycle-strip.
+    private var pomodoroBody: some View {
+        VStack(alignment: .leading, spacing: Tokens.Spacing.sm) {
+            HStack(spacing: Tokens.Spacing.sm) {
+                Text(formatted(timer.isRunning ? timer.remaining : timer.focusDuration))
+                    .font(Tokens.Font.data)
+                    .foregroundStyle(timer.isRunning ? Tokens.timerColor(for: timer.tokenState) : Tokens.Color.textMuted)
 
-            Spacer()
+                cycleAxis
 
-            if !timer.isRunning {
-                Button("Start") {
-                    timer.startPomodoro()
+                if timer.isRunning {
+                    iconButton(systemName: timer.isPaused ? "play.fill" : "pause.fill", help: timer.isPaused ? "Resume" : "Pause") {
+                        if timer.isPaused { timer.resume() } else { timer.pause() }
+                    }
+                    iconButton(systemName: "arrow.counterclockwise", help: "Reset") {
+                        timer.reset()
+                    }
+                } else {
+                    Button {
+                        timer.startPomodoro()
+                    } label: {
+                        Text("Start")
+                            .font(Tokens.Font.bodyMD.weight(.bold))
+                            .foregroundStyle(.white)
+                            .padding(.horizontal, Tokens.Spacing.md)
+                            .frame(height: 28)
+                            .background(Tokens.Color.accent)
+                            .clipShape(RoundedRectangle(cornerRadius: Tokens.Radius.sm))
+                    }
+                    .buttonStyle(.plain)
                 }
-                .buttonStyle(.plain)
-                .font(Tokens.Font.bodyMD)
-                .foregroundStyle(Tokens.Color.accent)
             }
+
+            Text(pomodoroCaption)
+                .font(Tokens.Font.label)
+                .foregroundStyle(timer.isRunning ? Tokens.timerColor(for: timer.tokenState) : Tokens.Color.textMuted)
         }
     }
 
-    private func dotColor(for index: Int) -> SwiftUI.Color {
-        if index < timer.cycle { return Tokens.Color.textFaint }
-        if index == timer.cycle { return Tokens.timerColor(for: timer.tokenState) }
-        return Tokens.Color.hairline
+    /// One continuous 8pt bar: for each cycle a coral focus block + a mint
+    /// break block, widths proportional to the focus/break durations. Cycles
+    /// before the current one render at full opacity (elapsed); the current and
+    /// future ones dim, so the axis reads as "how far through the set am I."
+    private var cycleAxis: some View {
+        let total = max(timer.totalCycles, 1)
+        let unit = timer.focusDuration + timer.breakDuration
+        let denom = unit * Double(total)
+        return GeometryReader { geo in
+            let gap: CGFloat = 2
+            let usable = max(0, geo.size.width - gap * CGFloat(total * 2 - 1))
+            let focusW = denom > 0 ? usable * timer.focusDuration / denom : 0
+            let breakW = denom > 0 ? usable * timer.breakDuration / denom : 0
+            HStack(spacing: gap) {
+                ForEach(1...total, id: \.self) { index in
+                    let elapsedCycle = index < timer.cycle
+                    let currentCycle = index == timer.cycle && timer.isRunning
+                    Rectangle()
+                        .fill(Tokens.Color.accentWarm)
+                        .opacity(elapsedCycle || currentCycle ? 1 : 0.28)
+                        .frame(width: focusW)
+                    Rectangle()
+                        .fill(Tokens.Color.accentCool)
+                        .opacity(elapsedCycle ? 1 : 0.28)
+                        .frame(width: breakW)
+                }
+            }
+            .frame(height: 8)
+            .clipShape(Capsule())
+        }
+        .frame(height: 8)
+    }
+
+    private var pomodoroCaption: String {
+        if timer.isRunning {
+            let phase = timer.mode == .pomodoroBreak ? "break" : "focus"
+            return "\(phase) \u{00B7} cycle \(max(timer.cycle, 1)) of \(timer.totalCycles)"
+        }
+        return "\(Int(timer.focusDuration / 60))m focus \u{00B7} \(Int(timer.breakDuration / 60))m break"
+    }
+
+    // MARK: - Shared
+
+    private func iconButton(systemName: String, help: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: systemName)
+                .font(Tokens.Font.bodyMD)
+                .foregroundStyle(Tokens.Color.text)
+                .frame(width: 26, height: 26)
+                .background(Tokens.Color.surfaceRaised)
+                .clipShape(RoundedRectangle(cornerRadius: Tokens.Radius.sm))
+        }
+        .buttonStyle(.plain)
+        .help(help)
     }
 
     private func formatted(_ interval: TimeInterval) -> String {
