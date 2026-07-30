@@ -90,39 +90,26 @@ private struct NowPlayingEarView: View {
     let nowPlaying: NowPlayingProvider
 
     private static let artworkSize: CGFloat = 20
-    private static let artworkCornerRadius: CGFloat = 4
+    private static let artworkCornerRadius: CGFloat = 5
 
     var body: some View {
-        artworkTile
-            .padding(.leading, Tokens.Spacing.lg)
-            // UI-SPEC "Paused-in-grace visual distinction" (D-06/D-07): the artwork tile dims to 55%
-            // opacity during the 30s post-stop grace window. No new icon, border or badge; the
-            // existing content just dims, and there is no exit animation when the window expires (it
-            // simply stops rendering, per NotchBarView's existing show/hide gate).
-            .opacity(nowPlaying.isPausedInGrace ? 0.55 : 1)
-    }
-
-    @ViewBuilder
-    private var artworkTile: some View {
-        if let artwork = nowPlaying.artwork {
-            Image(nsImage: artwork)
-                .resizable()
-                .aspectRatio(contentMode: .fill)
-                .frame(width: Self.artworkSize, height: Self.artworkSize)
-                .clipShape(RoundedRectangle(cornerRadius: Self.artworkCornerRadius))
-        } else {
-            // No-artwork fallback (D-01, UI-SPEC "Collapsed left ear"): the
-            // exact same 20x20 footprint, never removed — a real session with
-            // no artwork (spike 002: the Apple TV app) must read as "playing,
-            // no art" rather than snapping to the empty-ear treatment.
-            RoundedRectangle(cornerRadius: Self.artworkCornerRadius)
-                .fill(Tokens.Color.surfaceRaised)
-                .frame(width: Self.artworkSize, height: Self.artworkSize)
-                .overlay {
-                    Image(systemName: "music.note")
-                        .font(.system(size: 9, weight: .medium))
-                        .foregroundStyle(Tokens.Color.textFaint)
-                }
-        }
+        // Shared ArtworkTile so the hairline ring + artwork-derived bloom live
+        // once (also used by the 44pt panel tile). Gentle bloom on the ear
+        // (radius 6, opacity 0.5). The no-artwork fallback keeps the identical
+        // 20x20 footprint — a real session with no art (spike 002: the Apple TV
+        // app) reads as "playing, no art," never the empty-ear treatment.
+        ArtworkTile(
+            artwork: nowPlaying.artwork,
+            size: Self.artworkSize,
+            cornerRadius: Self.artworkCornerRadius,
+            bloomRadius: 6,
+            bloomOpacity: 0.5
+        )
+        .padding(.leading, Tokens.Spacing.lg)
+        // UI-SPEC "Paused-in-grace visual distinction" (D-06/D-07): the artwork tile dims to 55%
+        // opacity during the 30s post-stop grace window. No new icon, border or badge; the
+        // existing content just dims, and there is no exit animation when the window expires (it
+        // simply stops rendering, per NotchBarView's existing show/hide gate).
+        .opacity(nowPlaying.isPausedInGrace ? 0.55 : 1)
     }
 }
