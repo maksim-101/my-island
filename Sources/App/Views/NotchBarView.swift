@@ -45,6 +45,9 @@ struct NotchBarView: View {
                 NotchShape(topCornerRadius: 6, bottomCornerRadius: 14)
                     .fill(Color.black)
                     .overlay(alignment: .trailing) {
+                        // The timer readout always wins the right wing. Only when
+                        // no timer is running and music is playing does the wing
+                        // instead show the animated sound-wave equalizer.
                         if timer.isRunning {
                             HStack(spacing: 4) {
                                 Circle()
@@ -56,6 +59,10 @@ struct NotchBarView: View {
                                     .fixedSize()
                             }
                             .padding(.trailing, Tokens.Spacing.lg)
+                        } else if nowPlaying.displayEar && !fullscreen.isFrontmostFullscreen {
+                            SoundWaveView()
+                                .padding(.trailing, Tokens.Spacing.lg)
+                                .opacity(nowPlaying.isPausedInGrace ? 0.55 : 1)
                         }
                     }
                     .overlay(alignment: .leading) {
@@ -111,5 +118,45 @@ private struct NowPlayingEarView: View {
         // existing content just dims, and there is no exit animation when the window expires (it
         // simply stops rendering, per NotchBarView's existing show/hide gate).
         .opacity(nowPlaying.isPausedInGrace ? 0.55 : 1)
+    }
+}
+
+/// The right wing's animated sound-wave equalizer, shown while music plays and
+/// no timer is running (idle-wing-and-chrome.html). Five thin neutral bars
+/// (`Tokens.Color.text` @ 0.8) whose heights animate on a continuous
+/// `TimelineView` loop. This is a DECORATIVE animation only — a real
+/// system-audio tap driving the bar heights is deferred; the bars move on a
+/// fixed sinusoid, not on live audio levels. Respects Reduce Motion by holding
+/// a static mid-height.
+private struct SoundWaveView: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    private static let barCount = 5
+    private static let barWidth: CGFloat = 2
+    private static let barSpacing: CGFloat = 2
+    private static let maxHeight: CGFloat = 12
+    private static let minHeight: CGFloat = 4
+
+    var body: some View {
+        TimelineView(.animation) { context in
+            let t = context.date.timeIntervalSinceReferenceDate
+            HStack(alignment: .center, spacing: Self.barSpacing) {
+                ForEach(0..<Self.barCount, id: \.self) { index in
+                    Capsule()
+                        .fill(Tokens.Color.text.opacity(0.8))
+                        .frame(width: Self.barWidth, height: barHeight(index: index, time: t))
+                }
+            }
+            .frame(height: Self.maxHeight)
+        }
+        .frame(height: Self.maxHeight)
+        .accessibilityHidden(true)
+    }
+
+    private func barHeight(index: Int, time: Double) -> CGFloat {
+        guard !reduceMotion else { return (Self.minHeight + Self.maxHeight) / 2 }
+        let phase = Double(index) * 0.7
+        let normalized = (sin(time * 6 + phase) + 1) / 2
+        return Self.minHeight + CGFloat(normalized) * (Self.maxHeight - Self.minHeight)
     }
 }

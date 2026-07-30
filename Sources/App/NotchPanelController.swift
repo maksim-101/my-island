@@ -273,10 +273,12 @@ final class NotchPanelController: NSObject {
     /// single continuous black `NotchShape` across the whole span (seamless — no
     /// join with the notch) with the running-timer readout on the right. The
     /// symmetric left strip keeps the extended notch balanced.
-    /// How far the extended pill reaches into each ear beyond the cutout. Wide
-    /// enough for the longest readout (e.g. a 180-minute countdown, "180:00");
-    /// equal on both sides so the extended notch reads symmetric.
-    private static let barEar: CGFloat = 84
+    /// How far the extended pill reaches into each ear beyond the cutout. Sized
+    /// to fit the longest realistic readout ("600:22" ≈ 75pt per the idle-wing
+    /// mockup); equal on both sides so the extended notch reads symmetric. The
+    /// left ear only carries the ~20pt artwork/sound-wave, so a symmetric 76pt
+    /// leaves it comfortably balanced against the right-wing readout.
+    private static let barEar: CGFloat = 76
 
     /// Global-coordinate frame of the extended pill (also the wing hover
     /// region), shared by `makeBarPanel` and the wing mouse-monitor.
