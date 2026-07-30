@@ -2,40 +2,36 @@ import SwiftUI
 import Foundation
 import AppKit
 
-/// Expanded-panel Calendar group (CAL-01, CAL-02, D-03). Renders the
-/// denied/not-determined access-gate state, and — once granted — the
-/// upcoming-event chip with a live countdown + Join button, or the neutral
-/// empty-state line when nothing is scheduled. Never the amber attention
-/// color and no persistent collapsed-notch badge — a denied calendar (or an
-/// empty one) is neutral, not urgent (D-03).
+/// The Calendar stage body (popup-cockpit3-FINAL.html "Calendar selected · 3
+/// concurrent"): up to three event pills from `calendar.events`. Each pill is
+/// tappable to open the event in Calendar.app (`calshow:` deep link); a `Join`
+/// primary button appears to its right ONLY when the event carries a detected
+/// video link. Keeps the denied/not-determined access-gate state and the
+/// neutral empty-state line. Never the amber attention color and no persistent
+/// collapsed-notch badge — a denied calendar (or an empty one) is neutral, not
+/// urgent (D-03).
 @MainActor
 struct CalendarPanelView: View {
     let calendar: CalendarProvider
 
     var body: some View {
-        VStack(alignment: .leading, spacing: Tokens.Spacing.sm) {
-            Text("Calendar")
-                .font(Tokens.Font.label)
-                .foregroundStyle(Tokens.Color.textMuted)
-
-            switch calendar.authorizationState {
-            case .denied, .restricted, .notDetermined:
-                accessGateState
-            case .granted:
-                grantedState
-            }
+        switch calendar.authorizationState {
+        case .denied, .restricted, .notDetermined:
+            accessGateState
+        case .granted:
+            grantedState
         }
     }
 
     @ViewBuilder
     private var grantedState: some View {
-        if !calendar.displayedEvents.isEmpty {
-            // Two rows only while a running meeting overlaps the next one —
-            // the running one keeps its Join button, the upcoming one gets a
-            // real countdown instead of being hidden for the full hour.
+        if !calendar.events.isEmpty {
             VStack(alignment: .leading, spacing: Tokens.Spacing.xs) {
-                ForEach(calendar.displayedEvents) { event in
-                    UpcomingChipView(event: event, countdownText: calendar.countdowns[event.id] ?? "")
+                // Render `events` (up to 3 concurrent), not the 2-capped
+                // `displayedEvents` — the Cockpit stage shows every overlapping
+                // meeting, not just the running one + its successor.
+                ForEach(calendar.events.prefix(3)) { event in
+                    EventPillView(event: event, countdownText: calendar.countdowns[event.id] ?? "")
                 }
             }
         } else {
@@ -70,13 +66,13 @@ struct CalendarPanelView: View {
     }
 }
 
-/// The upcoming-meeting chip: "{Title} — {Location} · {Time}" (the "—
-/// {Location}" segment omitted when `location` is nil/empty — never a
-/// dangling em dash) with a trailing live countdown pinned by a `Spacer()`
-/// inside the pill, followed by a Join button only when `event.joinURL`
-/// is non-nil (hidden, never disabled/greyed, when no video link was
-/// detected).
-private struct UpcomingChipView: View {
+/// A single event pill: "{Title} — {Location} · {Time}" (the "— {Location}"
+/// segment omitted when `location` is nil/empty — never a dangling em dash)
+/// with a trailing live countdown in `accent`. Tapping the pill opens the event
+/// in Calendar.app via a `calshow:` deep link. A `Join` button follows only
+/// when `event.joinURL` is non-nil (hidden, never disabled/greyed, when no
+/// video link was detected).
+private struct EventPillView: View {
     let event: CalendarEventModel
     let countdownText: String
 
@@ -84,23 +80,30 @@ private struct UpcomingChipView: View {
 
     var body: some View {
         HStack(spacing: Tokens.Spacing.sm) {
-            HStack(spacing: Tokens.Spacing.sm) {
-                Text(chipText)
-                    .font(Tokens.Font.bodyMD)
-                    .foregroundStyle(Tokens.Color.text)
-                    .lineLimit(1)
-                    .truncationMode(.tail)
+            Button {
+                openInCalendar()
+            } label: {
+                HStack(spacing: Tokens.Spacing.sm) {
+                    Text(chipText)
+                        .font(Tokens.Font.bodyMD)
+                        .foregroundStyle(Tokens.Color.text)
+                        .lineLimit(1)
+                        .truncationMode(.tail)
 
-                Spacer()
+                    Spacer(minLength: Tokens.Spacing.sm)
 
-                Text(countdownText)
-                    .font(Tokens.Font.label)
-                    .foregroundStyle(Tokens.Color.accent)
+                    Text(countdownText)
+                        .font(Tokens.Font.label)
+                        .foregroundStyle(Tokens.Color.accent)
+                }
+                .padding(.horizontal, Tokens.Spacing.md)
+                .padding(.vertical, Tokens.Spacing.xs)
+                .frame(maxWidth: .infinity)
+                .background(Tokens.Color.surfaceRaised)
+                .clipShape(Capsule())
             }
-            .padding(.horizontal, Tokens.Spacing.md)
-            .padding(.vertical, Tokens.Spacing.xs)
-            .background(Tokens.Color.surfaceRaised)
-            .clipShape(Capsule())
+            .buttonStyle(.plain)
+            .help("Open in Calendar")
 
             if let joinURL = event.joinURL {
                 Button {
@@ -122,12 +125,21 @@ private struct UpcomingChipView: View {
         }
     }
 
+    /// Opens the event in Calendar.app. `calshow:` takes seconds since the
+    /// reference date (2001-01-01) — `timeIntervalSinceReferenceDate` is exactly
+    /// that quantity.
+    private func openInCalendar() {
+        let seconds = event.startDate.timeIntervalSinceReferenceDate
+        guard let url = URL(string: "calshow:\(seconds)") else { return }
+        NSWorkspace.shared.open(url)
+    }
+
     private var chipText: String {
         let time = Self.timeFormatter.string(from: event.startDate)
         if let location = event.location, !location.isEmpty {
-            return "\(event.title) — \(location) · \(time)"
+            return "\(event.title) — \(location) \u{00B7} \(time)"
         }
-        return "\(event.title) · \(time)"
+        return "\(event.title) \u{00B7} \(time)"
     }
 
     private static let timeFormatter: DateFormatter = {
