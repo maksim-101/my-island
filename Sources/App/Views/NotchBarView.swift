@@ -144,10 +144,11 @@ private struct SoundWaveView: View {
             HStack(alignment: .center, spacing: Self.barSpacing) {
                 ForEach(0..<Self.barCount, id: \.self) { index in
                     Capsule()
-                        // Indigo `accent` is DESIGN.md's now-playing color; the same-hue glow gives
-                        // the Alcove-style "neon" finish while staying strictly on-token (never amber,
-                        // never the coral/mint timer hues).
-                        .fill(Tokens.Color.accent)
+                        // Indigo `accent` is DESIGN.md's now-playing color; graded across the row
+                        // (darker `accent` at the two ends → lighter toward `accentInk` in the
+                        // middle) with a same-hue glow for the Alcove-style neon finish. On-token
+                        // only (never amber, never the coral/mint timer hues).
+                        .fill(Self.barColor(index: index))
                         .frame(width: Self.barWidth, height: barHeight(index: index, time: t, level: level))
                         .shadow(color: Tokens.Color.accent.opacity(0.8), radius: 2.5)
                         .shadow(color: Tokens.Color.accent.opacity(0.5), radius: 4)
@@ -159,6 +160,15 @@ private struct SoundWaveView: View {
         .onAppear { audio.start() }
         .onDisappear { audio.stop() }
         .accessibilityHidden(true)
+    }
+
+    /// Horizontal color grade: pure `accent` at the outer bars, lightened toward `accentInk` at the
+    /// center, symmetric about the middle bar.
+    private static func barColor(index: Int) -> SwiftUI.Color {
+        let center = Double(barCount - 1) / 2
+        let distance = center == 0 ? 0 : abs(Double(index) - center) / center // 0 center … 1 ends
+        let lightness = (1 - distance) * 0.5
+        return Tokens.Color.accent.mix(with: Tokens.Color.accentInk, by: lightness)
     }
 
     private func barHeight(index: Int, time: Double, level: CGFloat) -> CGFloat {
