@@ -7,3 +7,5 @@ DerivedData/
 .DS_Store
 .planning/
 .claude/
+.env.build
+dist/
