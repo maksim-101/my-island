@@ -118,14 +118,17 @@ private struct NowPlayingEarView: View {
     }
 }
 
-/// The right wing's animated sound-wave equalizer, shown while music plays and
-/// no timer is running (idle-wing-and-chrome.html). Five thin neutral bars
-/// (`Tokens.Color.text` @ 0.8) whose heights animate on a continuous
-/// `TimelineView` loop. This is a DECORATIVE animation only — a real
-/// system-audio tap driving the bar heights is deferred; the bars move on a
-/// fixed sinusoid, not on live audio levels. Respects Reduce Motion by holding
-/// a static mid-height.
+/// The right wing's sound-wave equalizer, shown while music plays and no timer is running
+/// (idle-wing-and-chrome.html). Five thin neutral bars (`Tokens.Color.text` @ 0.8) whose overall
+/// amplitude tracks REAL system-audio output level via `SystemAudioLevelProvider` — so the bars
+/// pump with the music and, crucially, go flat and still the instant playback pauses (no audio →
+/// `level` decays to 0). A gentle per-bar travelling sinusoid gives the equalizer its life, but it
+/// is scaled by the live level, so silence is genuinely still. The tap is started on appear and
+/// stopped on disappear, so it only runs while the wave is actually shown. Reduce Motion drops the
+/// sinusoid and shows a pure amplitude bar. If the tap can't start (permission/OS), `level` stays 0
+/// and the bars simply stay flat — never the old fake animation.
 private struct SoundWaveView: View {
+    @State private var audio = SystemAudioLevelProvider()
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     private static let barCount = 5
@@ -137,23 +140,28 @@ private struct SoundWaveView: View {
     var body: some View {
         TimelineView(.animation) { context in
             let t = context.date.timeIntervalSinceReferenceDate
+            let level = CGFloat(min(1, max(0, audio.level)))
             HStack(alignment: .center, spacing: Self.barSpacing) {
                 ForEach(0..<Self.barCount, id: \.self) { index in
                     Capsule()
                         .fill(Tokens.Color.text.opacity(0.8))
-                        .frame(width: Self.barWidth, height: barHeight(index: index, time: t))
+                        .frame(width: Self.barWidth, height: barHeight(index: index, time: t, level: level))
                 }
             }
             .frame(height: Self.maxHeight)
         }
         .frame(height: Self.maxHeight)
+        .onAppear { audio.start() }
+        .onDisappear { audio.stop() }
         .accessibilityHidden(true)
     }
 
-    private func barHeight(index: Int, time: Double) -> CGFloat {
-        guard !reduceMotion else { return (Self.minHeight + Self.maxHeight) / 2 }
-        let phase = Double(index) * 0.7
-        let normalized = (sin(time * 6 + phase) + 1) / 2
-        return Self.minHeight + CGFloat(normalized) * (Self.maxHeight - Self.minHeight)
+    private func barHeight(index: Int, time: Double, level: CGFloat) -> CGFloat {
+        let span = Self.maxHeight - Self.minHeight
+        guard !reduceMotion else { return Self.minHeight + level * span }
+        // Per-bar travelling shape in 0.4…1.0, scaled by the live level — so amplitude follows the
+        // music and silence (level 0) is a flat, still row.
+        let shape = (sin(time * 6 + Double(index) * 0.9) + 1) / 2 * 0.6 + 0.4
+        return Self.minHeight + level * span * CGFloat(shape)
     }
 }
