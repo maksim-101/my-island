@@ -152,6 +152,7 @@ private struct EventPillView: View {
         tell application "Calendar"
         activate
         view calendar at d
+        switch view to day view
         end tell
         """
         let process = Process()
