@@ -144,8 +144,13 @@ private struct SoundWaveView: View {
             HStack(alignment: .center, spacing: Self.barSpacing) {
                 ForEach(0..<Self.barCount, id: \.self) { index in
                     Capsule()
-                        .fill(Tokens.Color.text.opacity(0.8))
+                        // Indigo `accent` is DESIGN.md's now-playing color; the same-hue glow gives
+                        // the Alcove-style "neon" finish while staying strictly on-token (never amber,
+                        // never the coral/mint timer hues).
+                        .fill(Tokens.Color.accent)
                         .frame(width: Self.barWidth, height: barHeight(index: index, time: t, level: level))
+                        .shadow(color: Tokens.Color.accent.opacity(0.8), radius: 2.5)
+                        .shadow(color: Tokens.Color.accent.opacity(0.5), radius: 4)
                 }
             }
             .frame(height: Self.maxHeight)
