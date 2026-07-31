@@ -72,7 +72,7 @@ xattr -dr com.apple.quarantine /Applications/my-island.app
 ```
 Sources/App/        SwiftUI + AppKit app (NSPanel notch overlay, providers, views)
 Core/               MyIslandCore SwiftPM package (shared primitives, unit-tested)
-Vendor/             Vendored MediaRemote adapter (Now Playing, planned)
+Vendor/             Vendored MediaRemote adapter (drives Now Playing)
 scripts/            install.sh, dev-reset.sh (TCC reset), capture-nowplaying.sh
 project.yml         XcodeGen spec — single source of truth for the Xcode project
 DESIGN.md           Design tokens (colors, type, spacing) — the app's visual language
