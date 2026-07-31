@@ -35,6 +35,14 @@ actor NowPlayingService {
     /// quit sequence can relaunch the subprocess after the app has told it to stop.
     private var restartTask: Task<Void, Never>?
 
+    /// The SINGLE ordered consumer of pipe chunks (see `start()`). The readability handler fires
+    /// serially, but the old code handed each chunk to a *separate* `Task { await append }`, and
+    /// Swift actor Tasks are not FIFO — so a multi-chunk (150KB–3.2MB) artwork payload was appended
+    /// out of order, corrupting the reassembled JSON line and dropping ALL album art as "unparsable"
+    /// (UAT 2026-07-31). Draining an order-preserving `AsyncStream` from one task fixes it.
+    private var readTask: Task<Void, Never>?
+    private var chunkContinuation: AsyncStream<Data>.Continuation?
+
     private let onUpdate: (NowPlayingModel?) -> Void
     private let logger = Logger(subsystem: AppIdentity.bundleID, category: "NowPlayingService")
 
@@ -71,19 +79,27 @@ actor NowPlayingService {
         let pipe = Pipe()
         process.standardOutput = pipe
 
-        pipe.fileHandleForReading.readabilityHandler = { [weak self] handle in
+        // Raw pipe chunks flow through an order-preserving AsyncStream: the serial readability
+        // handler only *yields* each chunk (Sendable, no captured mutable state), and a single
+        // consumer task below `await append`s them in exact arrival order — so a multi-chunk artwork
+        // payload can never be stitched out of order (the corruption that dropped all album art).
+        let (chunkStream, chunkContinuation) = AsyncStream.makeStream(of: Data.self, bufferingPolicy: .unbounded)
+        self.chunkContinuation = chunkContinuation
+        pipe.fileHandleForReading.readabilityHandler = { handle in
             let data = handle.availableData
             guard !data.isEmpty else {
-                // Empty `availableData` signals EOF. The dispatch source backing
-                // `readabilityHandler` is level-triggered, so leaving the handler installed here
-                // would keep firing back-to-back for as long as the fd stays open and un-drained —
-                // clear it so an EOF-without-immediate-exit can't spin the read queue.
+                // Empty `availableData` signals EOF. The dispatch source is level-triggered, so
+                // leaving the handler installed would spin; clear it and end the ordered stream.
                 handle.readabilityHandler = nil
+                chunkContinuation.finish()
                 return
             }
-            // Re-enters actor isolation via Task — never mutate actor state from this
-            // non-isolated closure context directly (Swift 6 strict concurrency).
-            Task { await self?.append(rawChunk: data) }
+            chunkContinuation.yield(data)
+        }
+        readTask = Task { [weak self] in
+            for await chunk in chunkStream {
+                await self?.append(rawChunk: chunk)
+            }
         }
 
         process.terminationHandler = { [weak self] _ in
@@ -111,6 +127,10 @@ actor NowPlayingService {
     func stop() {
         restartTask?.cancel()
         restartTask = nil
+        readTask?.cancel()
+        readTask = nil
+        chunkContinuation?.finish()
+        chunkContinuation = nil
         pipe?.fileHandleForReading.readabilityHandler = nil
         process?.terminationHandler = nil
         process?.terminate()
@@ -178,6 +198,10 @@ actor NowPlayingService {
     /// silent, not show stale content), then restart with a growing delay up to a bounded maximum;
     /// at the maximum, log once and stop — no further attempts, no user-visible error anywhere.
     private func handleTermination() {
+        readTask?.cancel()
+        readTask = nil
+        chunkContinuation?.finish()
+        chunkContinuation = nil
         pipe?.fileHandleForReading.readabilityHandler = nil
         process = nil
         pipe = nil
