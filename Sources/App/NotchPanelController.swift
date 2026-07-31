@@ -273,20 +273,22 @@ final class NotchPanelController: NSObject {
     /// single continuous black `NotchShape` across the whole span (seamless — no
     /// join with the notch) with the running-timer readout on the right. The
     /// symmetric left strip keeps the extended notch balanced.
-    /// How far the extended pill reaches into each ear beyond the cutout. Sized
-    /// to fit the longest realistic readout ("600:22" ≈ 75pt per the idle-wing
-    /// mockup); equal on both sides so the extended notch reads symmetric. The
-    /// left ear only carries the ~20pt artwork/sound-wave, so a symmetric 76pt
-    /// leaves it comfortably balanced against the right-wing readout.
-    private static let barEar: CGFloat = 76
+    /// How far the extended pill reaches into each ear beyond the cutout —
+    /// ASYMMETRIC per the idle-wing mockup: the right ear is sized to the
+    /// longest realistic readout ("600:22" ≈ 75pt), the left ear only carries
+    /// the ~20pt artwork/sound-wave so it hugs tight (~40pt). A symmetric 76pt
+    /// left ear left ~40pt of dead black beside the artwork (UAT: "wings too
+    /// wide").
+    private static let leftEar: CGFloat = 40
+    private static let rightEar: CGFloat = 76
 
     /// Global-coordinate frame of the extended pill (also the wing hover
     /// region), shared by `makeBarPanel` and the wing mouse-monitor.
     private static func barFrame(notchFrame: NSRect, anchorMaxY: CGFloat) -> NSRect {
         NSRect(
-            x: notchFrame.minX - barEar,
+            x: notchFrame.minX - leftEar,
             y: anchorMaxY - notchFrame.height,
-            width: notchFrame.width + barEar * 2,
+            width: notchFrame.width + leftEar + rightEar,
             height: notchFrame.height
         )
     }
