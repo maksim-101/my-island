@@ -6,3 +6,4 @@ Core/.build/
 DerivedData/
 .DS_Store
 .planning/
+.claude/
