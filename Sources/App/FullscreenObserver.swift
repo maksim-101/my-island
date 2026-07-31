@@ -86,7 +86,7 @@ final class FullscreenObserver {
         // corroborating (never decisive, RESEARCH Assumption A5) menu-bar
         // visibility signal. No window title or now-playing metadata is
         // ever logged here.
-        logger.debug("""
+        logger.notice("""
             fullscreen=\(self.isFrontmostFullscreen, privacy: .public) \
             bundleID=\(result.bundleID ?? "none", privacy: .public) \
             foundOwnedWindow=\(result.foundOwnedWindow, privacy: .public) \
@@ -129,15 +129,34 @@ final class FullscreenObserver {
 
             result.foundOwnedWindow = true
 
-            if matchesAnyScreen(bounds: bounds) {
+            switch screenMatch(bounds: bounds) {
+            case .exact:
+                // Window covers the ENTIRE display, menu-bar strip included — only real
+                // fullscreen (or a borderless overlay) does that; a zoomed window never does.
                 result.boundsMatched = true
                 result.isFullscreen = true
                 return result
+            case .notchExcluded:
+                // Bounds == display minus the menu-bar/notch strip. A REAL fullscreen app on a
+                // notched display reports exactly this — but so does a merely MAXIMIZED (green-
+                // zoom) window, which sits below the still-visible menu bar. The menu bar is the
+                // discriminator: fullscreen auto-hides it, a maximized window keeps it. Without
+                // this guard, Apple Music (or any app) maximized was misread as fullscreen and the
+                // Now Playing ear was wrongly suppressed (UAT 2026-07-31).
+                if !NSMenu.menuBarVisible() {
+                    result.boundsMatched = true
+                    result.isFullscreen = true
+                    return result
+                }
+            case .none:
+                break
             }
         }
 
         return result
     }
+
+    private enum ScreenMatchKind { case none, exact, notchExcluded }
 
     /// Whether `bounds` covers an entire screen — either exactly (an
     /// ordinary fullscreen window) or the screen frame extended over its
@@ -148,7 +167,7 @@ final class FullscreenObserver {
     /// `CGWindowListCopyWindowInfo` reports bounds in — never
     /// `NSScreen.frame`, which is Cocoa's bottom-left-origin space and would
     /// silently misalign this comparison.
-    private static func matchesAnyScreen(bounds: CGRect) -> Bool {
+    private static func screenMatch(bounds: CGRect) -> ScreenMatchKind {
         for screen in NSScreen.screens {
             guard let screenNumber = screen.deviceDescription[
                 NSDeviceDescriptionKey("NSScreenNumber")
@@ -157,7 +176,7 @@ final class FullscreenObserver {
             let displayBounds = CGDisplayBounds(displayID)
 
             if approximatelyEqual(bounds, displayBounds) {
-                return true
+                return .exact
             }
 
             let safeAreaTop = screen.safeAreaInsets.top
@@ -169,10 +188,10 @@ final class FullscreenObserver {
                 height: displayBounds.height - safeAreaTop
             )
             if approximatelyEqual(bounds, notchExcludedBounds) {
-                return true
+                return .notchExcluded
             }
         }
-        return false
+        return .none
     }
 
     private static func approximatelyEqual(_ a: CGRect, _ b: CGRect) -> Bool {
