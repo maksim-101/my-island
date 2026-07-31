@@ -82,24 +82,12 @@ final class SystemAudioLevelProvider {
         aggregateID = agg
 
         // 3. IOProc: compute RMS off the tapped samples on the audio thread; store via the lock only.
-        let lock = sharedRMS
+        // The block MUST be built in a nonisolated context (see `makeRMSBlock`) — a closure written
+        // inline in this @MainActor method inherits MainActor isolation, and CoreAudio invoking it on
+        // the real-time audio IOThread then trips `swift_task_checkIsolated` → SIGTRAP (UAT crash).
         let queue = DispatchQueue(label: "com.maksim101.myisland.audiolevel", qos: .userInitiated)
         var proc: AudioDeviceIOProcID?
-        let ioErr = AudioDeviceCreateIOProcIDWithBlock(&proc, agg, queue) { _, inInputData, _, _, _ in
-            let abl = UnsafeMutableAudioBufferListPointer(UnsafeMutablePointer(mutating: inInputData))
-            var sumSquares: Float = 0
-            var count = 0
-            for buffer in abl {
-                guard let base = buffer.mData else { continue }
-                let n = Int(buffer.mDataByteSize) / MemoryLayout<Float>.size
-                let samples = base.assumingMemoryBound(to: Float.self)
-                var i = 0
-                while i < n { let s = samples[i]; sumSquares += s * s; i += 1 }
-                count += n
-            }
-            let rms = count > 0 ? (sumSquares / Float(count)).squareRoot() : 0
-            lock.withLock { $0 = rms }
-        }
+        let ioErr = AudioDeviceCreateIOProcIDWithBlock(&proc, agg, queue, Self.makeRMSBlock(lock: sharedRMS))
         guard ioErr == noErr, let proc else {
             logger.error("IOProc create failed (status=\(ioErr, privacy: .public))")
             teardown()
@@ -140,6 +128,27 @@ final class SystemAudioLevelProvider {
         ioProcID = nil
         aggregateID = kAudioObjectUnknown
         tapID = kAudioObjectUnknown
+    }
+
+    /// Builds the real-time IOProc block in a NONISOLATED context so it carries no MainActor
+    /// isolation — captures only the `Sendable` lock, so CoreAudio can safely call it on the audio
+    /// thread without tripping the Swift executor-isolation assertion (SIGTRAP).
+    nonisolated private static func makeRMSBlock(lock: OSAllocatedUnfairLock<Float>) -> AudioDeviceIOBlock {
+        { _, inInputData, _, _, _ in
+            let abl = UnsafeMutableAudioBufferListPointer(UnsafeMutablePointer(mutating: inInputData))
+            var sumSquares: Float = 0
+            var count = 0
+            for buffer in abl {
+                guard let base = buffer.mData else { continue }
+                let n = Int(buffer.mDataByteSize) / MemoryLayout<Float>.size
+                let samples = base.assumingMemoryBound(to: Float.self)
+                var i = 0
+                while i < n { let s = samples[i]; sumSquares += s * s; i += 1 }
+                count += n
+            }
+            let rms = count > 0 ? (sumSquares / Float(count)).squareRoot() : 0
+            lock.withLock { $0 = rms }
+        }
     }
 
     /// Pure C-API teardown, callable from the nonisolated `deinit` as well as `teardown()` — so a
