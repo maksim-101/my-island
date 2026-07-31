@@ -13,7 +13,7 @@ extension Notification.Name {
 final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private var notchPanelController: NotchPanelController?
     private var settingsWindow: NSWindow?
-    private let logger = Logger(subsystem: AppIdentity.bundleID, category: "AppDelegate")
+    private let logger = AppLog.make("AppDelegate")
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         notchPanelController = NotchPanelController()

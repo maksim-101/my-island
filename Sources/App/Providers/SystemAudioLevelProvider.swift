@@ -38,7 +38,7 @@ final class SystemAudioLevelProvider {
     nonisolated(unsafe) private var ioProcID: AudioDeviceIOProcID?
     nonisolated(unsafe) private var sampleTimer: Timer?
 
-    private let logger = Logger(subsystem: AppIdentity.bundleID, category: "SystemAudioLevel")
+    private let logger = AppLog.make("SystemAudioLevel")
 
     func start() {
         guard tapID == kAudioObjectUnknown else { return }

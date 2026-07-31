@@ -17,7 +17,7 @@ final class NotchPanelController: NSObject {
     // floats just below the notch (HUDPillView). Independent of the notch/wings
     // so its width never has to match them.
     private var hudPanels: [NSPanel] = []
-    private let logger = Logger(subsystem: AppIdentity.bundleID, category: "NotchPanelController")
+    private let logger = AppLog.make("NotchPanelController")
     nonisolated(unsafe) private var screenObserver: NSObjectProtocol?
     // Observe-only mouse monitors (never intercept clicks) that let a hover over
     // the timer wings drive the same dwell-to-expand as a hover over the notch.

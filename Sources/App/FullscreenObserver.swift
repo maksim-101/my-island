@@ -38,7 +38,7 @@ final class FullscreenObserver {
     // touched there (mirrors `BrightnessProvider.pollTimer`).
     nonisolated(unsafe) private var pollTimer: Timer?
 
-    private let logger = Logger(subsystem: AppIdentity.bundleID, category: "FullscreenObserver")
+    private let logger = AppLog.make("FullscreenObserver")
 
     /// Points of slack on each edge for the bounds-match comparison — a real
     /// fullscreen window's reported bounds can be off by a point or two from

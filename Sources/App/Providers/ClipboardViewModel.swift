@@ -20,7 +20,7 @@ final class ClipboardViewModel {
 
     private(set) var entries: [ClipboardEntry] = []   // newest first, max 10 (D-13)
     private var lastChangeCount: Int
-    private let logger = Logger(subsystem: AppIdentity.bundleID, category: "ClipboardViewModel")
+    private let logger = AppLog.make("ClipboardViewModel")
 
     // Accessed from `deinit`, which runs nonisolated — safe because
     // `Timer.invalidate()` is thread-agnostic and no other isolated state is

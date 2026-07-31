@@ -202,7 +202,7 @@ final class CalendarProvider {
     var onThresholdCrossed: ((String) -> Void)?
 
     private let service = CalendarService()
-    private let logger = Logger(subsystem: AppIdentity.bundleID, category: "CalendarProvider")
+    private let logger = AppLog.make("CalendarProvider")
 
     /// Round 6: the temporary real `NSWindow` created solely so TCC has an
     /// actual key window to anchor the permission sheet to. Held for the

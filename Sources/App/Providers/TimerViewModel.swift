@@ -10,7 +10,7 @@ import MyIslandCore
 @Observable
 final class TimerViewModel {
     private var engine = TimerEngine()
-    private let logger = Logger(subsystem: AppIdentity.bundleID, category: "TimerViewModel")
+    private let logger = AppLog.make("TimerViewModel")
 
     // Accessed from `deinit`, which runs nonisolated — safe because
     // `Timer.invalidate()` is thread-agnostic and no other isolated state is

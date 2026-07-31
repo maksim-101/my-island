@@ -44,7 +44,7 @@ actor NowPlayingService {
     private var chunkContinuation: AsyncStream<Data>.Continuation?
 
     private let onUpdate: (NowPlayingModel?) -> Void
-    private let logger = Logger(subsystem: AppIdentity.bundleID, category: "NowPlayingService")
+    private let logger = AppLog.make("NowPlayingService")
 
     init(onUpdate: @escaping (NowPlayingModel?) -> Void) {
         self.onUpdate = onUpdate
@@ -303,7 +303,7 @@ final class NowPlayingProvider {
             self?.apply(model: model)
         }
     }
-    private let logger = Logger(subsystem: AppIdentity.bundleID, category: "NowPlayingProvider")
+    private let logger = AppLog.make("NowPlayingProvider")
 
     init() {
         Task {
