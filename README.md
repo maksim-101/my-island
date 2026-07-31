@@ -1,16 +1,18 @@
 # my-island
 
-A native macOS notch app for the 16-inch MacBook Pro — an **actionable-first** companion
-for the camera-housing notch. The collapsed notch always shows live ambient state; it
-expands on hover or a global hotkey into a panel for timers, clipboard, now-playing, and
-calendar — plus a planned Claude Code "needs you" strip.
+A native macOS notch app — an **actionable-first** companion for the camera-housing notch.
+The collapsed notch always shows live ambient state; it expands on hover or a global hotkey
+into a panel for timers, clipboard, now-playing, and calendar — plus a planned Claude Code
+"needs you" strip.
 
 Actionable, not decorative — the notch surfaces what needs your attention and lets you act
 on it (or jump straight to it) without switching windows.
 
-> Built as a personal daily-driver. It is hardcoded to the 16" MacBook Pro notch and
-> targets **macOS Tahoe (26.x)**. It degrades to a top-center floating pill on displays
-> with no notch, but it is not designed or tested for other hardware.
+> Built as a personal daily-driver on a 16" MacBook Pro, but nothing is hardware-specific:
+> the notch layout is derived from Apple's public safe-area APIs, so it should work on any
+> notched Mac (14"/16" MacBook Pro, notched MacBook Air) on **macOS Tahoe (26.x)** — those
+> are just untested. A display with **no** notch is currently unsupported (the app stays
+> dormant there; a notch-less fallback is planned, not built).
 
 ## Status
 
@@ -30,7 +32,7 @@ on it (or jump straight to it) without switching windows.
 
 ## Requirements
 
-- 16-inch MacBook Pro (or any Mac with a notch) running **macOS 26 (Tahoe)** or later
+- Any Mac with a notch — 14"/16" MacBook Pro or a notched MacBook Air (developed & tested only on the 16" MBP) — running **macOS 26 (Tahoe)** or later. A non-notch display is not yet supported.
 - **Xcode 26** (Tahoe SDK) with command-line tools
 - [`xcodegen`](https://github.com/yonaskolb/XcodeGen) — `brew install xcodegen`
 
