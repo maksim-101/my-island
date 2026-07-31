@@ -9,12 +9,9 @@ import MyIslandCore
 private let audioLevelGain: Float = 6
 private let audioLevelDecay: Float = 0.82
 
-/// Shared meter written by the real-time IOProc, read by the main-thread sampler. `callbacks` counts
-/// IOProc invocations since the last sample so the diagnostic can tell "clock never ran" (0) apart
-/// from "running but silent" (>0, rms≈0).
+/// Shared RMS written by the real-time IOProc, read by the main-thread sampler.
 private struct AudioMeter {
     var rms: Float = 0
-    var callbacks: Int = 0
 }
 
 /// Live system-audio output level for the collapsed-notch sound-wave. macOS 14.4+ Core Audio
@@ -40,7 +37,6 @@ final class SystemAudioLevelProvider {
     nonisolated(unsafe) private var aggregateID: AudioObjectID = kAudioObjectUnknown
     nonisolated(unsafe) private var ioProcID: AudioDeviceIOProcID?
     nonisolated(unsafe) private var sampleTimer: Timer?
-    private var diagTick = 0
 
     private let logger = Logger(subsystem: AppIdentity.bundleID, category: "SystemAudioLevel")
 
@@ -117,28 +113,16 @@ final class SystemAudioLevelProvider {
         }
 
         // 4. Main-thread sampler → observed `level` with gain + peak-decay smoothing.
-        diagTick = 0
         sampleTimer = Timer.scheduledTimer(withTimeInterval: 1.0 / 30.0, repeats: true) { [weak self] _ in
             Task { @MainActor in self?.sample() }
         }
-        logger.notice("System audio level tap started")
+        logger.debug("System audio level tap started")
     }
 
     private func sample() {
-        let m = meter.withLock { current -> AudioMeter in
-            let snapshot = current
-            current.callbacks = 0
-            return snapshot
-        }
-        let scaled = min(1, m.rms * audioLevelGain)
+        let rms = meter.withLock { $0.rms }
+        let scaled = min(1, rms * audioLevelGain)
         level = max(scaled, level * audioLevelDecay)
-
-        // ~1s diagnostic: is the IOProc firing at all, and is it silence vs. signal?
-        diagTick += 1
-        if diagTick >= 30 {
-            diagTick = 0
-            logger.notice("audio meter — callbacks/s=\(m.callbacks, privacy: .public) rms=\(m.rms, privacy: .public) level=\(self.level, privacy: .public)")
-        }
     }
 
     func stop() {
@@ -172,7 +156,7 @@ final class SystemAudioLevelProvider {
                 count += n
             }
             let rms = count > 0 ? (sumSquares / Float(count)).squareRoot() : 0
-            meter.withLock { $0.rms = rms; $0.callbacks += 1 }
+            meter.withLock { $0.rms = rms }
         }
     }
 

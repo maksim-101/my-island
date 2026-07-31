@@ -86,7 +86,7 @@ final class FullscreenObserver {
         // corroborating (never decisive, RESEARCH Assumption A5) menu-bar
         // visibility signal. No window title or now-playing metadata is
         // ever logged here.
-        logger.notice("""
+        logger.debug("""
             fullscreen=\(self.isFrontmostFullscreen, privacy: .public) \
             bundleID=\(result.bundleID ?? "none", privacy: .public) \
             foundOwnedWindow=\(result.foundOwnedWindow, privacy: .public) \

@@ -169,11 +169,6 @@ actor NowPlayingService {
     /// resets the restart counter per D-15's "a successful read after a restart resets the count."
     private func publish() {
         restartAttempts = 0
-        // Diagnostic (.notice persists to `log show`): the raw session the adapter
-        // chose BEFORE classification — surfaces the spike-001 multi-session
-        // fallback (e.g. a paused Safari "Graphics and Media" tab winning over
-        // Apple Music). `source` is an app bundle id, not track metadata.
-        logger.notice("NowPlaying publish — hasSession=\(self.session != nil, privacy: .public) isPlaying=\(self.session?.isPlaying ?? false, privacy: .public) source=\(self.session?.bundleIdentifier ?? "nil", privacy: .public)")
         onUpdate(session.map(Self.project))
     }
 
@@ -324,11 +319,6 @@ final class NowPlayingProvider {
         let identity = model.map {
             NowPlayingSessionIdentity(bundleIdentifier: $0.bundleIdentifier, title: $0.title, artist: $0.artist)
         }
-        // Diagnostic (.info so it persists to `log show`, unlike .debug): the
-        // adapter's raw play-state that drives the ear/panel gate. Bools only —
-        // never a title/artist/app name (T-05-02). Lets a UAT repro of "ear not
-        // showing while music plays" be pinned to whether isPlaying arrives true.
-        logger.notice("Now Playing apply — hasModel=\(model != nil, privacy: .public) isPlaying=\(model?.isPlaying ?? false, privacy: .public)")
         let newClassification = NowPlayingSessionClassifier.classify(
             identity: identity,
             isPlaying: model?.isPlaying ?? false,
@@ -379,7 +369,7 @@ final class NowPlayingProvider {
         updateElapsedFraction()
         updateProgressTick(for: newClassification.visibility)
 
-        logger.notice("Now Playing visibility transition — visibility=\(String(describing: newClassification.visibility), privacy: .public)")
+        logger.debug("Now Playing visibility transition — visibility=\(String(describing: newClassification.visibility), privacy: .public)")
     }
 
     /// Recomputes `elapsedFraction` from `currentModel`'s cached elapsed/timestamp/rate/duration
