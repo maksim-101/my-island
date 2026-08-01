@@ -95,10 +95,10 @@ private struct ScrollingTrackText: View {
     /// grace window opens or closes mid-pass — the exact bug WR-02 fixed in the removed ear version.
     @State private var frozenNow = false
 
-    /// Matches `Tokens.Font.bodyMD` (`SwiftUI.Font.system(size: 12.5, weight: .regular)`) — measured
-    /// directly via `NSFont`/`NSString` sizing rather than a `GeometryReader` round-trip, so the
-    /// scroll/no-scroll decision is made synchronously with no first-layout race.
-    private static let measuringFont = NSFont.systemFont(ofSize: 12.5, weight: .regular)
+    /// Matches `Tokens.Font.bodyMD` — measured directly via `NSFont`/`NSString` sizing rather than
+    /// a `GeometryReader` round-trip, so the scroll/no-scroll decision is made synchronously with
+    /// no first-layout race. Shares `Tokens.Font.bodyMDSize` with `bodyMD` so the two can't drift.
+    private static let measuringFont = NSFont.systemFont(ofSize: Tokens.Font.bodyMDSize, weight: .regular)
     private static let tickInterval: Double = 1.0 / 30.0
 
     private var boundedText: String {
