@@ -63,17 +63,21 @@ final class NotchPanelController: NSObject {
     override init() {
         super.init()
 
+        // `level` is now `Float?` (T-7h2 §1.3): a device with no readable volume property hides
+        // the row rather than showing the previous device's stale value, mirroring how
+        // `brightnessProvider.onChange` already guards below.
         volumeProvider.onChange = { [weak self] in
-            guard let self else { return }
-            self.hud.showVolume(level: Double(self.volumeProvider.level), muted: self.volumeProvider.isMuted)
+            guard let self, let level = self.volumeProvider.level else { return }
+            self.hud.showVolume(level: Double(level), muted: self.volumeProvider.isMuted)
         }
         // Only wired when the private brightness bridge actually resolved —
         // an unavailable BrightnessProvider must never surface a HUD row
-        // (T-03-B2).
+        // (T-03-B2). `BrightnessScale.barFraction` is applied at this single wiring point only —
+        // the volume path above keeps passing its raw level through unchanged (T-7h2 Task 1 step D).
         if brightnessProvider.isAvailable {
             brightnessProvider.onChange = { [weak self] in
                 guard let self, let level = self.brightnessProvider.level else { return }
-                self.hud.showBrightness(level: Double(level))
+                self.hud.showBrightness(level: Double(BrightnessScale.barFraction(for: level)))
             }
         }
         // The Ambient HUD is now a detached glass pill below the notch
