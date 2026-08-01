@@ -24,14 +24,56 @@ import MyIslandCore
 /// The user compared the shipped ear against Alcove and found the text banner
 /// distracting; the ear now shows the artwork tile alone. Full track identity
 /// remains available in the expanded panel (D-08).
+///
+/// **T-7h2 Task 3 — fullscreen notch-locator glow.** `NotchPanelController.makeBarPanel` grows
+/// this view's window `glowOutset` (3pt) taller than the notch, downward only, so there's real,
+/// rendered panel below the (otherwise-invisible) camera cutout for a hairline to actually show
+/// on. `notchLocalFrame` is the notch's position within that taller view (SwiftUI's top-down
+/// coordinate space, so `y: 0` is the physical notch top, unchanged by the outward growth). The
+/// pill above stays pinned to exactly `notchLocalFrame.height` so it renders pixel-identically to
+/// before this task; the glow draws in the space below/beside it, gated on
+/// `fullscreen.isFrontmostFullscreen` — the plain APP-fullscreen signal, deliberately NOT Task 2's
+/// content-fullscreen rule, since the physical notch is hidden by the black bar in every
+/// fullscreen mode, media or not.
 @MainActor
 struct NotchBarView: View {
     let timer: TimerViewModel
     let model: NotchViewModel
     let nowPlaying: NowPlayingProvider
     let fullscreen: FullscreenObserver
+    let notchLocalFrame: CGRect
+
+    /// How far the glow's stroke extends past the notch's own edges — only left, right and
+    /// bottom (never top, which is the physical screen edge/cutout with nothing to gain by
+    /// outsetting) — so the visible half of a centered 1pt stroke lands on real, rendered pixels
+    /// beside and below the cutout rather than half inside the never-displayed camera housing.
+    private static let glowLineOutset: CGFloat = 1.5
 
     var body: some View {
+        VStack(spacing: 0) {
+            pill
+                .frame(height: notchLocalFrame.height)
+            Spacer(minLength: 0)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .overlay(alignment: .topLeading) {
+            if fullscreen.isFrontmostFullscreen {
+                NotchShape(topCornerRadius: 6, bottomCornerRadius: 14)
+                    .stroke(Tokens.Color.accent.opacity(0.45), lineWidth: 1)
+                    .shadow(color: Tokens.Color.accent.opacity(0.35), radius: 3)
+                    .frame(
+                        width: notchLocalFrame.width + Self.glowLineOutset * 2,
+                        height: notchLocalFrame.height + Self.glowLineOutset
+                    )
+                    .offset(x: notchLocalFrame.minX - Self.glowLineOutset, y: notchLocalFrame.minY)
+                    .transition(.opacity)
+                    .allowsHitTesting(false)
+            }
+        }
+        .animation(.easeInOut(duration: 0.25), value: fullscreen.isFrontmostFullscreen)
+    }
+
+    private var pill: some View {
         Group {
             // T-7h2 Task 2: the Now Playing ear is suppressed — absent, not dimmed — by
             // FullscreenClassifier's content-takeover rule (chromeless/titleless fullscreen

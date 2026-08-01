@@ -332,13 +332,34 @@ final class NotchPanelController: NSObject {
         return panel
     }
 
+    /// How far the bar panel (and its glow-outset content view) extends BELOW the notch cutout's
+    /// bottom edge (T-7h2 Task 3). The physical notch is a camera cutout — pixels drawn inside it
+    /// are never displayed — so a hairline stroked on or inside the cutout outline would be
+    /// half-invisible or fully invisible; the glow needs a few points of real, rendered panel
+    /// below the notch to actually show. `barFrame(notchFrame:anchorMaxY:)` itself is unchanged —
+    /// `handleMouseMoved` computes the wing hover region from that function independently of the
+    /// panel frame, so the hover geometry must not move — only `makeBarPanel`'s own window/content
+    /// frame grows by this amount, downward only (top edge, flush with the physical notch top,
+    /// stays fixed).
+    private static let glowOutset: CGFloat = 3
+
     private static func makeBarPanel(notchFrame: NSRect, anchorMaxY: CGFloat, timer: TimerViewModel, model: NotchViewModel, nowPlaying: NowPlayingProvider, fullscreen: FullscreenObserver) -> NSPanel {
-        let frame = barFrame(notchFrame: notchFrame, anchorMaxY: anchorMaxY)
+        let bar = barFrame(notchFrame: notchFrame, anchorMaxY: anchorMaxY)
+        let frame = NSRect(
+            x: bar.minX,
+            y: bar.minY - glowOutset,
+            width: bar.width,
+            height: bar.height + glowOutset
+        )
         let panel = NSPanel(contentRect: frame, styleMask: [.borderless, .nonactivatingPanel, .utilityWindow], backing: .buffered, defer: false)
 
         let container = NSView(frame: NSRect(origin: .zero, size: frame.size))
         container.autoresizesSubviews = true
-        let hosting = NSHostingView(rootView: NotchBarView(timer: timer, model: model, nowPlaying: nowPlaying, fullscreen: fullscreen))
+        // The notch's position within the (now taller) bar view, in SwiftUI's top-down coordinate
+        // space: the pill content and the glow's un-outset top edge both anchor to this rect's
+        // origin (y: 0 — the physical notch top, unchanged by the outward growth below it).
+        let notchLocalFrame = CGRect(x: leftEar, y: 0, width: notchFrame.width, height: notchFrame.height)
+        let hosting = NSHostingView(rootView: NotchBarView(timer: timer, model: model, nowPlaying: nowPlaying, fullscreen: fullscreen, notchLocalFrame: notchLocalFrame))
         hosting.frame = NSRect(origin: .zero, size: frame.size)
         hosting.autoresizingMask = [.width, .height]
         container.addSubview(hosting)
