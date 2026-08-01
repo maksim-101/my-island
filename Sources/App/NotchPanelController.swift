@@ -479,10 +479,10 @@ final class NotchPanelController: NSObject {
     private func handleMouseMoved() {
         let mouse = NSEvent.mouseLocation
         for panel in panels {
-            // Mirrors NotchBarView's pill gate exactly (D-10/D-11): the timer
+            // Mirrors NotchBarView's pill gate exactly (T-7h2 Task 2): the timer
             // disjunct sits OUTSIDE the fullscreen suppression, so the wing
             // hover region never disappears out from under a running timer.
-            let inBar = (timer.isRunning || (nowPlayingProvider.displayEar && !fullscreenObserver.isFrontmostFullscreen))
+            let inBar = (timer.isRunning || (nowPlayingProvider.displayEar && !fullscreenObserver.isAmbientSuppressed))
                 && Self.barFrame(notchFrame: panel.notchFrame, anchorMaxY: panel.anchorMaxY).contains(mouse)
             let inNotch = Self.collapsedFrame(notchFrame: panel.notchFrame, anchorMaxY: panel.anchorMaxY).contains(mouse)
             let wing = inBar && !inNotch

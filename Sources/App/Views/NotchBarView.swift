@@ -33,15 +33,19 @@ struct NotchBarView: View {
 
     var body: some View {
         Group {
-            // D-10/D-11: the Now Playing ear is suppressed — absent, not
-            // dimmed — while the frontmost app is fullscreen, so a film's
-            // title never scrolls over the film. The `timer.isRunning ||`
-            // disjunct is deliberately OUTSIDE the suppressed parenthesis —
-            // a running timer still shows in fullscreen and still keeps the
-            // pill up on its own. Do not "simplify" this into a single
-            // shared condition; that would silently re-suppress the timer
-            // too and break Phase 4 D-01.
-            if (timer.isRunning || (nowPlaying.displayEar && !fullscreen.isFrontmostFullscreen)) && !model.isOpen {
+            // T-7h2 Task 2: the Now Playing ear is suppressed — absent, not dimmed — by
+            // FullscreenClassifier's content-takeover rule (chromeless/titleless fullscreen
+            // window), NOT plain app-fullscreen — see FullscreenObserver's doc comment and
+            // CONTEXT.md's post-research decisions. Safari content-fullscreen (a video/player
+            // element taking over) suppresses; Safari/Vivaldi Spaces-fullscreen browsing does
+            // not (the user is "still operating within the browser"); any non-browser
+            // fullscreen app (IINA, QuickTime, TV.app, games) suppresses on plain
+            // app-fullscreen. The `timer.isRunning ||` disjunct is deliberately OUTSIDE the
+            // suppressed parenthesis — a running timer still shows in every fullscreen state
+            // and still keeps the pill up on its own. Do not "simplify" this into a single
+            // shared condition; that would silently re-suppress the timer too and break Phase 4
+            // D-01.
+            if (timer.isRunning || (nowPlaying.displayEar && !fullscreen.isAmbientSuppressed)) && !model.isOpen {
                 NotchShape(topCornerRadius: 6, bottomCornerRadius: 14)
                     .fill(Color.black)
                     .overlay(alignment: .trailing) {
@@ -59,14 +63,14 @@ struct NotchBarView: View {
                                     .fixedSize()
                             }
                             .padding(.trailing, Tokens.Spacing.lg)
-                        } else if nowPlaying.displayEar && !fullscreen.isFrontmostFullscreen {
+                        } else if nowPlaying.displayEar && !fullscreen.isAmbientSuppressed {
                             SoundWaveView()
                                 .padding(.trailing, Tokens.Spacing.lg)
                                 .opacity(nowPlaying.isPausedInGrace ? 0.55 : 1)
                         }
                     }
                     .overlay(alignment: .leading) {
-                        if nowPlaying.displayEar && !fullscreen.isFrontmostFullscreen {
+                        if nowPlaying.displayEar && !fullscreen.isAmbientSuppressed {
                             NowPlayingEarView(nowPlaying: nowPlaying)
                         }
                     }
