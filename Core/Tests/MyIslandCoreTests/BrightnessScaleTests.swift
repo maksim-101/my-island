@@ -99,34 +99,40 @@ private let measuredNotchTable: [(press: Int, raw: Float)] = [
 ]
 private let measuredNotchCount: Float = 16
 
-/// Press 6 onward is comfortably resolvable range — a single power-law curve anchored at press 1
-/// (the plan's decision rule) tracks these closely.
-@Test func barFractionMapsResolvableRangeNotchesWithinToleranceOfTheirLinearPosition() {
-    for (press, raw) in measuredNotchTable where press >= 6 {
+/// 260801-7h2-regressions correction: matching each press's "notch-linear position" (`press /
+/// notchCount`) is NOT the right target — raw itself does not advance linearly with press number
+/// (presses 1-4 are flat at the floor, so presses 5-16 must cover nearly the full 0...1 raw range
+/// while only covering 12/16 of "notch position"), so forcing a curve to hit both the floor AND
+/// notch-linear positions is exactly what produced the reported over-amplification bug. The
+/// corrected model instead tracks `raw` itself at a near-1 constant slope above the floor — see
+/// `barFractionStepSizeStaysConsistentAboveTheFloor` for the actual regression this must satisfy.
+@Test func barFractionTracksRawAtANearOneSlopeAboveTheFloor() {
+    for (_, raw) in measuredNotchTable where raw > 0.01 {
         let mapped = BrightnessScale.barFraction(for: raw)
-        let linear = Float(press) / measuredNotchCount
-        #expect(abs(mapped - linear) <= 0.06, "press \(press): mapped \(mapped) vs linear \(linear)")
+        #expect(abs(mapped - raw) <= 0.08, "raw \(raw): mapped \(mapped)")
     }
 }
 
-/// Press 1 is the curve's anchor point by construction (the decision rule solves `exponent` so
-/// this exact raw maps to `1 / notchCount`) — must match closely, not just within the general
-/// tolerance.
+/// Press 1 is the curve's anchor point by construction — must match `1 / notchCount` closely, not
+/// just within the general tolerance.
 @Test func barFractionMapsTheAnchorPressExactlyToOneOverNotchCount() {
     let mapped = BrightnessScale.barFraction(for: 0.01)
     #expect(abs(mapped - (1 / measuredNotchCount)) <= 0.01)
 }
 
-/// Press 5 is the transition notch immediately after the measured hardware floor (presses 2-4) —
-/// a single power curve fit to the whole range, anchored at the extreme low point (press 1), does
-/// not track this boundary notch as tightly as the rest of the resolvable range: measured ~0.074
-/// off its notch-linear position (0.3125), vs. ≤0.06 everywhere from press 6 on. This is an
-/// honestly-reported, expected consequence of fitting one curve across a floor-then-linear-ramp
-/// shape, not a bug — documented here rather than silently widening the general tolerance.
-@Test func barFractionMapsTheFloorTransitionNotchReasonablyCloseToItsLinearPosition() {
-    let mapped = BrightnessScale.barFraction(for: 0.0925)
-    let linear: Float = 5 / measuredNotchCount
-    #expect(abs(mapped - linear) <= 0.08, "mapped \(mapped) vs linear \(linear)")
+/// The reported regression itself (260801-7h2-regressions): "turning brightness down, once around
+/// ~30% displayed brightness, the step size visibly increases relative to what it was above that
+/// point" — the old `pow(raw, 0.602)` curve's derivative exceeded 1 below raw≈0.28, growing step
+/// size sharply toward the floor. Asserts the mapped delta between adjacent measured notches stays
+/// consistent across the near-top, mid-range and near-floor parts of the resolvable range — which
+/// the old curve violated by more than 5x (measured: ~0.052 near the top vs. ~0.112 near the
+/// floor).
+@Test func barFractionStepSizeStaysConsistentAboveTheFloor() {
+    let deltaNearTop = BrightnessScale.barFraction(for: 0.917500) - BrightnessScale.barFraction(for: 0.835000) // presses 15-14
+    let deltaMidRange = BrightnessScale.barFraction(for: 0.505000) - BrightnessScale.barFraction(for: 0.422500) // presses 10-9
+    let deltaNearFloor = BrightnessScale.barFraction(for: 0.175000) - BrightnessScale.barFraction(for: 0.092500) // presses 6-5
+    #expect(abs(deltaNearTop - deltaMidRange) <= 0.01, "top \(deltaNearTop) vs mid \(deltaMidRange)")
+    #expect(abs(deltaNearTop - deltaNearFloor) <= 0.01, "top \(deltaNearTop) vs floor \(deltaNearFloor)")
 }
 
 /// The measured dark-end symptom itself: at raw 0.01 (four notches of real key-press range,

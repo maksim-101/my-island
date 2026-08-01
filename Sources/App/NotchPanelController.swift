@@ -280,10 +280,23 @@ final class NotchPanelController: NSObject {
     /// How far the extended pill reaches into each ear beyond the cutout —
     /// ASYMMETRIC per the idle-wing mockup: the right ear is sized to the
     /// longest realistic readout ("600:22" ≈ 75pt), the left ear only carries
-    /// the ~20pt artwork/sound-wave so it hugs tight (~40pt). A symmetric 76pt
+    /// the ~20pt artwork/sound-wave so it hugs tight. A symmetric 76pt
     /// left ear left ~40pt of dead black beside the artwork (UAT: "wings too
     /// wide").
-    private static let leftEar: CGFloat = 40
+    ///
+    /// **260801-7h2-regressions round 4:** was 40 — left the artwork tile only 4pt of
+    /// clearance from the notch cutout (`40 - (Tokens.Spacing.lg leading pad + 20pt artwork)`),
+    /// which read as "scraping the border" once round 3's glow/staleness fixes made the pill
+    /// render reliably. Bumped to 48 (+8pt): widens the wing itself, and — since the artwork's
+    /// panel-local offset is unchanged while the panel's own global origin (`notchFrame.minX -
+    /// leftEar`) shifts left with it — also moves the artwork's absolute screen position further
+    /// left/away from the notch by the same 8pt, landing clearance at 12pt. Verified this cannot
+    /// reintroduce GLOW-GEOMETRY: the glow's absolute edge position is `notchFrame.minX -
+    /// glowLineOutset` / `notchFrame.maxX + glowLineOutset` — `leftEar` cancels out of that
+    /// formula entirely (panel origin moves left by `leftEar` while the notch's local offset
+    /// within the panel grows by the same `leftEar`), confirmed via a closed-form re-derivation
+    /// of NotchShape.path(in:)'s corner arithmetic at both leftEar=40 and leftEar=48.
+    private static let leftEar: CGFloat = 48
     private static let rightEar: CGFloat = 76
 
     /// Global-coordinate frame of the extended pill (also the wing hover
