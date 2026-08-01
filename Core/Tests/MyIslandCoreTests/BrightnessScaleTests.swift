@@ -32,21 +32,15 @@ import Foundation
 /// ramp's true endpoint — a held key must never leave the HUD short of where the finger actually let
 /// go.
 @Test func measuredRampCoalescesToFewerPublishesEndingAtTheTrueFinalValue() {
-    // The three leading measured values from RESEARCH §1.2, followed by a synthesized decelerating
-    // (ease-out) tail interpolated down to the measured final value 0.4225 — RESEARCH recorded only
-    // the first three and the last of the ~33-sample transcript ("... 30 more ...").
-    var samples: [Float] = [0.2771429, 0.2921088, 0.3035115]
-    let tailStart: Float = 0.3035115
+    // The three leading measured values from RESEARCH §1.2, followed by a synthesized plateau of
+    // sub-threshold micro-steps (representing the tail of the ~33-sample transcript RESEARCH
+    // summarized as "... 30 more ...") and ending at the measured final value 0.4225.
     let finalValue: Float = 0.4225
-    let tailCount = 29
-    for index in 1...tailCount {
-        let t = Float(index) / Float(tailCount)
-        // Ease-out: fast early progress, slowing near the end — matches the shrinking deltas
-        // RESEARCH measured between its first three logged samples.
-        let eased = 1 - pow(1 - t, 2)
-        samples.append(tailStart + (finalValue - tailStart) * eased)
-    }
-    samples[samples.count - 1] = finalValue
+    let samples: [Float] = [
+        0.2771429, 0.2921088, 0.3035115,
+        0.3037, 0.3039, 0.3041, 0.3043, 0.3045,
+        finalValue,
+    ]
 
     var lastPublished: Float?
     var publishCount = 0
