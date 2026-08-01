@@ -427,7 +427,7 @@ final class FullscreenObserver {
         var value: AnyObject?
         let status = AXUIElementCopyAttributeValue(app, kAXFocusedWindowAttribute as CFString, &value)
         guard status == .success, let value else { return nil }
-        return (value as! AXUIElement)
+        return value as? AXUIElement
     }
 
     private static func axString(_ element: AXUIElement, _ attribute: String) -> String? {
