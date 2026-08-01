@@ -188,7 +188,17 @@ final class FullscreenObserver {
         // logged here. `menuBarVisible` was dropped from this line (260801-7h2-regressions): it
         // reflected my-island's OWN (nonexistent, `LSUIElement`) menu bar presentation state, never
         // Safari's, so it was always `true` and never diagnostic.
-        logger.debug("""
+        //
+        // Level is `.notice` (the default, persisted level), not `.debug`: debug-level messages
+        // live only in a memory ring buffer and never reach the log store, so a later `log show`
+        // could never return them — only a live stream started before the transition would catch
+        // them. `.notice` lets a developer toggle fullscreen first and read the evidence with
+        // `log show` afterwards. This line is only reachable at all when AppLog's verbose opt-in
+        // is on (see AppLog.swift), which is what keeps a persisted level from meaning a noisy
+        // shipped app. It carries a bundle identifier and boolean reason fields only — still no
+        // window name and no now-playing metadata, load-bearing here because this is the one line
+        // most likely to be read by a human.
+        logger.notice("""
             fullscreen=\(self.isFrontmostFullscreen, privacy: .public) \
             suppressed=\(self.isAmbientSuppressed, privacy: .public) \
             bundleID=\(result.bundleID ?? "none", privacy: .public) \

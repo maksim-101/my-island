@@ -72,6 +72,23 @@ xattr -dr com.apple.quarantine /Applications/my-island.app
 Accessibility is **optional** — it's used only to detect Safari fullscreen video (see "Known
 Limitations" below) and, like the other grants, is forgotten on every ad-hoc rebuild.
 
+### Diagnostic logging
+
+The installed app writes nothing to the system log by default — that's deliberate, a
+privacy/no-noise-in-production policy. For one debugging session, opt in on this machine,
+restart the app (the setting is read once at startup), read the log, then restore silence:
+
+```bash
+defaults write com.maksim101.myisland MyIslandVerboseLogging -bool YES
+# quit and relaunch my-island.app
+log show --predicate 'subsystem == "com.maksim101.myisland" AND category == "FullscreenObserver"' --last 10m
+defaults delete com.maksim101.myisland MyIslandVerboseLogging
+# quit and relaunch my-island.app to restore silence
+```
+
+These lines record classification and status facts only — never what's playing, what's on
+the calendar, or what was copied.
+
 ## Layout
 
 ```
