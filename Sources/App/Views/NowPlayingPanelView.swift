@@ -90,9 +90,9 @@ private struct ScrollingTrackText: View {
     @State private var viewportWidth: CGFloat = 0
     @State private var offset: CGFloat = 0
     /// Live mirror of `isFrozen`, read from inside `runScrollPass()` instead of `isFrozen` directly.
-    /// The pass's `.task(id:)` is keyed on the bounded text alone and does NOT restart when
-    /// `isFrozen` changes, so a plain captured `let` would go stale the moment the grace window
-    /// opens or closes mid-pass — the exact bug WR-02 fixed in the removed ear version.
+    /// The pass's `.task(id:)` is keyed on the bounded text and viewport width, and does NOT
+    /// restart when `isFrozen` changes, so a plain captured `let` would go stale the moment the
+    /// grace window opens or closes mid-pass — the exact bug WR-02 fixed in the removed ear version.
     @State private var frozenNow = false
 
     /// Matches `Tokens.Font.bodyMD` (`SwiftUI.Font.system(size: 12.5, weight: .regular)`) — measured
@@ -130,7 +130,7 @@ private struct ScrollingTrackText: View {
             .onChange(of: isFrozen, initial: true) { _, newValue in
                 frozenNow = newValue
             }
-            .task(id: boundedText) {
+            .task(id: "\(boundedText)#\(viewportWidth)") {
                 await runScrollPass()
             }
     }
