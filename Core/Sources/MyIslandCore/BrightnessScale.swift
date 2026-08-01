@@ -27,13 +27,38 @@ public enum BrightnessScale {
         return abs(new - lastPublished) >= coalescingThreshold
     }
 
+    /// Task 1 step D on-hardware measurement (macOS 26.6/25G72, see SUMMARY.md for the full
+    /// transcript, both the fast-timing and generously-spaced reproduction runs): dimming to the
+    /// absolute minimum then stepping the brightness-up key one physical press at a time, four of
+    /// the sixteen presses (1-4) settled at the SAME raw reading (0.01) — a genuine, reproducible
+    /// hardware floor confirmed via a direct registration probe that bypasses this file's own
+    /// coalescing, not a measurement artifact. From press 5 onward the raw reading is linear
+    /// (+0.0825/press) and fully distinguishable. This matches the reported symptom exactly: the
+    /// bar rendered under 2% (indistinguishable from empty) while four notches of real key-press
+    /// range remained above it.
+    ///
+    /// `notchCount` (16) is macOS's standard brightness-key step count, exercised directly in the
+    /// measurement (16 presses, absolute minimum to absolute maximum). `rawAtLowestNonZeroNotch`
+    /// (0.01) is press 1's settled reading, per the decision rule: raw < 0.10 for all four lowest
+    /// notches triggers a curve correction.
+    private static let notchCount: Float = 16
+    private static let rawAtLowestNonZeroNotch: Float = 0.01
+
+    /// `pow(raw, exponent)`, with `exponent` solved so `rawAtLowestNonZeroNotch` maps exactly onto
+    /// `1 / notchCount` — i.e. press 1 reads as "one notch up" rather than "almost nothing".
+    /// `exponent = ln(1/notchCount) / ln(rawAtLowestNonZeroNotch) = ln(1/16) / ln(0.01) ≈ 0.602`,
+    /// hardcoded as a rounded constant rather than recomputed at runtime.
+    private static let exponent: Float = 0.602
+
     /// Maps a raw `DisplayServicesGetBrightness` reading (0...1, perceptual/slider scale, see
-    /// RESEARCH §1.1) onto the HUD bar's fill fraction. Currently clamped identity — Task 1 step D's
-    /// on-hardware dark-end measurement (see the SUMMARY for the recorded notch->raw-value table)
-    /// found the reading already close to notch-linear, so no curve correction is applied here; the
-    /// reported dark-end symptom was caused by the poll rate and the glitch suppressor, both removed
-    /// from `BrightnessProvider`.
+    /// RESEARCH §1.1) onto the HUD bar's fill fraction. A pure function of `raw` cannot invent
+    /// information the hardware doesn't report — presses 2-4 will still render identically to
+    /// press 1 (there is nothing in `raw` to distinguish them) — but the curve lifts that floor
+    /// reading from near-invisible (~1%) to clearly visible (~6%), and maps every distinguishable
+    /// measured notch from press 5 onward close to its notch-linear position.
     public static func barFraction(for raw: Float) -> Float {
-        min(1, max(0, raw))
+        let clamped = min(1, max(0, raw))
+        guard clamped > 0 else { return 0 }
+        return min(1, pow(clamped, exponent))
     }
 }
