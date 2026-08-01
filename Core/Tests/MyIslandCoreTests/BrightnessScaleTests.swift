@@ -73,3 +73,44 @@ import Foundation
         previous = mapped
     }
 }
+
+/// Task 1 step D on-hardware measurement (macOS 26.6/25G72, this machine, see SUMMARY.md for the
+/// full transcript and both the fast and slow-timing reproduction runs): dimming to the absolute
+/// minimum and stepping the brightness-up key one physical press at a time produced these settled
+/// `DisplayServicesGetBrightness` readings. Presses 2-4 are a genuine, reproducible hardware floor
+/// (confirmed via a direct registration probe bypassing `BrightnessScale`'s own coalescing) — the
+/// raw signal itself does not distinguish them from press 1, so no pure function of `raw` can
+/// recover their individual notch-linear positions; they are excluded from the tolerance
+/// assertion below for that reason, not overlooked.
+private let measuredNotchTable: [(press: Int, raw: Float)] = [
+    (1, 0.010000),
+    (5, 0.092500),
+    (6, 0.175000),
+    (7, 0.257500),
+    (8, 0.340000),
+    (9, 0.422500),
+    (10, 0.505000),
+    (11, 0.587500),
+    (12, 0.670000),
+    (13, 0.752500),
+    (14, 0.835000),
+    (15, 0.917500),
+    (16, 1.000000),
+]
+private let measuredNotchCount: Float = 16
+
+@Test func barFractionMapsEachDistinguishableMeasuredNotchWithinToleranceOfItsLinearPosition() {
+    for (press, raw) in measuredNotchTable {
+        let mapped = BrightnessScale.barFraction(for: raw)
+        let linear = Float(press) / measuredNotchCount
+        #expect(abs(mapped - linear) <= 0.06, "press \(press): mapped \(mapped) vs linear \(linear)")
+    }
+}
+
+/// The measured dark-end symptom itself: at raw 0.01 (four notches of real key-press range,
+/// RESEARCH/SUMMARY), the OLD identity mapping rendered under 2% — indistinguishable from empty.
+/// The curve must render it meaningfully higher, close to its notch-linear target (1/16).
+@Test func barFractionLiftsTheDarkEndOffTheFloor() {
+    let mapped = BrightnessScale.barFraction(for: 0.01)
+    #expect(mapped > 0.05)
+}
