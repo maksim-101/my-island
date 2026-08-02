@@ -59,10 +59,12 @@ import MyIslandCore
 /// Adds no entitlement, usage-description key or permission request for the base fullscreen
 /// signal — if the heuristic proves unusable on hardware, `isAvailable` reports false and the
 /// finding is escalated to the developer (see 05-05-PLAN.md Task 2), never silently patched over
-/// with a new TCC prompt. The AX read DOES introduce a new Accessibility TCC grant (T-7h2-04); an
-/// untrusted state degrades to `isAmbientSuppressed == isFrontmostFullscreen`'s old behavior for
-/// non-browsers and to never-suppress for browsers — i.e. today's behavior, never a crash or a
-/// permanent hide.
+/// with a new TCC prompt. The AX read still USES an Accessibility grant if the user has
+/// independently made one in System Settings, but this class never REQUESTS that grant itself
+/// (T-05-16: restores 05-05's original declared disposition of "never adding a prompt
+/// autonomously"). An untrusted state degrades to `isAmbientSuppressed ==
+/// isFrontmostFullscreen`'s old behavior for non-browsers and to never-suppress for browsers —
+/// i.e. today's behavior, never a crash or a permanent hide.
 // 260801-7h2-regressions round 3 (SUPPRESSION-STALENESS): this class was never marked
 // `@Observable`, unlike every sibling provider `NotchBarView` reads (`NowPlayingProvider`,
 // `TimerViewModel`, `NotchViewModel` are all `@MainActor @Observable`) — and `onChange` (below) is
@@ -116,10 +118,11 @@ final class FullscreenObserver {
     private static var cachedBrowserBundleURLs: Set<URL>?
 
     init() {
-        // Prompts only when untrusted; a grant made while the app is running takes effect on the
-        // next poll's `AXIsProcessTrusted()` re-read, no relaunch needed. No entitlement or
-        // Info.plist key is involved.
-        _ = AXIsProcessTrustedWithOptions([kAXTrustedCheckOptionPrompt.takeUnretainedValue(): true] as CFDictionary)
+        // T-05-16: this observer never triggers the Accessibility dialog. `refresh()` re-reads
+        // trust silently via `AXIsProcessTrusted()` on every ~1s poll, so a grant the user makes
+        // in System Settings takes effect on the next poll with no relaunch. An untrusted state
+        // is not a degraded mode in practice, because SkyLight's `CGSCopyManagedDisplaySpaces` is
+        // the permission-free PRIMARY fullscreen signal and AX is only the secondary fallback.
         refresh(isFirstQuery: true)
         startPolling()
     }
