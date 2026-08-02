@@ -266,7 +266,6 @@ struct NowPlayingModel: Sendable, Equatable {
 final class NowPlayingProvider {
     private(set) var currentModel: NowPlayingModel?
     private(set) var artwork: NSImage?
-    private(set) var isAvailable: Bool = true
 
     /// The expanded-panel progress-bar fill fraction (D-08), computed via `NowPlayingElapsed` from
     /// `currentModel`'s elapsed/timestamp/rate/duration fields — `nil` when there is no session or
@@ -327,10 +326,7 @@ final class NowPlayingProvider {
     private let logger = AppLog.make("NowPlayingProvider")
 
     init() {
-        Task {
-            let started = await service.start()
-            isAvailable = started
-        }
+        Task { await service.start() }
     }
 
     /// Applies a model update from the service: builds the session identity, classifies it against
