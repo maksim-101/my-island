@@ -22,6 +22,10 @@ echo "    signing as: $SIGN_ID"
 echo "==> Generating Xcode project"
 xcodegen generate --spec project.yml >/dev/null
 
+# Opening the project in Xcode.app builds it into Xcode's own DerivedData, whose
+# my-island.app copies Spotlight does index, so they are cleared before every build.
+rm -rf "$HOME"/Library/Developer/Xcode/DerivedData/MyIsland-*
+
 echo "==> Building Release"
 xcodebuild -project MyIsland.xcodeproj -scheme MyIsland -configuration Release \
   -derivedDataPath build.noindex \

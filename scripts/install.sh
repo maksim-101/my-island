@@ -9,6 +9,10 @@ cd "$ROOT"
 echo "==> Generating Xcode project"
 xcodegen generate --spec project.yml
 
+# Opening the project in Xcode.app builds it into Xcode's own DerivedData, whose
+# my-island.app copies Spotlight does index, so they are cleared before every build.
+rm -rf "$HOME"/Library/Developer/Xcode/DerivedData/MyIsland-*
+
 echo "==> Building Release"
 # Derived-data path ends in .noindex so Spotlight never indexes the intermediate
 # my-island.app copies here — otherwise every build leaves launchable duplicates
