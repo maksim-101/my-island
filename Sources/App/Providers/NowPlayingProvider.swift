@@ -63,6 +63,11 @@ actor NowPlayingService {
     /// Returns whether the subprocess was launched successfully.
     @discardableResult
     func start() -> Bool {
+        // WR-02: a live subprocess already exists, and relaunching over it would orphan the
+        // current Process/Pipe, leaking both the installed readability handler and the reader
+        // Task. `true` is the honest return because the caller's question is "is an adapter
+        // subprocess running", not "did this call create one".
+        guard process == nil else { return true }
         guard let resourceURL = Bundle.main.resourceURL else {
             logger.error("No bundle resource URL — Now Playing unavailable")
             return false
