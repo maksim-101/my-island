@@ -81,13 +81,30 @@ private struct NowPlayingProgressBar: View {
 /// the live `@State` mirror of the freeze flag read from inside the loop. This view keeps both, but
 /// replaces the fixed 40pt viewport and fixed-duration timing with a measured viewport and
 /// `MarqueePass`'s rate-based schedule, and repeats indefinitely instead of parking after one pass.
+///
+/// **G-05-5c fix:** the original 05-06 shape let the scrolling `Text` itself decide this view's
+/// frame — `fixedSize(horizontal: true)` forced it to always report its full intrinsic width no
+/// matter what was proposed, the flexible frame wrapped around it could only grow to fit that
+/// refusal, and the geometry reader measuring the viewport was chained downstream of that same
+/// ballooned frame — so it measured the text's own width back at itself. `MarqueePass.overflow`
+/// therefore always saw `textWidth ≈ viewportWidth` and returned 0: the marquee never took its
+/// first tick, and the mid-word cut the user actually saw was `NotchPanelController`'s window-edge
+/// layer mask catching the overflow this view never clipped. The fix below breaks that circularity
+/// by never letting the scrolling copy influence the frame it scrolls inside of: a hidden, ordinary,
+/// flexible single-line text — the **layout twin** — is this view's real content and accepts the
+/// proposed width like any normal text; the scrolling copy lives entirely inside an `.overlay`,
+/// which by construction can never feed its size back into the view it decorates, so nothing the
+/// scrolling copy does can re-inflate the frame. The overlay's `GeometryReader` reads the twin's
+/// real resolved width and hands it to `runScrollPass(viewportWidth:)` as a call argument in the
+/// same layout pass that produced it — never through a state write a task has to catch up to. Do
+/// not "simplify" this back into a single `Text` that decides its own frame; that shape is exactly
+/// what shipped broken.
 private struct ScrollingTrackText: View {
     let text: String
     /// True during the paused-in-grace window: halts the scroll immediately at whatever offset it
     /// currently holds and suppresses further motion while set, matching the group's 55% dim.
     let isFrozen: Bool
 
-    @State private var viewportWidth: CGFloat = 0
     @State private var offset: CGFloat = 0
     /// Live mirror of `isFrozen`, read from inside `runScrollPass()` instead of `isFrozen` directly.
     /// The pass's `.task(id:)` is keyed on the bounded text and viewport width, and does NOT
@@ -110,32 +127,36 @@ private struct ScrollingTrackText: View {
     }
 
     var body: some View {
+        // Layout twin: an ordinary flexible single-line text that accepts the proposed width and
+        // is never drawn. Its resolved frame — not the scrolling text's intrinsic width — is what
+        // pins this view's size, which is the entire fix for G-05-5c.
         Text(boundedText)
             .font(Tokens.Font.bodyMD)
-            .foregroundStyle(Tokens.Color.text)
             .lineLimit(1)
-            .fixedSize(horizontal: true, vertical: false)
-            .offset(x: offset)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .clipped()
-            .background(
+            .hidden()
+            .overlay {
+                // Scrolling copy: overlay content never feeds its size back into the twin it
+                // decorates, so proxy.size here is genuinely the twin's real, unballooned width.
                 GeometryReader { proxy in
-                    Color.clear
-                        .onAppear { viewportWidth = proxy.size.width }
-                        .onChange(of: proxy.size.width) { _, newValue in
-                            viewportWidth = newValue
+                    Text(boundedText)
+                        .font(Tokens.Font.bodyMD)
+                        .foregroundStyle(Tokens.Color.text)
+                        .lineLimit(1)
+                        .fixedSize(horizontal: true, vertical: false)
+                        .offset(x: offset)
+                        .task(id: "\(boundedText)#\(proxy.size.width)") {
+                            await runScrollPass(viewportWidth: proxy.size.width)
                         }
                 }
-            )
+            }
+            .clipped()
             .onChange(of: isFrozen, initial: true) { _, newValue in
                 frozenNow = newValue
             }
-            .task(id: "\(boundedText)#\(viewportWidth)") {
-                await runScrollPass()
-            }
     }
 
-    private func runScrollPass() async {
+    private func runScrollPass(viewportWidth: CGFloat) async {
         offset = 0
         let overflow = MarqueePass.overflow(textWidth: measuredWidth, viewportWidth: viewportWidth)
         guard overflow > 0 else { return }
