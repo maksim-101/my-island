@@ -21,12 +21,16 @@ struct CockpitTileStripView: View {
 
     var body: some View {
         GeometryReader { geo in
-            let totalWeight = Self.weights.reduce(0, +)
-            let available = geo.size.width - Self.gap * CGFloat(Self.weights.count - 1)
+            // D-12/P-07: the PLAYING tile is absent, not blank, with no now-playing session — the
+            // remaining tiles' weights are derived from whichever subset is visible so they expand
+            // to fill the strip instead of leaving a hole.
+            let visibleWeights = nowPlaying.displayPanel ? Self.weights : Array(Self.weights.prefix(2))
+            let totalWeight = visibleWeights.reduce(0, +)
+            let available = geo.size.width - Self.gap * CGFloat(visibleWeights.count - 1)
             HStack(spacing: Self.gap) {
                 tile(
                     .timer,
-                    width: available * Self.weights[0] / totalWeight,
+                    width: available * visibleWeights[0] / totalWeight,
                     icon: "stopwatch",
                     label: "TIMER",
                     value: timerValue,
@@ -34,23 +38,33 @@ struct CockpitTileStripView: View {
                 )
                 tile(
                     .calendar,
-                    width: available * Self.weights[1] / totalWeight,
+                    width: available * visibleWeights[1] / totalWeight,
                     icon: "calendar",
                     label: "NEXT",
                     value: calendarValue,
                     valueColor: Tokens.Color.text
                 )
-                tile(
-                    .nowPlaying,
-                    width: available * Self.weights[2] / totalWeight,
-                    icon: "music.note",
-                    label: "PLAYING",
-                    value: nowPlayingValue,
-                    valueColor: Tokens.Color.text
-                )
+                if nowPlaying.displayPanel {
+                    tile(
+                        .nowPlaying,
+                        width: available * visibleWeights[2] / totalWeight,
+                        icon: "music.note",
+                        label: "PLAYING",
+                        value: nowPlayingValue,
+                        valueColor: Tokens.Color.text
+                    )
+                }
             }
         }
         .frame(height: Self.tileHeight)
+        // D-12/P-07: without a fallback, hiding the tile would just move the blank readout from
+        // the tile into the stage. Self-corrects a panel opened with a stale `.nowPlaying`
+        // selection on first render (`initial: true`).
+        .onChange(of: nowPlaying.displayPanel, initial: true) { _, isVisible in
+            if !isVisible && stage == .nowPlaying {
+                stage = .timer
+            }
+        }
     }
 
     private func tile(

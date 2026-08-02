@@ -23,6 +23,13 @@ actor NowPlayingService {
     /// empty-state token itself is observed as exactly 4 bytes — `NIL` plus a trailing newline —
     /// which is the strongest available evidence for the delimiter byte).
     private static let lineDelimiter: UInt8 = 0x0A
+    /// T-05-03: upper bound on the line-reassembly buffer while no delimiter has arrived yet.
+    /// Spike 001 observed a single real payload of 3.2 MB (D-17, base64 artwork), so 8 MiB is
+    /// ~2.5x the largest observed legitimate line — generous enough that no real artwork-bearing
+    /// payload is ever dropped, finite so an attacker-influenceable field with no embedded
+    /// newline (a hostile page's Media Session title, length-unlimited upstream) cannot grow the
+    /// buffer without bound.
+    private static let maxBufferBytes = 8 * 1024 * 1024
 
     private var process: Process?
     private var pipe: Pipe?
@@ -56,6 +63,11 @@ actor NowPlayingService {
     /// Returns whether the subprocess was launched successfully.
     @discardableResult
     func start() -> Bool {
+        // WR-02: a live subprocess already exists, and relaunching over it would orphan the
+        // current Process/Pipe, leaking both the installed readability handler and the reader
+        // Task. `true` is the honest return because the caller's question is "is an adapter
+        // subprocess running", not "did this call create one".
+        guard process == nil else { return true }
         guard let resourceURL = Bundle.main.resourceURL else {
             logger.error("No bundle resource URL — Now Playing unavailable")
             return false
@@ -148,6 +160,15 @@ actor NowPlayingService {
             buffer.removeSubrange(buffer.startIndex..<consumed)
             guard !lineData.isEmpty else { continue }
             process(line: Data(lineData))
+        }
+        // At this point `buffer` holds only an incomplete line with no delimiter in it yet.
+        // Dropping mid-line means the tail of that line arrives with the next delimiter and
+        // decodes as a single unparsable line, which `process(line:)` already drops silently —
+        // no crash, no stale session, and the next complete line recovers normally.
+        let pendingByteCount = buffer.count
+        if pendingByteCount > Self.maxBufferBytes {
+            logger.error("Line-reassembly overflow — dropping \(pendingByteCount, privacy: .public) bytes and resyncing")
+            buffer.removeAll()
         }
     }
 
@@ -245,7 +266,6 @@ struct NowPlayingModel: Sendable, Equatable {
 final class NowPlayingProvider {
     private(set) var currentModel: NowPlayingModel?
     private(set) var artwork: NSImage?
-    private(set) var isAvailable: Bool = true
 
     /// The expanded-panel progress-bar fill fraction (D-08), computed via `NowPlayingElapsed` from
     /// `currentModel`'s elapsed/timestamp/rate/duration fields — `nil` when there is no session or
@@ -306,10 +326,7 @@ final class NowPlayingProvider {
     private let logger = AppLog.make("NowPlayingProvider")
 
     init() {
-        Task {
-            let started = await service.start()
-            isAvailable = started
-        }
+        Task { await service.start() }
     }
 
     /// Applies a model update from the service: builds the session identity, classifies it against

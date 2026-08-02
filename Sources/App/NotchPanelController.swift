@@ -97,11 +97,28 @@ final class NotchPanelController: NSObject {
 
         rebuildPanels()
 
-        // Mouse-position monitors (observe-only — return the event unmodified /
-        // consume nothing) so a hover over a timer wing expands the notch like a
-        // hover over the notch itself. Global fires while another app is active
-        // (the usual case for this accessory app); local fires while our own
-        // Settings window is key. Mouse-moved monitors need no special TCC grant.
+        // T-02-03 (02-SECURITY.md): a non-global replacement was evaluated first and rejected —
+        // three checkable facts about this file rule it out. (a) The wing/bar panel window is
+        // created click-through by design (its ignoresMouseEvents flag), so it cannot host a
+        // tracking area — a tracking area needs a window that actually hit-tests the cursor.
+        // (b) The interactive notch panel's HoverTrackingView tracking area is pinned to that
+        // window's own content rect, which spans only the notch cutout, not the wider wing
+        // strip — the wings sit outside the tracked region. (c) This app is LSUIElement and
+        // never activates, and the interactive panel never opts in to mouse-moved events, so a
+        // mouse-moved event over the wings while another app is frontmost never enters this
+        // app's own event queue for a local monitor to see. The only way to make the wing strip
+        // itself hit-testable would be a non-click-through window sitting on the menu-bar strip
+        // beside the notch — which would swallow clicks on menu-bar and status items there, a
+        // worse outcome than this finding.
+        //
+        // The monitor below is therefore kept, with the trade-off made explicit: it is
+        // observe-only and non-consuming — it reads mouse-movement position only, never a
+        // keystroke event mask, and never a low-level event-tap creation/enable call — so it
+        // needs no TCC grant of any kind, and neither Info.plist nor MyIsland.entitlements
+        // declares an input-monitoring or accessibility usage key. It lets a hover over a timer
+        // wing expand the notch like a hover over the notch itself. Global fires while another
+        // app is active (the usual case for this accessory app); local fires while our own
+        // Settings window is key.
         localMouseMonitor = NSEvent.addLocalMonitorForEvents(matching: .mouseMoved) { [weak self] event in
             self?.handleMouseMoved()
             return event
