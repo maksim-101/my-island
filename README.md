@@ -14,6 +14,8 @@ on it (or jump straight to it) without switching windows.
 > are just untested. A display with **no** notch is currently unsupported (the app stays
 > dormant there; a notch-less fallback is planned, not built).
 
+![The expanded my-island panel showing an idle timer and clipboard history](docs/screenshot.png)
+
 ## Status
 
 **Version 0.1.1 — in active development.** Not all features are built yet.
