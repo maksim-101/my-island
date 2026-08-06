@@ -24,30 +24,109 @@ import MyIslandCore
 /// The user compared the shipped ear against Alcove and found the text banner
 /// distracting; the ear now shows the artwork tile alone. Full track identity
 /// remains available in the expanded panel (D-08).
+///
+/// **T-7h2 Task 3 — fullscreen notch-locator glow.** `NotchPanelController.makeBarPanel` grows
+/// this view's window `glowOutset` (3pt) taller than the notch, downward only, so there's real,
+/// rendered panel below the (otherwise-invisible) camera cutout for a hairline to actually show
+/// on. `notchLocalFrame` is the notch's position within that taller view (SwiftUI's top-down
+/// coordinate space, so `y: 0` is the physical notch top, unchanged by the outward growth). The
+/// pill above stays pinned to exactly `notchLocalFrame.height` so it renders pixel-identically to
+/// before this task; the glow draws in the space below/beside it, gated on
+/// `fullscreen.isFrontmostFullscreen` — the plain APP-fullscreen signal, deliberately NOT Task 2's
+/// content-fullscreen rule, since the physical notch is hidden by the black bar in every
+/// fullscreen mode, media or not.
 @MainActor
 struct NotchBarView: View {
     let timer: TimerViewModel
     let model: NotchViewModel
     let nowPlaying: NowPlayingProvider
     let fullscreen: FullscreenObserver
+    let notchLocalFrame: CGRect
+
+    /// How far the glow's stroke extends past the notch's own edges — only left, right and
+    /// bottom (never top, which is the physical screen edge/cutout with nothing to gain by
+    /// outsetting) — so the visible half of a centered 1pt stroke lands on real, rendered pixels
+    /// beside and below the cutout rather than half inside the never-displayed camera housing.
+    private static let glowLineOutset: CGFloat = 1.5
+
+    /// 260801-7h2-regressions round 5: the deliberate gap between each wing's content and the
+    /// notch cutout's own edge, now that both wings anchor toward the notch rather than toward
+    /// the pill's outer edges. Reuses round 4's already-verified artwork clearance (`Tokens
+    /// .Spacing.md`, 12pt) — the amount that took the artwork from "scraping the border" (4pt) to
+    /// comfortable (12pt) — so this fix cannot recreate that complaint by hugging tighter than
+    /// what was already confirmed to read as intentional spacing, not crowding.
+    fileprivate static let wingNotchGap: CGFloat = Tokens.Spacing.md
 
     var body: some View {
+        VStack(spacing: 0) {
+            pill
+                .frame(height: notchLocalFrame.height)
+            Spacer(minLength: 0)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .overlay(alignment: .topLeading) {
+            if fullscreen.isFrontmostFullscreen {
+                // topCornerRadius: 0, NOT `pill`'s 6 — see 260801-7h2-regressions round 3.
+                // `NotchShape.path(in:)` draws its top corners CONCAVE (the "ear" flowing into the
+                // physical camera housing), which keeps the LEFT/RIGHT vertical edges inset from
+                // the shape's own frame by `topCornerRadius` (the `addLine` calls hold x constant
+                // at `rect.minX + topCornerRadius`/`rect.maxX - topCornerRadius`, never at
+                // `rect.minX`/`rect.maxX`). With `topCornerRadius: 6` and `glowLineOutset: 1.5`,
+                // those edges land 4.5pt INSIDE the notch cutout — on pixels that physically never
+                // render — so only the bottom edge (unaffected, keyed off `bottomCornerRadius`
+                // relative to `rect.maxY`) was ever visible once the fade-in settled. The top edge
+                // itself is never visible either way (physical screen edge, y<=0), so zeroing its
+                // radius costs nothing cosmetically while moving the vertical edges out to the
+                // shape's own frame bounds — verified with an offscreen ImageRenderer harness
+                // (scratchpad/glow_geometry_probe.swift) showing the stroke lands squarely outside
+                // a rendered stand-in for the cutout only after this change.
+                NotchShape(topCornerRadius: 0, bottomCornerRadius: 14)
+                    .stroke(Tokens.Color.accent.opacity(0.45), lineWidth: 1)
+                    .shadow(color: Tokens.Color.accent.opacity(0.35), radius: 3)
+                    .frame(
+                        width: notchLocalFrame.width + Self.glowLineOutset * 2,
+                        height: notchLocalFrame.height + Self.glowLineOutset
+                    )
+                    .offset(x: notchLocalFrame.minX - Self.glowLineOutset, y: notchLocalFrame.minY)
+                    .transition(.opacity)
+                    .allowsHitTesting(false)
+            }
+        }
+        .animation(.easeInOut(duration: 0.25), value: fullscreen.isFrontmostFullscreen)
+    }
+
+    private var pill: some View {
         Group {
-            // D-10/D-11: the Now Playing ear is suppressed — absent, not
-            // dimmed — while the frontmost app is fullscreen, so a film's
-            // title never scrolls over the film. The `timer.isRunning ||`
-            // disjunct is deliberately OUTSIDE the suppressed parenthesis —
-            // a running timer still shows in fullscreen and still keeps the
-            // pill up on its own. Do not "simplify" this into a single
-            // shared condition; that would silently re-suppress the timer
-            // too and break Phase 4 D-01.
-            if (timer.isRunning || (nowPlaying.displayEar && !fullscreen.isFrontmostFullscreen)) && !model.isOpen {
+            // T-7h2 Task 2: the Now Playing ear is suppressed — absent, not dimmed — by
+            // FullscreenClassifier's content-takeover rule (chromeless/titleless fullscreen
+            // window), NOT plain app-fullscreen — see FullscreenObserver's doc comment and
+            // CONTEXT.md's post-research decisions. Safari content-fullscreen (a video/player
+            // element taking over) suppresses; Safari/Vivaldi Spaces-fullscreen browsing does
+            // not (the user is "still operating within the browser"); any non-browser
+            // fullscreen app (IINA, QuickTime, TV.app, games) suppresses on plain
+            // app-fullscreen. The `timer.isRunning ||` disjunct is deliberately OUTSIDE the
+            // suppressed parenthesis — a running timer still shows in every fullscreen state
+            // and still keeps the pill up on its own. Do not "simplify" this into a single
+            // shared condition; that would silently re-suppress the timer too and break Phase 4
+            // D-01.
+            if (timer.isRunning || (nowPlaying.displayEar && !fullscreen.isAmbientSuppressed)) && !model.isOpen {
                 NotchShape(topCornerRadius: 6, bottomCornerRadius: 14)
                     .fill(Color.black)
-                    .overlay(alignment: .trailing) {
+                    .overlay(alignment: .leading) {
                         // The timer readout always wins the right wing. Only when
                         // no timer is running and music is playing does the wing
                         // instead show the animated sound-wave equalizer.
+                        //
+                        // 260801-7h2-regressions round 5: anchored via `.padding(.leading, ...)`
+                        // computed from `notchLocalFrame.maxX` (the notch cutout's own right edge),
+                        // not `.overlay(alignment: .trailing)` on the full pill — the latter anchors
+                        // to the PILL's own outer/right edge (the far side of the right ear), which
+                        // for short content (the sound-wave, ~18pt) left a lopsided ~42pt gap next
+                        // to the notch and only Spacing.lg (16pt) at the true outer edge. Padding by
+                        // an absolute magnitude places the content's leading edge at exactly that x
+                        // regardless of the pill's total width, so both the timer digits and the
+                        // sound-wave "hug" the notch with the same small, deliberate gap — the timer
+                        // readout inherits this for free rather than as a special case.
                         if timer.isRunning {
                             HStack(spacing: 4) {
                                 Circle()
@@ -58,16 +137,16 @@ struct NotchBarView: View {
                                     .foregroundStyle(Tokens.Color.text)
                                     .fixedSize()
                             }
-                            .padding(.trailing, Tokens.Spacing.lg)
-                        } else if nowPlaying.displayEar && !fullscreen.isFrontmostFullscreen {
+                            .padding(.leading, notchLocalFrame.maxX + Self.wingNotchGap)
+                        } else if nowPlaying.displayEar && !fullscreen.isAmbientSuppressed {
                             SoundWaveView()
-                                .padding(.trailing, Tokens.Spacing.lg)
+                                .padding(.leading, notchLocalFrame.maxX + Self.wingNotchGap)
                                 .opacity(nowPlaying.isPausedInGrace ? 0.55 : 1)
                         }
                     }
                     .overlay(alignment: .leading) {
-                        if nowPlaying.displayEar && !fullscreen.isFrontmostFullscreen {
-                            NowPlayingEarView(nowPlaying: nowPlaying)
+                        if nowPlaying.displayEar && !fullscreen.isAmbientSuppressed {
+                            NowPlayingEarView(nowPlaying: nowPlaying, notchMinX: notchLocalFrame.minX)
                         }
                     }
             }
@@ -82,11 +161,18 @@ struct NotchBarView: View {
 }
 
 /// The left ear's content: a fixed 20x20 artwork square (or its no-artwork
-/// fallback), inset `Tokens.Spacing.lg` (16pt) from the pill's outer left
-/// edge — mirroring the timer readout's 16pt inset on the opposite ear so the
-/// pill reads as balanced. Laid out within the symmetric 84pt
-/// `NotchPanelController.barEar` ear (D-03, unchanged) but no longer fills it
-/// with track-identity text.
+/// fallback), inset from the notch cutout's own left edge (`notchMinX`) by
+/// `NotchBarView.wingNotchGap` (12pt) — mirroring the timer/sound-wave wing's
+/// same near-notch gap on the opposite ear so the pill reads as balanced.
+/// Laid out within the symmetric 84pt `NotchPanelController.barEar` ear
+/// (D-03, unchanged) but no longer fills it with track-identity text.
+///
+/// **260801-7h2-regressions round 5:** was inset `Tokens.Spacing.lg` (16pt) from the pill's
+/// OUTER left edge (the wing's own far edge, away from the notch) — anchored to the wrong
+/// reference frame, which the user reported as looking lopsided next to the sound-wave/timer
+/// wing's identical outer-edge anchoring on the right. Re-anchored to the notch cutout's edge
+/// instead: `notchMinX - wingNotchGap - artworkSize` places the artwork's own trailing edge
+/// exactly `wingNotchGap` short of the notch, regardless of how wide the left ear itself is.
 ///
 /// **SUPERSEDED (2026-07-27, quick task 260727-sf0):** this ear originally
 /// also carried a scrolling "Title — Artist" text row alongside the artwork,
@@ -95,6 +181,9 @@ struct NotchBarView: View {
 /// ear now carries the artwork tile alone.
 private struct NowPlayingEarView: View {
     let nowPlaying: NowPlayingProvider
+    /// The notch cutout's own local left edge (`notchLocalFrame.minX`) — passed down so this
+    /// view can anchor its own padding to the notch rather than to the pill's outer edge.
+    let notchMinX: CGFloat
 
     private static let artworkSize: CGFloat = 20
     private static let artworkCornerRadius: CGFloat = 5
@@ -109,7 +198,7 @@ private struct NowPlayingEarView: View {
             size: Self.artworkSize,
             cornerRadius: Self.artworkCornerRadius
         )
-        .padding(.leading, Tokens.Spacing.lg)
+        .padding(.leading, notchMinX - NotchBarView.wingNotchGap - Self.artworkSize)
         // UI-SPEC "Paused-in-grace visual distinction" (D-06/D-07): the artwork tile dims to 55%
         // opacity during the 30s post-stop grace window. No new icon, border or badge; the
         // existing content just dims, and there is no exit animation when the window expires (it

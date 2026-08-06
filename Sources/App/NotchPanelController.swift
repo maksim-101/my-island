@@ -63,17 +63,21 @@ final class NotchPanelController: NSObject {
     override init() {
         super.init()
 
+        // `level` is now `Float?` (T-7h2 §1.3): a device with no readable volume property hides
+        // the row rather than showing the previous device's stale value, mirroring how
+        // `brightnessProvider.onChange` already guards below.
         volumeProvider.onChange = { [weak self] in
-            guard let self else { return }
-            self.hud.showVolume(level: Double(self.volumeProvider.level), muted: self.volumeProvider.isMuted)
+            guard let self, let level = self.volumeProvider.level else { return }
+            self.hud.showVolume(level: Double(level), muted: self.volumeProvider.isMuted)
         }
         // Only wired when the private brightness bridge actually resolved —
         // an unavailable BrightnessProvider must never surface a HUD row
-        // (T-03-B2).
+        // (T-03-B2). `BrightnessScale.barFraction` is applied at this single wiring point only —
+        // the volume path above keeps passing its raw level through unchanged (T-7h2 Task 1 step D).
         if brightnessProvider.isAvailable {
             brightnessProvider.onChange = { [weak self] in
                 guard let self, let level = self.brightnessProvider.level else { return }
-                self.hud.showBrightness(level: Double(level))
+                self.hud.showBrightness(level: Double(BrightnessScale.barFraction(for: level)))
             }
         }
         // The Ambient HUD is now a detached glass pill below the notch
@@ -93,11 +97,28 @@ final class NotchPanelController: NSObject {
 
         rebuildPanels()
 
-        // Mouse-position monitors (observe-only — return the event unmodified /
-        // consume nothing) so a hover over a timer wing expands the notch like a
-        // hover over the notch itself. Global fires while another app is active
-        // (the usual case for this accessory app); local fires while our own
-        // Settings window is key. Mouse-moved monitors need no special TCC grant.
+        // T-02-03 (02-SECURITY.md): a non-global replacement was evaluated first and rejected —
+        // three checkable facts about this file rule it out. (a) The wing/bar panel window is
+        // created click-through by design (its ignoresMouseEvents flag), so it cannot host a
+        // tracking area — a tracking area needs a window that actually hit-tests the cursor.
+        // (b) The interactive notch panel's HoverTrackingView tracking area is pinned to that
+        // window's own content rect, which spans only the notch cutout, not the wider wing
+        // strip — the wings sit outside the tracked region. (c) This app is LSUIElement and
+        // never activates, and the interactive panel never opts in to mouse-moved events, so a
+        // mouse-moved event over the wings while another app is frontmost never enters this
+        // app's own event queue for a local monitor to see. The only way to make the wing strip
+        // itself hit-testable would be a non-click-through window sitting on the menu-bar strip
+        // beside the notch — which would swallow clicks on menu-bar and status items there, a
+        // worse outcome than this finding.
+        //
+        // The monitor below is therefore kept, with the trade-off made explicit: it is
+        // observe-only and non-consuming — it reads mouse-movement position only, never a
+        // keystroke event mask, and never a low-level event-tap creation/enable call — so it
+        // needs no TCC grant of any kind, and neither Info.plist nor MyIsland.entitlements
+        // declares an input-monitoring or accessibility usage key. It lets a hover over a timer
+        // wing expand the notch like a hover over the notch itself. Global fires while another
+        // app is active (the usual case for this accessory app); local fires while our own
+        // Settings window is key.
         localMouseMonitor = NSEvent.addLocalMonitorForEvents(matching: .mouseMoved) { [weak self] event in
             self?.handleMouseMoved()
             return event
@@ -276,10 +297,23 @@ final class NotchPanelController: NSObject {
     /// How far the extended pill reaches into each ear beyond the cutout —
     /// ASYMMETRIC per the idle-wing mockup: the right ear is sized to the
     /// longest realistic readout ("600:22" ≈ 75pt), the left ear only carries
-    /// the ~20pt artwork/sound-wave so it hugs tight (~40pt). A symmetric 76pt
+    /// the ~20pt artwork/sound-wave so it hugs tight. A symmetric 76pt
     /// left ear left ~40pt of dead black beside the artwork (UAT: "wings too
     /// wide").
-    private static let leftEar: CGFloat = 40
+    ///
+    /// **260801-7h2-regressions round 4:** was 40 — left the artwork tile only 4pt of
+    /// clearance from the notch cutout (`40 - (Tokens.Spacing.lg leading pad + 20pt artwork)`),
+    /// which read as "scraping the border" once round 3's glow/staleness fixes made the pill
+    /// render reliably. Bumped to 48 (+8pt): widens the wing itself, and — since the artwork's
+    /// panel-local offset is unchanged while the panel's own global origin (`notchFrame.minX -
+    /// leftEar`) shifts left with it — also moves the artwork's absolute screen position further
+    /// left/away from the notch by the same 8pt, landing clearance at 12pt. Verified this cannot
+    /// reintroduce GLOW-GEOMETRY: the glow's absolute edge position is `notchFrame.minX -
+    /// glowLineOutset` / `notchFrame.maxX + glowLineOutset` — `leftEar` cancels out of that
+    /// formula entirely (panel origin moves left by `leftEar` while the notch's local offset
+    /// within the panel grows by the same `leftEar`), confirmed via a closed-form re-derivation
+    /// of NotchShape.path(in:)'s corner arithmetic at both leftEar=40 and leftEar=48.
+    private static let leftEar: CGFloat = 48
     private static let rightEar: CGFloat = 76
 
     /// Global-coordinate frame of the extended pill (also the wing hover
@@ -328,13 +362,34 @@ final class NotchPanelController: NSObject {
         return panel
     }
 
+    /// How far the bar panel (and its glow-outset content view) extends BELOW the notch cutout's
+    /// bottom edge (T-7h2 Task 3). The physical notch is a camera cutout — pixels drawn inside it
+    /// are never displayed — so a hairline stroked on or inside the cutout outline would be
+    /// half-invisible or fully invisible; the glow needs a few points of real, rendered panel
+    /// below the notch to actually show. `barFrame(notchFrame:anchorMaxY:)` itself is unchanged —
+    /// `handleMouseMoved` computes the wing hover region from that function independently of the
+    /// panel frame, so the hover geometry must not move — only `makeBarPanel`'s own window/content
+    /// frame grows by this amount, downward only (top edge, flush with the physical notch top,
+    /// stays fixed).
+    private static let glowOutset: CGFloat = 3
+
     private static func makeBarPanel(notchFrame: NSRect, anchorMaxY: CGFloat, timer: TimerViewModel, model: NotchViewModel, nowPlaying: NowPlayingProvider, fullscreen: FullscreenObserver) -> NSPanel {
-        let frame = barFrame(notchFrame: notchFrame, anchorMaxY: anchorMaxY)
+        let bar = barFrame(notchFrame: notchFrame, anchorMaxY: anchorMaxY)
+        let frame = NSRect(
+            x: bar.minX,
+            y: bar.minY - glowOutset,
+            width: bar.width,
+            height: bar.height + glowOutset
+        )
         let panel = NSPanel(contentRect: frame, styleMask: [.borderless, .nonactivatingPanel, .utilityWindow], backing: .buffered, defer: false)
 
         let container = NSView(frame: NSRect(origin: .zero, size: frame.size))
         container.autoresizesSubviews = true
-        let hosting = NSHostingView(rootView: NotchBarView(timer: timer, model: model, nowPlaying: nowPlaying, fullscreen: fullscreen))
+        // The notch's position within the (now taller) bar view, in SwiftUI's top-down coordinate
+        // space: the pill content and the glow's un-outset top edge both anchor to this rect's
+        // origin (y: 0 — the physical notch top, unchanged by the outward growth below it).
+        let notchLocalFrame = CGRect(x: leftEar, y: 0, width: notchFrame.width, height: notchFrame.height)
+        let hosting = NSHostingView(rootView: NotchBarView(timer: timer, model: model, nowPlaying: nowPlaying, fullscreen: fullscreen, notchLocalFrame: notchLocalFrame))
         hosting.frame = NSRect(origin: .zero, size: frame.size)
         hosting.autoresizingMask = [.width, .height]
         container.addSubview(hosting)
@@ -475,10 +530,10 @@ final class NotchPanelController: NSObject {
     private func handleMouseMoved() {
         let mouse = NSEvent.mouseLocation
         for panel in panels {
-            // Mirrors NotchBarView's pill gate exactly (D-10/D-11): the timer
+            // Mirrors NotchBarView's pill gate exactly (T-7h2 Task 2): the timer
             // disjunct sits OUTSIDE the fullscreen suppression, so the wing
             // hover region never disappears out from under a running timer.
-            let inBar = (timer.isRunning || (nowPlayingProvider.displayEar && !fullscreenObserver.isFrontmostFullscreen))
+            let inBar = (timer.isRunning || (nowPlayingProvider.displayEar && !fullscreenObserver.isAmbientSuppressed))
                 && Self.barFrame(notchFrame: panel.notchFrame, anchorMaxY: panel.anchorMaxY).contains(mouse)
             let inNotch = Self.collapsedFrame(notchFrame: panel.notchFrame, anchorMaxY: panel.anchorMaxY).contains(mouse)
             let wing = inBar && !inNotch

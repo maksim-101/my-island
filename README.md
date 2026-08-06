@@ -69,6 +69,28 @@ there), Gatekeeper will quarantine it. Clear the quarantine flag before first la
 xattr -dr com.apple.quarantine /Applications/my-island.app
 ```
 
+Accessibility is **optional** — it's used only to detect Safari fullscreen video (see "Known
+Limitations" below) and, like the other grants, is forgotten on every ad-hoc rebuild. my-island
+will never prompt for it; grant it manually in System Settings -> Privacy & Security ->
+Accessibility if you want the Safari fullscreen-video discrimination.
+
+### Diagnostic logging
+
+The installed app writes nothing to the system log by default — that's deliberate, a
+privacy/no-noise-in-production policy. For one debugging session, opt in on this machine,
+restart the app (the setting is read once at startup), read the log, then restore silence:
+
+```bash
+defaults write com.maksim101.myisland MyIslandVerboseLogging -bool YES
+# quit and relaunch my-island.app
+log show --predicate 'subsystem == "com.maksim101.myisland" AND category == "FullscreenObserver"' --last 10m
+defaults delete com.maksim101.myisland MyIslandVerboseLogging
+# quit and relaunch my-island.app to restore silence
+```
+
+These lines record classification and status facts only — never what's playing, what's on
+the calendar, or what was copied.
+
 ## Layout
 
 ```
@@ -79,6 +101,32 @@ scripts/            install.sh, dev-reset.sh (TCC reset), capture-nowplaying.sh
 project.yml         XcodeGen spec — single source of truth for the Xcode project
 DESIGN.md           Design tokens (colors, type, spacing) — the app's visual language
 ```
+
+## Known Limitations
+
+**Chromium-based browsers (Vivaldi, Chrome, Edge, Brave, Arc) never suppress the ambient
+row, even when a video is genuinely fullscreen.** Chromium puts the *same* browser window
+into macOS fullscreen for both ordinary Spaces-fullscreen browsing and fullscreen video
+playback — measured identical window ID, Accessibility subrole, `AXFullScreen` state,
+bounds and child roles in both cases, with no distinguishing signal anywhere in the
+Accessibility API or the window list. my-island therefore cannot tell the two states apart
+in Chromium and defaults to always showing the row there. This is a permanent platform
+limitation, not a bug awaiting a future fix — see the project's RESEARCH notes for the full
+measured state tables.
+
+**Safari does expose a distinct fullscreen window for video**, so fullscreen video there
+correctly hides the ambient row while ordinary Spaces-fullscreen browsing does not. This
+discrimination requires the optional Accessibility permission (see "Signing & permissions"
+above); without it, Safari behaves like Chromium and the row is never suppressed.
+
+**Non-browser apps (IINA, QuickTime, TV.app, games, slideshows, presentations) hide the
+ambient row on ordinary app-level fullscreen** — no Accessibility read is needed for these,
+since app-fullscreen alone is a reliable signal for a chromeless, non-browser app.
+
+**Brightness is read through a private, undocumented framework** (`DisplayServices`) —
+there is no public API for this on macOS. If a future macOS update breaks the private
+symbols this relies on, the brightness HUD row simply hides rather than crashing or
+showing stale data.
 
 ## License
 

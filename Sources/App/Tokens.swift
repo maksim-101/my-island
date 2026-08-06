@@ -46,7 +46,11 @@ enum Tokens {
 
     enum Font {
         static let title = SwiftUI.Font.system(size: 15, weight: .semibold)
-        static let bodyMD = SwiftUI.Font.system(size: 12.5, weight: .regular)
+        /// Exposed separately from `bodyMD` so non-`SwiftUI.Font` consumers (e.g. an `NSFont`
+        /// used for manual text measurement) can reference the same point size without
+        /// duplicating the literal.
+        static let bodyMDSize: CGFloat = 12.5
+        static let bodyMD = SwiftUI.Font.system(size: bodyMDSize, weight: .regular)
         static let label = SwiftUI.Font.system(size: 10, weight: .semibold).monospaced()
         static let data = SwiftUI.Font.system(size: 12, weight: .medium).monospaced()
     }
