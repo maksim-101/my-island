@@ -16,11 +16,11 @@ on it (or jump straight to it) without switching windows.
 
 ## Status
 
-**Version 0.1.0 — in active development.** Not all features are built yet.
+**Version 0.1.1 — in active development.** Not all features are built yet.
 
 | Area | State |
 |------|-------|
-| Notch shell (always-on collapsed state, hover-to-expand, global hotkey) | Built; on-device verification ongoing |
+| Notch shell (always-on collapsed state, hover-to-expand, global hotkey) | ✅ Working |
 | Timers / focus (pomodoro + countdown) | ✅ Working |
 | Brightness + volume HUD | ✅ Working |
 | Clipboard history (10 entries, password-manager copies skipped) | ✅ Working |
