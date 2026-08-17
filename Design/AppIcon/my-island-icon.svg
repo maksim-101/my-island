@@ -1,0 +1,90 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  my-island AppIcon master — Concept G2, chosen 2026-08-17 (quick task 260817-qms).
+
+  A Dynamic-Island-style floating capsule (this app's own music-note + clock glyph
+  pair inside a fully-rounded pill, not a generic capsule traced from any reference)
+  sits above a liquid-glass sound-wave equalizer. The wave reproduces the app's own
+  shipped SoundWaveView (Sources/App/Views/NotchBarView.swift) exactly, scaled ×27:
+  5 bars, width:spacing 1:1, min:max height 1:3, Capsule() rounding, and the real
+  accent→accentInk color grade (Tokens.swift) — not an invented palette. Every hue
+  is indigo-family (#7C6BFF accent and tints) plus white for the glass sheen/highlight;
+  no amber, no drift to a generic purple.
+
+  1024×1024 canvas. Body: an 824×824 rounded square (corner radius 185) centered in
+  the canvas — the actual macOS "mac" appiconset content area. Regenerate the
+  compiled .appiconset slots from this file via scripts/generate-appicon.sh.
+-->
+<svg width="1024" height="1024" viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <clipPath id="body-clip" clipPathUnits="userSpaceOnUse">
+      <rect x="100" y="100" width="824" height="824" rx="185" ry="185"/>
+    </clipPath>
+
+    <linearGradient id="body-grad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#2E2768"/>
+      <stop offset="55%" stop-color="#15161A"/>
+      <stop offset="100%" stop-color="#0A0B0D"/>
+    </linearGradient>
+    <radialGradient id="sheen" cx="26%" cy="20%" r="60%">
+      <stop offset="0%" stop-color="#7C6BFF" stop-opacity="0.22"/>
+      <stop offset="100%" stop-color="#7C6BFF" stop-opacity="0"/>
+    </radialGradient>
+    <filter id="bar-glow" x="-120%" y="-60%" width="340%" height="220%">
+      <feGaussianBlur stdDeviation="16"/>
+    </filter>
+    <linearGradient id="bar-sheen" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#FFFFFF" stop-opacity="0.5"/>
+      <stop offset="35%" stop-color="#FFFFFF" stop-opacity="0.1"/>
+      <stop offset="100%" stop-color="#FFFFFF" stop-opacity="0"/>
+    </linearGradient>
+  </defs>
+
+  <rect x="100" y="100" width="824" height="824" rx="185" ry="185" fill="url(#body-grad)"/>
+
+  <g clip-path="url(#body-clip)">
+    <rect x="100" y="100" width="824" height="824" fill="url(#sheen)"/>
+
+    <!-- floating capsule (Dynamic-Island style): fully rounded on all 4 corners,
+         with margin above it, not flush to the body's top edge -->
+    <rect x="262" y="170" width="500" height="170" rx="85" ry="85" fill="#0A0B0D"/>
+
+    <!-- music-note glyph (left): original hand-authored geometry -->
+    <g fill="#A79BFF">
+      <ellipse cx="365" cy="292" rx="34" ry="25" transform="rotate(-18 365 292)"/>
+      <rect x="392" y="180" width="14" height="118" rx="7"/>
+      <path d="M 406,180 Q 448,190 448,230 L 434,230 Q 434,202 406,194 Z"/>
+    </g>
+
+    <!-- clock glyph (right): filled dial + two dark hands, own minimal geometry -->
+    <g>
+      <circle cx="650" cy="270" r="52" fill="#A79BFF"/>
+      <line x1="650" y1="270" x2="650" y2="234" stroke="#0A0B0D" stroke-width="9" stroke-linecap="round"/>
+      <line x1="650" y1="270" x2="678" y2="270" stroke="#0A0B0D" stroke-width="9" stroke-linecap="round"/>
+    </g>
+
+    <!-- liquid-glass sound-wave equalizer: 5 capsule bars, symmetric heights
+         (108/216/324/216/108 — the app's real min/mid/max scaled ×27), the real
+         per-bar color grade, a colored glow pass behind each bar, and a white
+         sheen overlay on top for the glass specular look -->
+    <g id="bars">
+      <rect x="269" y="652" width="54" height="108" rx="27" fill="#7C6BFF" opacity="0.55" filter="url(#bar-glow)"/>
+      <rect x="377" y="544" width="54" height="216" rx="27" fill="#9A8DFF" opacity="0.55" filter="url(#bar-glow)"/>
+      <rect x="485" y="436" width="54" height="324" rx="27" fill="#B8AFFF" opacity="0.55" filter="url(#bar-glow)"/>
+      <rect x="593" y="544" width="54" height="216" rx="27" fill="#9A8DFF" opacity="0.55" filter="url(#bar-glow)"/>
+      <rect x="701" y="652" width="54" height="108" rx="27" fill="#7C6BFF" opacity="0.55" filter="url(#bar-glow)"/>
+
+      <rect x="269" y="652" width="54" height="108" rx="27" fill="#7C6BFF"/>
+      <rect x="377" y="544" width="54" height="216" rx="27" fill="#9A8DFF"/>
+      <rect x="485" y="436" width="54" height="324" rx="27" fill="#B8AFFF"/>
+      <rect x="593" y="544" width="54" height="216" rx="27" fill="#9A8DFF"/>
+      <rect x="701" y="652" width="54" height="108" rx="27" fill="#7C6BFF"/>
+
+      <rect x="269" y="652" width="54" height="108" rx="27" fill="url(#bar-sheen)"/>
+      <rect x="377" y="544" width="54" height="216" rx="27" fill="url(#bar-sheen)"/>
+      <rect x="485" y="436" width="54" height="324" rx="27" fill="url(#bar-sheen)"/>
+      <rect x="593" y="544" width="54" height="216" rx="27" fill="url(#bar-sheen)"/>
+      <rect x="701" y="652" width="54" height="108" rx="27" fill="url(#bar-sheen)"/>
+    </g>
+  </g>
+</svg>
