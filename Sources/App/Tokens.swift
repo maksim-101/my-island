@@ -53,6 +53,12 @@ enum Tokens {
         static let bodyMD = SwiftUI.Font.system(size: bodyMDSize, weight: .regular)
         static let label = SwiftUI.Font.system(size: 10, weight: .semibold).monospaced()
         static let data = SwiftUI.Font.system(size: 12, weight: .medium).monospaced()
+        /// Mirrors DESIGN.md `typography.button-primary` — 14pt bold, the minimum size/weight
+        /// combination that qualifies as "large text" (WCAG 3:1 threshold) on `Color.accent`, used
+        /// only for a primary on-accent button label (BL-05 Finding 1: `bodyMD` at 12.5pt bold
+        /// measured 3.89:1 white-on-accent / 3.51:1 accentInk-on-accent — both clear 3:1 large-text
+        /// but fail 4.5:1 normal-text, and 12.5pt bold doesn't qualify as large text).
+        static let buttonPrimary = SwiftUI.Font.system(size: 14, weight: .bold)
     }
 
     /// Lightweight local stand-in for `PomodoroEngine`'s `TimerMode` (which

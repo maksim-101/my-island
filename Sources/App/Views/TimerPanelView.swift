@@ -105,8 +105,8 @@ struct TimerPanelView: View {
                 timer.startCountdown(minutes: Double(customMinutes))
             } label: {
                 Text("Start")
-                    .font(Tokens.Font.bodyMD.weight(.bold))
-                    .foregroundStyle(.white)
+                    .font(Tokens.Font.buttonPrimary)
+                    .foregroundStyle(Tokens.Color.accentInk)
                     .padding(.horizontal, Tokens.Spacing.md)
                     .frame(height: 28)
                     .background(Tokens.Color.accent)
@@ -250,8 +250,8 @@ struct TimerPanelView: View {
                         timer.startPomodoro()
                     } label: {
                         Text("Start")
-                            .font(Tokens.Font.bodyMD.weight(.bold))
-                            .foregroundStyle(.white)
+                            .font(Tokens.Font.buttonPrimary)
+                            .foregroundStyle(Tokens.Color.accentInk)
                             .padding(.horizontal, Tokens.Spacing.md)
                             .frame(height: 28)
                             .background(Tokens.Color.accent)

@@ -26,6 +26,12 @@ struct DurationField: NSViewRepresentable {
         field.delegate = context.coordinator
         field.placeholderString = "\u{2013}\u{2013}"
         field.stringValue = minutes.map(String.init) ?? ""
+        // The SwiftUI `.accessibilityLabel` modifier applied at the call site lands on this
+        // `NSViewRepresentable` wrapper, not on the `NSTextField` itself — AX clients read the
+        // text field's own element, so that modifier alone never reaches VoiceOver (BL-05 Finding
+        // 3). Setting it directly here makes the accessible name true at the layer that actually
+        // serves it.
+        field.setAccessibilityLabel("Duration in minutes")
         field.onScrollChange = { [weak coordinator = context.coordinator] value in
             coordinator?.commit(value)
         }

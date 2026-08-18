@@ -30,6 +30,10 @@ typography:
     fontFamily: "SF Mono"
     fontSize: "12px"
     fontWeight: 500
+  button-primary:
+    fontFamily: "-apple-system, SF Pro"
+    fontSize: "14px"
+    fontWeight: 700
 rounded:
   sm: "7px"
   md: "11px"

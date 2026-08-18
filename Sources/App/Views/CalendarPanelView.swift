@@ -110,7 +110,7 @@ private struct EventPillView: View {
                     NSWorkspace.shared.open(joinURL)
                 } label: {
                     Text("Join")
-                        .font(Tokens.Font.bodyMD.weight(.semibold))
+                        .font(Tokens.Font.buttonPrimary)
                         .foregroundStyle(Tokens.Color.accentInk)
                         .padding(.horizontal, Tokens.Spacing.md)
                         .padding(.vertical, Tokens.Spacing.sm)
