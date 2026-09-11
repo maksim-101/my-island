@@ -90,6 +90,11 @@ final class FullscreenObserver {
     /// wing-hover region) should gate on, per `FullscreenClassifier.decide`. Independent of
     /// `isFrontmostFullscreen`, which Task 3's notch-locator glow still consumes directly.
     private(set) var isAmbientSuppressed: Bool = false
+    /// Phase 6 Plan 03 (D-06): which display currently hosts the fullscreen window, or `nil` when
+    /// nothing is fullscreen or the hosting display couldn't be resolved. Feeds the per-display
+    /// queries below; the stored global booleans above are unchanged and still what `@Observable`
+    /// tracks for existing (pre-D-06) callers.
+    private(set) var fullscreenDisplayID: CGDirectDisplayID?
     var onChange: (() -> Void)?
     /// `false` only when the very first query returned no usable window
     /// information at all — lets callers distinguish "definitely not
@@ -129,6 +134,29 @@ final class FullscreenObserver {
 
     deinit {
         pollTimer?.invalidate()
+    }
+
+    /// Phase 6 Plan 03 (D-06): `true` on the display currently hosting a fullscreen window.
+    /// Degrades to the global `isFrontmostFullscreen` answer whenever `fullscreenDisplayID` or
+    /// `displayID` is unresolved (`matches(_:)`'s no-regression rule, T-06-06) — never a crash,
+    /// never a hidden-forever ear.
+    func isFrontmostFullscreen(on displayID: CGDirectDisplayID?) -> Bool {
+        isFrontmostFullscreen && matches(displayID)
+    }
+
+    /// Phase 6 Plan 03 (D-06): per-display ambient-suppression query — mirrors
+    /// `isFrontmostFullscreen(on:)`'s degrade rule exactly.
+    func isAmbientSuppressed(on displayID: CGDirectDisplayID?) -> Bool {
+        isAmbientSuppressed && matches(displayID)
+    }
+
+    /// `true` when either side is unresolved (`fullscreenDisplayID == nil` — nothing fullscreen or
+    /// its display couldn't be determined — or `displayID == nil` — the caller's own display is
+    /// unresolved) so callers get v1.0's global answer rather than a false negative; `false` only
+    /// when both are known and differ.
+    private func matches(_ displayID: CGDirectDisplayID?) -> Bool {
+        guard let fullscreenDisplayID, let displayID else { return true }
+        return fullscreenDisplayID == displayID
     }
 
     private func startPolling() {
@@ -177,10 +205,17 @@ final class FullscreenObserver {
 
         let previousFullscreen = isFrontmostFullscreen
         let previousSuppressed = isAmbientSuppressed
+        let previousDisplayID = fullscreenDisplayID
         isFrontmostFullscreen = result.isFullscreen
         isAmbientSuppressed = decision == .suppress
+        // D-06: a fullscreen window moving from one display to another (e.g. dragging a
+        // fullscreen Space between built-in and Dell) must re-render even when the two booleans
+        // above don't change.
+        fullscreenDisplayID = result.isFullscreen ? result.displayID : nil
 
-        guard isFrontmostFullscreen != previousFullscreen || isAmbientSuppressed != previousSuppressed else {
+        guard isFrontmostFullscreen != previousFullscreen
+            || isAmbientSuppressed != previousSuppressed
+            || fullscreenDisplayID != previousDisplayID else {
             return
         }
 
@@ -204,6 +239,7 @@ final class FullscreenObserver {
         logger.notice("""
             fullscreen=\(self.isFrontmostFullscreen, privacy: .public) \
             suppressed=\(self.isAmbientSuppressed, privacy: .public) \
+            displayID=\(self.fullscreenDisplayID.map(String.init) ?? "none", privacy: .public) \
             bundleID=\(result.bundleID ?? "none", privacy: .public) \
             isBrowser=\(isBrowser, privacy: .public) \
             axTrusted=\(axTrusted, privacy: .public) \
@@ -223,6 +259,9 @@ final class FullscreenObserver {
         var foundOwnedWindow = false
         var boundsMatched = false
         var hasUsableWindowInfo = false
+        /// Phase 6 Plan 03 (D-06): the display `screenMatch` matched the fullscreen bounds
+        /// against, set on both the `.exact` and confirmed `.notchExcluded` returns.
+        var displayID: CGDirectDisplayID?
     }
 
     private static func classify(axTrusted: Bool) -> ClassificationResult {
@@ -252,12 +291,14 @@ final class FullscreenObserver {
 
             result.foundOwnedWindow = true
 
-            switch screenMatch(bounds: bounds) {
+            let match = screenMatch(bounds: bounds)
+            switch match.kind {
             case .exact:
                 // Window covers the ENTIRE display, menu-bar strip included — only real
                 // fullscreen (or a borderless overlay) does that; a zoomed window never does.
                 result.boundsMatched = true
                 result.isFullscreen = true
+                result.displayID = match.displayID
                 return result
             case .notchExcluded:
                 // Bounds == display minus the menu-bar/notch strip. A REAL fullscreen app on a
@@ -284,6 +325,7 @@ final class FullscreenObserver {
                 if Self.isGenuineFullscreen(pid: frontmostPID, axTrusted: axTrusted) {
                     result.boundsMatched = true
                     result.isFullscreen = true
+                    result.displayID = match.displayID
                     return result
                 }
             case .none:
@@ -305,7 +347,10 @@ final class FullscreenObserver {
     /// `CGWindowListCopyWindowInfo` reports bounds in — never
     /// `NSScreen.frame`, which is Cocoa's bottom-left-origin space and would
     /// silently misalign this comparison.
-    private static func screenMatch(bounds: CGRect) -> ScreenMatchKind {
+    /// Phase 6 Plan 03 (D-06): also returns the `CGDirectDisplayID` of the matched screen — the
+    /// loop already computes it per iteration, so this is a refinement of the existing detector,
+    /// not a rewrite (`.none` carries no display).
+    private static func screenMatch(bounds: CGRect) -> (kind: ScreenMatchKind, displayID: CGDirectDisplayID?) {
         for screen in NSScreen.screens {
             guard let screenNumber = screen.deviceDescription[
                 NSDeviceDescriptionKey("NSScreenNumber")
@@ -314,7 +359,7 @@ final class FullscreenObserver {
             let displayBounds = CGDisplayBounds(displayID)
 
             if approximatelyEqual(bounds, displayBounds) {
-                return .exact
+                return (.exact, displayID)
             }
 
             let safeAreaTop = screen.safeAreaInsets.top
@@ -326,10 +371,10 @@ final class FullscreenObserver {
                 height: displayBounds.height - safeAreaTop
             )
             if approximatelyEqual(bounds, notchExcludedBounds) {
-                return .notchExcluded
+                return (.notchExcluded, displayID)
             }
         }
-        return .none
+        return (.none, nil)
     }
 
     private static func approximatelyEqual(_ a: CGRect, _ b: CGRect) -> Bool {
