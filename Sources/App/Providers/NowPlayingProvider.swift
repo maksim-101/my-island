@@ -1,4 +1,5 @@
 import AppKit
+import Darwin
 import Foundation
 import OSLog
 import MyIslandCore
@@ -19,6 +20,18 @@ actor NowPlayingService {
     /// scheduling (RESEARCH.md Code Examples).
     private static let maxRestartAttempts = 5
     private static let baseBackoffSeconds: TimeInterval = 1.0
+    /// 260911-hx9: the footprint-triggered recycle threshold. Resolved ONCE from the
+    /// `MyIslandAdapterFootprintLimitMB` UserDefaults key, mirroring `AppLog.isEnabled`'s
+    /// resolve-once convention — an override only takes effect on relaunch. This override exists
+    /// so the recycle path can be exercised on hardware without waiting weeks for a real leak to
+    /// reproduce; in production the key is unset and this resolves to `AdapterFootprintPolicy`'s
+    /// 512 MiB default. `integer(forKey:)` returns `0` for an unset key, which the policy already
+    /// maps to the default; `max(0, …)` guards against a negative value written by hand trapping
+    /// the `UInt64` conversion.
+    private static let footprintLimitBytes: UInt64 = {
+        let rawOverride = UserDefaults.standard.integer(forKey: "MyIslandAdapterFootprintLimitMB")
+        return AdapterFootprintPolicy.limitBytes(overrideMegabytes: UInt64(max(0, rawOverride)))
+    }()
     /// Line delimiter for the adapter's newline-delimited stdout stream (spike 001/002: the bare
     /// empty-state token itself is observed as exactly 4 bytes — `NIL` plus a trailing newline —
     /// which is the strongest available evidence for the delimiter byte).
@@ -41,6 +54,13 @@ actor NowPlayingService {
     /// is pending) but has no handle on the scheduled `Task.sleep` + `start()` call, so a crash-then-
     /// quit sequence can relaunch the subprocess after the app has told it to stop.
     private var restartTask: Task<Void, Never>?
+    /// 260911-hx9: the ~60s footprint-poll loop, started in `start()` and cancelled in `stop()` —
+    /// mirrors `restartTask`'s ownership so quitting the app cannot leave a poll loop alive.
+    private var monitorTask: Task<Void, Never>?
+    /// 260911-hx9: set immediately before a footprint-triggered `process.terminate()`, read and
+    /// cleared at the very top of `handleTermination()` so that funnel can tell a deliberate
+    /// recycle apart from a crash.
+    private var recyclePending = false
 
     /// The SINGLE ordered consumer of pipe chunks (see `start()`). The readability handler fires
     /// serially, but the old code handed each chunk to a *separate* `Task { await append }`, and
@@ -124,6 +144,7 @@ actor NowPlayingService {
 
         do {
             try process.run()
+            startFootprintMonitorIfNeeded()
             return true
         } catch {
             logger.error("Failed to launch adapter subprocess")
@@ -139,6 +160,9 @@ actor NowPlayingService {
     func stop() {
         restartTask?.cancel()
         restartTask = nil
+        monitorTask?.cancel()
+        monitorTask = nil
+        recyclePending = false
         readTask?.cancel()
         readTask = nil
         chunkContinuation?.finish()
@@ -186,6 +210,62 @@ actor NowPlayingService {
         }
     }
 
+    /// 260911-hx9: starts the ~60s footprint-poll loop, guarded so the restart path started from
+    /// `handleTermination()` never stacks a second loop on top of the one already running.
+    private func startFootprintMonitorIfNeeded() {
+        guard monitorTask == nil else { return }
+        monitorTask = Task { [weak self] in
+            while true {
+                try? await Task.sleep(for: .seconds(AdapterFootprintPolicy.pollIntervalSeconds))
+                // A cancelled sleep returns immediately — re-check before touching any state, the
+                // same idiom `handleTermination()`'s restart `Task` already uses, so a cancelled
+                // monitor mid-teardown never fires one last check against a torn-down process.
+                guard !Task.isCancelled else { return }
+                await self?.checkFootprint()
+            }
+        }
+    }
+
+    /// The per-tick check. Reads the adapter child's `ri_phys_footprint` and recycles it above the
+    /// resolved limit through the existing crash-restart funnel (`handleTermination()`), without
+    /// consuming one of its five bounded restart attempts — a deliberate recycle is not a crash.
+    private func checkFootprint() {
+        // Between a termination and its backoff restart there is no child to measure — the same
+        // window `stop()` already lives with. `process?.isRunning` guards it here too.
+        guard let process, process.isRunning else { return }
+        guard let bytes = Self.footprintBytes(forPID: process.processIdentifier) else { return }
+
+        let megabytes = bytes / (1024 * 1024)
+        let limitMegabytes = Self.footprintLimitBytes / (1024 * 1024)
+        // .info, not .debug: unified logging discards .debug messages entirely unless the
+        // subsystem was explicitly enabled via `log config`, so a debug-level tick line would be
+        // invisible to `log show` after the fact. .info survives in the memory buffer, and there
+        // is no noise cost — AppLog already routes everything to OSLog.disabled in Release unless
+        // a human opted in on this machine.
+        logger.info("Adapter footprint tick: \(megabytes, privacy: .public) MB (limit \(limitMegabytes, privacy: .public) MB)")
+
+        guard AdapterFootprintPolicy.shouldRecycle(footprintBytes: bytes, limitBytes: Self.footprintLimitBytes) else {
+            return
+        }
+        logger.error("Adapter footprint \(megabytes, privacy: .public) MB exceeds limit \(limitMegabytes, privacy: .public) MB — recycling")
+        recyclePending = true
+        process.terminate()
+    }
+
+    /// Reads the adapter child's resident footprint via `proc_pid_rusage`. Touches no actor
+    /// state — only the C API — so it's `nonisolated`. Returns `nil` on any non-zero return code;
+    /// a failed measurement must never be read as a zero footprint or as a reason to recycle.
+    nonisolated private static func footprintBytes(forPID pid: pid_t) -> UInt64? {
+        var info = rusage_info_v4()
+        let rc = withUnsafeMutablePointer(to: &info) { ptr -> Int32 in
+            ptr.withMemoryRebound(to: rusage_info_t?.self, capacity: 1) { rebound in
+                proc_pid_rusage(pid, RUSAGE_INFO_V4, rebound)
+            }
+        }
+        guard rc == 0 else { return nil }
+        return info.ri_phys_footprint
+    }
+
     /// A successful decode (even an empty-state one) counts as a live, communicating subprocess —
     /// resets the restart counter per D-15's "a successful read after a restart resets the count."
     private func publish() {
@@ -214,6 +294,11 @@ actor NowPlayingService {
     /// silent, not show stale content), then restart with a growing delay up to a bounded maximum;
     /// at the maximum, log once and stop — no further attempts, no user-visible error anywhere.
     private func handleTermination() {
+        // 260911-hx9: read and clear BEFORE any other state is touched, so the rest of this
+        // funnel can tell a deliberate recycle apart from a crash.
+        let wasRecycle = recyclePending
+        recyclePending = false
+
         readTask?.cancel()
         readTask = nil
         chunkContinuation?.finish()
@@ -223,6 +308,22 @@ actor NowPlayingService {
         pipe = nil
         session = nil
         onUpdate(nil)
+
+        if wasRecycle {
+            // A recycle is the supervisor doing its job, not a failure — the restart counter is
+            // deliberately left untouched by NOT incrementing it (reset to 0), and the give-up
+            // guard below is bypassed entirely. Letting five recycles exhaust the crash-restart
+            // budget would convert this safety net into a permanent Now Playing outage, the exact
+            // failure it exists to prevent. Routed through the SAME restartTask assignment the
+            // crash path uses, so stop()'s existing cancellation still covers it.
+            restartAttempts = 0
+            restartTask = Task { [weak self] in
+                try? await Task.sleep(for: .seconds(Self.baseBackoffSeconds))
+                guard !Task.isCancelled else { return }
+                await self?.start()
+            }
+            return
+        }
 
         guard restartAttempts < Self.maxRestartAttempts else {
             logger.error("Adapter subprocess exhausted \(Self.maxRestartAttempts, privacy: .public) restart attempts — giving up silently")
