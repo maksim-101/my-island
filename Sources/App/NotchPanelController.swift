@@ -384,21 +384,45 @@ final class NotchPanelController: NSObject {
     private static let glowOutset: CGFloat = 3
 
     private static func makeBarPanel(notchFrame: NSRect, anchorMaxY: CGFloat, timer: TimerViewModel, model: NotchViewModel, nowPlaying: NowPlayingProvider, fullscreen: FullscreenObserver, calendar: CalendarProvider, mode: NotchGeometry.Mode) -> NSPanel {
-        let bar = barFrame(notchFrame: notchFrame, anchorMaxY: anchorMaxY)
-        let frame = NSRect(
-            x: bar.minX,
-            y: bar.minY - glowOutset,
-            width: bar.width,
-            height: bar.height + glowOutset
-        )
+        let frame: NSRect
+        let notchLocalFrame: CGRect
+
+        if mode.isPhysical {
+            let bar = barFrame(notchFrame: notchFrame, anchorMaxY: anchorMaxY)
+            frame = NSRect(
+                x: bar.minX,
+                y: bar.minY - glowOutset,
+                width: bar.width,
+                height: bar.height + glowOutset
+            )
+            // The notch's position within the (now taller) bar view, in SwiftUI's top-down
+            // coordinate space: the pill content and the glow's un-outset top edge both anchor to
+            // this rect's origin (y: 0 — the physical notch top, unchanged by the outward growth
+            // below it).
+            notchLocalFrame = CGRect(x: leftEar, y: 0, width: notchFrame.width, height: notchFrame.height)
+        } else {
+            // Phase 6 Plan 02 (SHELL-08/D-01): the bar window is sized to the WIDEST the drawn
+            // pill can ever get (every readout shown at once) so it never has to resize as
+            // content comes and goes — only the pill `NotchBarView.syntheticPill` draws inside it
+            // changes width. No glow outset — there is no cutout to locate on a drawn pill.
+            let scale = NotchGeometry.readoutScale(pillHeight: notchFrame.height)
+            let width = SyntheticPillLayout.maxPillWidth(idleWidth: notchFrame.width, scale: scale)
+            frame = NSRect(
+                x: notchFrame.midX - width / 2,
+                y: anchorMaxY - notchFrame.height,
+                width: width,
+                height: notchFrame.height
+            )
+            // Centers the anchor's own local frame within the (wider) window, so
+            // `notchLocalFrame.midX` always equals the window's own horizontal center — exactly
+            // where `NotchBarView.syntheticPill` centers its drawn, content-driven-width pill.
+            notchLocalFrame = CGRect(x: (width - notchFrame.width) / 2, y: 0, width: notchFrame.width, height: notchFrame.height)
+        }
+
         let panel = NSPanel(contentRect: frame, styleMask: [.borderless, .nonactivatingPanel, .utilityWindow], backing: .buffered, defer: false)
 
         let container = NSView(frame: NSRect(origin: .zero, size: frame.size))
         container.autoresizesSubviews = true
-        // The notch's position within the (now taller) bar view, in SwiftUI's top-down coordinate
-        // space: the pill content and the glow's un-outset top edge both anchor to this rect's
-        // origin (y: 0 — the physical notch top, unchanged by the outward growth below it).
-        let notchLocalFrame = CGRect(x: leftEar, y: 0, width: notchFrame.width, height: notchFrame.height)
         let hosting = NSHostingView(rootView: NotchBarView(timer: timer, model: model, nowPlaying: nowPlaying, fullscreen: fullscreen, notchLocalFrame: notchLocalFrame, calendar: calendar, mode: mode))
         hosting.frame = NSRect(origin: .zero, size: frame.size)
         hosting.autoresizingMask = [.width, .height]
@@ -546,20 +570,57 @@ final class NotchPanelController: NSObject {
         }
     }
 
+    /// The CURRENT drawn pill's global-coordinate rect — the wing-hover region on a synthetic
+    /// screen. Unlike the physical `barFrame` (a fixed rect for the asymmetric ear geometry), the
+    /// synthetic pill's own width changes with its content, so this is recomputed from live state
+    /// on every hover check using the exact same `SyntheticPillLayout` math
+    /// `NotchBarView.syntheticPill` draws from — the hover region always equals the drawn pill
+    /// (SHELL-08). Physical panels fall back to the unchanged `barFrame`.
+    private func pillHoverFrame(for panel: NotchPanel) -> NSRect {
+        guard !panel.isPhysical else {
+            return Self.barFrame(notchFrame: panel.notchFrame, anchorMaxY: panel.anchorMaxY)
+        }
+        let earVisible = nowPlayingProvider.displayEar && !fullscreenObserver.isAmbientSuppressed
+        let center = SyntheticPillLayout.centerText(timer: timer, calendar: calendarProvider, nowPlaying: nowPlayingProvider, earVisible: earVisible) != nil
+        let scale = NotchGeometry.readoutScale(pillHeight: panel.notchFrame.height)
+        let width = SyntheticPillLayout.pillWidth(
+            idleWidth: panel.notchFrame.width,
+            scale: scale,
+            showsArtwork: earVisible,
+            showsWave: earVisible,
+            showsCenter: center,
+            showsTimer: timer.isRunning
+        )
+        return NSRect(
+            x: panel.notchFrame.midX - width / 2,
+            y: panel.anchorMaxY - panel.notchFrame.height,
+            width: width,
+            height: panel.notchFrame.height
+        )
+    }
+
     /// Updates each panel's `wingHovering` from the current mouse position: the
     /// mouse is "over a wing" when the pill is visible — a timer is running OR
-    /// the Now Playing ear has content (D-05 disjunction) — and the cursor is
-    /// inside the extended-pill frame but outside the notch's own tracking
-    /// region (which the `NSTrackingArea` already owns). Only fires the dwell
-    /// logic on an actual change, so this is cheap on every move.
+    /// the Now Playing ear has content (D-05 disjunction), for a physical panel;
+    /// always, for a synthetic one (D-03) — and the cursor is inside the pill's
+    /// current frame but outside the notch's own tracking region (which the
+    /// `NSTrackingArea` already owns). Only fires the dwell logic on an actual
+    /// change, so this is cheap on every move.
     private func handleMouseMoved() {
         let mouse = NSEvent.mouseLocation
         for panel in panels {
-            // Mirrors NotchBarView's pill gate exactly (T-7h2 Task 2): the timer
-            // disjunct sits OUTSIDE the fullscreen suppression, so the wing
-            // hover region never disappears out from under a running timer.
-            let inBar = (timer.isRunning || (nowPlayingProvider.displayEar && !fullscreenObserver.isAmbientSuppressed))
-                && Self.barFrame(notchFrame: panel.notchFrame, anchorMaxY: panel.anchorMaxY).contains(mouse)
+            let inBar: Bool
+            if panel.isPhysical {
+                // Mirrors NotchBarView's pill gate exactly (T-7h2 Task 2): the timer
+                // disjunct sits OUTSIDE the fullscreen suppression, so the wing
+                // hover region never disappears out from under a running timer.
+                inBar = (timer.isRunning || (nowPlayingProvider.displayEar && !fullscreenObserver.isAmbientSuppressed))
+                    && Self.barFrame(notchFrame: panel.notchFrame, anchorMaxY: panel.anchorMaxY).contains(mouse)
+            } else {
+                // D-03: the synthetic pill is always visible — no timer/ear gate, just "is the
+                // cursor over whatever the pill currently draws."
+                inBar = pillHoverFrame(for: panel).contains(mouse)
+            }
             let inNotch = Self.collapsedFrame(notchFrame: panel.notchFrame, anchorMaxY: panel.anchorMaxY).contains(mouse)
             let wing = inBar && !inNotch
             if panel.wingHovering != wing {
