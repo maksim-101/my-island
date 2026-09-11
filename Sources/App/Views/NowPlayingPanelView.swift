@@ -99,11 +99,15 @@ private struct NowPlayingProgressBar: View {
 /// same layout pass that produced it — never through a state write a task has to catch up to. Do
 /// not "simplify" this back into a single `Text` that decides its own frame; that shape is exactly
 /// what shipped broken.
-private struct ScrollingTrackText: View {
+struct ScrollingTrackText: View {
     let text: String
     /// True during the paused-in-grace window: halts the scroll immediately at whatever offset it
     /// currently holds and suppresses further motion while set, matching the group's 55% dim.
     let isFrozen: Bool
+    /// Point size for both the visible/twin text and the measuring font — defaults to the panel's
+    /// `Tokens.Font.bodyMDSize` (the existing call site keeps this default, rendering identically);
+    /// the synthetic pill's center slot passes a scaled size instead (D-04).
+    var pointSize: CGFloat = Tokens.Font.bodyMDSize
 
     @State private var offset: CGFloat = 0
     /// Live mirror of `isFrozen`, read from inside `runScrollPass()` instead of `isFrozen` directly.
@@ -112,10 +116,12 @@ private struct ScrollingTrackText: View {
     /// grace window opens or closes mid-pass — the exact bug WR-02 fixed in the removed ear version.
     @State private var frozenNow = false
 
-    /// Matches `Tokens.Font.bodyMD` — measured directly via `NSFont`/`NSString` sizing rather than
-    /// a `GeometryReader` round-trip, so the scroll/no-scroll decision is made synchronously with
-    /// no first-layout race. Shares `Tokens.Font.bodyMDSize` with `bodyMD` so the two can't drift.
-    private static let measuringFont = NSFont.systemFont(ofSize: Tokens.Font.bodyMDSize, weight: .regular)
+    /// Measured directly via `NSFont`/`NSString` sizing rather than a `GeometryReader` round-trip,
+    /// so the scroll/no-scroll decision is made synchronously with no first-layout race. An instance
+    /// property (not the former `static let`) so it tracks `pointSize` per call site.
+    private var measuringFont: NSFont {
+        NSFont.systemFont(ofSize: pointSize, weight: .regular)
+    }
     private static let tickInterval: Double = 1.0 / 30.0
 
     private var boundedText: String {
@@ -123,7 +129,7 @@ private struct ScrollingTrackText: View {
     }
 
     private var measuredWidth: CGFloat {
-        (boundedText as NSString).size(withAttributes: [.font: Self.measuringFont]).width
+        (boundedText as NSString).size(withAttributes: [.font: measuringFont]).width
     }
 
     var body: some View {
@@ -131,7 +137,7 @@ private struct ScrollingTrackText: View {
         // is never drawn. Its resolved frame — not the scrolling text's intrinsic width — is what
         // pins this view's size, which is the entire fix for G-05-5c.
         Text(boundedText)
-            .font(Tokens.Font.bodyMD)
+            .font(.system(size: pointSize, weight: .regular))
             .lineLimit(1)
             .frame(maxWidth: .infinity, alignment: .leading)
             .hidden()
@@ -140,7 +146,7 @@ private struct ScrollingTrackText: View {
                 // decorates, so proxy.size here is genuinely the twin's real, unballooned width.
                 GeometryReader { proxy in
                     Text(boundedText)
-                        .font(Tokens.Font.bodyMD)
+                        .font(.system(size: pointSize, weight: .regular))
                         .foregroundStyle(Tokens.Color.text)
                         .lineLimit(1)
                         .fixedSize(horizontal: true, vertical: false)

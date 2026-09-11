@@ -183,7 +183,7 @@ final class NotchPanelController: NSObject {
             }
             panel.orderFrontRegardless()
 
-            let bar = Self.makeBarPanel(notchFrame: anchorRect, anchorMaxY: screen.frame.maxY, timer: timer, model: model, nowPlaying: nowPlayingProvider, fullscreen: fullscreenObserver)
+            let bar = Self.makeBarPanel(notchFrame: anchorRect, anchorMaxY: screen.frame.maxY, timer: timer, model: model, nowPlaying: nowPlayingProvider, fullscreen: fullscreenObserver, calendar: calendarProvider, mode: mode)
             bar.orderFrontRegardless()
 
             let hudPanel = Self.makeHudPanel(notchFrame: anchorRect, anchorMaxY: screen.frame.maxY, hud: hud)
@@ -383,7 +383,7 @@ final class NotchPanelController: NSObject {
     /// stays fixed).
     private static let glowOutset: CGFloat = 3
 
-    private static func makeBarPanel(notchFrame: NSRect, anchorMaxY: CGFloat, timer: TimerViewModel, model: NotchViewModel, nowPlaying: NowPlayingProvider, fullscreen: FullscreenObserver) -> NSPanel {
+    private static func makeBarPanel(notchFrame: NSRect, anchorMaxY: CGFloat, timer: TimerViewModel, model: NotchViewModel, nowPlaying: NowPlayingProvider, fullscreen: FullscreenObserver, calendar: CalendarProvider, mode: NotchGeometry.Mode) -> NSPanel {
         let bar = barFrame(notchFrame: notchFrame, anchorMaxY: anchorMaxY)
         let frame = NSRect(
             x: bar.minX,
@@ -399,7 +399,7 @@ final class NotchPanelController: NSObject {
         // space: the pill content and the glow's un-outset top edge both anchor to this rect's
         // origin (y: 0 — the physical notch top, unchanged by the outward growth below it).
         let notchLocalFrame = CGRect(x: leftEar, y: 0, width: notchFrame.width, height: notchFrame.height)
-        let hosting = NSHostingView(rootView: NotchBarView(timer: timer, model: model, nowPlaying: nowPlaying, fullscreen: fullscreen, notchLocalFrame: notchLocalFrame))
+        let hosting = NSHostingView(rootView: NotchBarView(timer: timer, model: model, nowPlaying: nowPlaying, fullscreen: fullscreen, notchLocalFrame: notchLocalFrame, calendar: calendar, mode: mode))
         hosting.frame = NSRect(origin: .zero, size: frame.size)
         hosting.autoresizingMask = [.width, .height]
         container.addSubview(hosting)

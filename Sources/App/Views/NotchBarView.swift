@@ -35,6 +35,18 @@ import MyIslandCore
 /// `fullscreen.isFrontmostFullscreen` — the plain APP-fullscreen signal, deliberately NOT Task 2's
 /// content-fullscreen rule, since the physical notch is hidden by the black bar in every
 /// fullscreen mode, media or not.
+///
+/// **Phase 6 Plan 02 (2026-09-11, D-01..D-04) — the synthetic pill on a notchless screen.**
+/// `body` now branches on `mode.isPhysical`: the physical branch (`physicalBody`/`pill`, above)
+/// is untouched byte-for-byte — same ears, same asymmetric geometry, same fullscreen glow. The
+/// synthetic branch (`syntheticPill`) is a genuinely different layout, not a re-parameterized
+/// `pill`: after wave 1 shipped the Dell's drawn pill with the physical ear layout (artwork far
+/// left, sound wave far right, empty center mimicking the camera housing), the user said
+/// verbatim "the space is not really filled at all, or intelligently, or aesthetically." The
+/// synthetic pill instead treats its whole content-driven width as live real estate — left
+/// artwork+wave cluster, center track/meeting text, right timer — scaled to the pill's own
+/// height (`NotchGeometry.readoutScale`), and is never hidden even when nothing is playing (a
+/// dim center dot, D-03) since there is no physical cutout to fall back to.
 @MainActor
 struct NotchBarView: View {
     let timer: TimerViewModel
@@ -42,6 +54,13 @@ struct NotchBarView: View {
     let nowPlaying: NowPlayingProvider
     let fullscreen: FullscreenObserver
     let notchLocalFrame: CGRect
+    /// Phase 6 Plan 02 (D-01..D-04): `calendar` feeds the synthetic pill's
+    /// center-slot meeting countdown (`SyntheticPillLayout.centerText`);
+    /// `mode` selects which branch of `body` renders — the physical pill is
+    /// untouched, the synthetic pill is new. Both are unused by the physical
+    /// branch.
+    let calendar: CalendarProvider
+    let mode: NotchGeometry.Mode
 
     /// How far the glow's stroke extends past the notch's own edges — only left, right and
     /// bottom (never top, which is the physical screen edge/cutout with nothing to gain by
@@ -58,6 +77,25 @@ struct NotchBarView: View {
     fileprivate static let wingNotchGap: CGFloat = Tokens.Spacing.md
 
     var body: some View {
+        if mode.isPhysical {
+            physicalBody
+        } else {
+            // Phase 6 Plan 02 (D-01..D-04, 2026-09-11): the synthetic pill on a
+            // notchless screen never mimics the physical notch's asymmetric
+            // ear geometry or its empty camera-housing center — the whole
+            // drawn width is live real estate (user feedback after wave 1:
+            // "the space is not really filled at all"). No fullscreen glow —
+            // there is no cutout to locate, the pill is always visible (D-03).
+            VStack(spacing: 0) {
+                syntheticPill
+                    .frame(height: notchLocalFrame.height)
+                Spacer(minLength: 0)
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+        }
+    }
+
+    private var physicalBody: some View {
         VStack(spacing: 0) {
             pill
                 .frame(height: notchLocalFrame.height)
@@ -154,6 +192,91 @@ struct NotchBarView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
+    /// The drawn pill on a notchless screen (D-01..D-04). Unlike `pill`, this
+    /// is shown whenever the panel is collapsed — never gated on timer/ear
+    /// content (D-03: the black bar with a dim center dot is the "app is
+    /// alive" affordance, not a conditional readout). Width is
+    /// content-driven (`SyntheticPillLayout.pillWidth`) and every readout
+    /// scales with `NotchGeometry.readoutScale(pillHeight:)`.
+    private var syntheticPill: some View {
+        Group {
+            if !model.isOpen {
+                let scale = NotchGeometry.readoutScale(pillHeight: notchLocalFrame.height)
+                let showsTimer = timer.isRunning
+                let earVisible = nowPlaying.displayEar && !fullscreen.isAmbientSuppressed
+                let center = SyntheticPillLayout.centerText(timer: timer, calendar: calendar, nowPlaying: nowPlaying, earVisible: earVisible)
+                let showsCenter = center != nil
+                let width = SyntheticPillLayout.pillWidth(
+                    idleWidth: notchLocalFrame.width,
+                    scale: scale,
+                    showsArtwork: earVisible,
+                    showsWave: earVisible,
+                    showsCenter: showsCenter,
+                    showsTimer: showsTimer
+                )
+
+                NotchShape(topCornerRadius: 0, bottomCornerRadius: SyntheticPillLayout.bottomCornerRadius)
+                    .fill(Color.black)
+                    .overlay {
+                        if !earVisible && !showsCenter && !showsTimer {
+                            // D-03: never hidden, never translucent — a dim resting
+                            // dot rather than a resting sound-wave, since a wave
+                            // implies audio that isn't playing.
+                            Circle()
+                                .fill(Tokens.Color.textFaint)
+                                .frame(width: SyntheticPillLayout.idleMarkSize * scale, height: SyntheticPillLayout.idleMarkSize * scale)
+                                .opacity(0.7)
+                        } else {
+                            // Two always-present Spacers (not a uniform HStack
+                            // spacing) so the gap appears only BETWEEN shown
+                            // sections — a uniform `spacing:` would double-count
+                            // against `SyntheticPillLayout.contentWidth`'s single
+                            // gap-per-boundary math and overflow the pill.
+                            HStack(spacing: 0) {
+                                if earVisible {
+                                    HStack(spacing: SyntheticPillLayout.clusterGap * scale) {
+                                        ArtworkTile(
+                                            artwork: nowPlaying.artwork,
+                                            size: SyntheticPillLayout.artworkSize * scale,
+                                            cornerRadius: 5 * scale
+                                        )
+                                        SoundWaveView(scale: scale)
+                                    }
+                                    .opacity(nowPlaying.isPausedInGrace ? 0.55 : 1)
+                                }
+                                Spacer(minLength: earVisible && (showsCenter || showsTimer) ? SyntheticPillLayout.sectionGap * scale : 0)
+                                if let center {
+                                    ScrollingTrackText(
+                                        text: center,
+                                        isFrozen: nowPlaying.isPausedInGrace && !timer.isRunning,
+                                        pointSize: Tokens.Font.bodyMDSize * scale
+                                    )
+                                    .frame(width: SyntheticPillLayout.centerViewportWidth * scale)
+                                    .foregroundStyle(Tokens.Color.text)
+                                }
+                                Spacer(minLength: showsCenter && showsTimer ? SyntheticPillLayout.sectionGap * scale : 0)
+                                if showsTimer {
+                                    HStack(spacing: 4 * scale) {
+                                        Circle()
+                                            .fill(Tokens.timerColor(for: timer.tokenState))
+                                            .frame(width: 6 * scale, height: 6 * scale)
+                                        Text(formatted(timer.remaining))
+                                            .font(.system(size: 12 * scale, weight: .medium).monospaced())
+                                            .foregroundStyle(Tokens.Color.text)
+                                            .fixedSize()
+                                    }
+                                }
+                            }
+                            .padding(.horizontal, SyntheticPillLayout.edgePadding * scale)
+                        }
+                    }
+                    .frame(width: width)
+                    .animation(NotchLayout.morphAnimation, value: width)
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
     private func formatted(_ interval: TimeInterval) -> String {
         let total = max(0, Int(interval.rounded()))
         return String(format: "%d:%02d", total / 60, total % 60)
@@ -220,6 +343,11 @@ private struct SoundWaveView: View {
     @State private var audio = SystemAudioLevelProvider()
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
+    /// D-04: scales the wave's height only — bar width/spacing stay fixed so
+    /// the bars remain crisp on the synthetic pill. Defaults to 1 so the
+    /// physical wing's existing call site is unaffected.
+    var scale: CGFloat = 1
+
     private static let barCount = 5
     private static let barWidth: CGFloat = 2
     private static let barSpacing: CGFloat = 2
@@ -243,9 +371,9 @@ private struct SoundWaveView: View {
                         .shadow(color: Tokens.Color.accent.opacity(0.5), radius: 4)
                 }
             }
-            .frame(height: Self.maxHeight)
+            .frame(height: Self.maxHeight * scale)
         }
-        .frame(height: Self.maxHeight)
+        .frame(height: Self.maxHeight * scale)
         .onAppear { audio.start() }
         .onDisappear { audio.stop() }
         .accessibilityHidden(true)
@@ -261,11 +389,12 @@ private struct SoundWaveView: View {
     }
 
     private func barHeight(index: Int, time: Double, level: CGFloat) -> CGFloat {
-        let span = Self.maxHeight - Self.minHeight
-        guard !reduceMotion else { return Self.minHeight + level * span }
+        let minHeight = Self.minHeight * scale
+        let span = (Self.maxHeight - Self.minHeight) * scale
+        guard !reduceMotion else { return minHeight + level * span }
         // Per-bar travelling shape in 0.4…1.0, scaled by the live level — so amplitude follows the
         // music and silence (level 0) is a flat, still row.
         let shape = (sin(time * 6 + Double(index) * 0.9) + 1) / 2 * 0.6 + 0.4
-        return Self.minHeight + level * span * CGFloat(shape)
+        return minHeight + level * span * CGFloat(shape)
     }
 }
