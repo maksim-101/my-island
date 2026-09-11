@@ -64,6 +64,19 @@ final class NotchPanelController: NSObject {
     // its poll timer on every clamshell open/close or display change.
     private let fullscreenObserver = FullscreenObserver()
 
+    /// Persisted key for the Settings "Show on displays without a notch" toggle (SHELL-10).
+    /// Reverse-DNS style, mirroring `CalendarProvider.selectedCalendarIDsKey` — the convention
+    /// for a UI-driven persisted setting, not the flat `MyIslandVerboseLogging` debug-override
+    /// style. Renaming this later silently resets every existing install to the default with no
+    /// migration path (this key also seeds Phase 7's "Show volume HUD" toggle).
+    static let showOnNotchlessDisplaysKey = "com.myisland.showOnNotchlessDisplays"
+
+    /// Default ON. A non-Bool value written by hand (or by a future migration bug) degrades to
+    /// the default rather than crashing or reading as off (T-06-08).
+    private var showOnNotchlessDisplays: Bool {
+        UserDefaults.standard.object(forKey: Self.showOnNotchlessDisplaysKey) as? Bool ?? true
+    }
+
     override init() {
         super.init()
 
@@ -150,54 +163,106 @@ final class NotchPanelController: NSObject {
         if let globalMouseMonitor { NSEvent.removeMonitor(globalMouseMonitor) }
     }
 
-    /// Rebuilds `panels` from the current `NSScreen.screens` (SHELL-05,
-    /// WR-01) — closes panels for screens that disappeared and creates
-    /// panels for newly notched screens. Called at launch and whenever
-    /// `NSApplication.didChangeScreenParametersNotification` fires (clamshell
-    /// open/close, display attach/detach).
-    private func rebuildPanels() {
-        for set in panelSets.values {
-            set.panel.pendingCollapse?.cancel()
-            set.panel.pendingDwellOpen?.cancel()
-            set.panel.pendingHoverClose?.cancel()
-            set.panel.orderOut(nil)
-            set.bar.orderOut(nil)
-            set.hud.orderOut(nil)
-        }
-        panelSets.removeAll()
-
+    /// Reconciles `panelSets` against the current `NSScreen.screens` by display key (Phase 6
+    /// SHELL-09), replacing the old full-teardown/rebuild: on every
+    /// `NSApplication.didChangeScreenParametersNotification` (clamshell open/close, display
+    /// attach/detach, scaled-resolution switch) — and at launch, from an initially empty
+    /// `panelSets` — this diffs the desired display-key set against the live one and touches only
+    /// what changed. A key that disappeared is torn down; a brand-new key is created; a kept key
+    /// whose anchor rect or anchor Y moved (the D-10c scaled-mode case: pill 197→240pt) is torn
+    /// down and recreated so it counts as `rebuilt`, not `added`+`removed`; every other surviving
+    /// key's windows, `NotchViewModel`, open state and pending hover/dwell work items are left
+    /// completely untouched — a running timer on one screen must not blink when a different
+    /// screen connects, disconnects, or changes mode. No display-unit-number heuristic of any kind
+    /// is ever consulted (the built-in reports unit number 0 on this hardware; filtering
+    /// on it would drop the built-in itself) — an unfiltered ghost-display blip from the
+    /// notification storm (RESEARCH Pitfall 1) simply resolves to one extra reconcile that the
+    /// next notification removes, never a crash or full-app teardown. Not `private` —
+    /// `SettingsView`'s "Show on displays without a notch" toggle (SHELL-10) calls this directly
+    /// so flipping it reconciles live, without a restart.
+    func rebuildPanels() {
+        // Every screen resolves to a Mode — physical cutout or synthetic top-center pill (Phase 6
+        // SHELL-06/07) — except a synthetic-mode screen while the toggle is off, which is skipped
+        // entirely: full dormancy (no pill, no HUD, nothing for the hotkey to open there). The
+        // built-in's `.physical` set is never skipped by this or any other condition.
+        var desired: [String: (screen: NSScreen, mode: NotchGeometry.Mode)] = [:]
         for screen in NSScreen.screens {
-            // Every screen resolves to a Mode — physical cutout or synthetic
-            // top-center pill (Phase 6 SHELL-06/07). The Phase 2 "dormant
-            // elsewhere" skip is superseded; no screen is ever left without a
-            // panel set.
             let mode = screen.notchMode
-            let anchorRect = mode.anchorRect
-            let key = screen.displayKey
-
-            let model = NotchViewModel()
-            let panel = Self.makePanel(notchFrame: anchorRect, screen: screen, isPhysical: mode.isPhysical, model: model, timer: timer, calendar: calendarProvider, nowPlaying: nowPlayingProvider)
-            panel.displayID = screen.displayID
-            model.onOpenChange = { [weak self, weak panel] isOpen in
-                guard let self, let panel else { return }
-                self.applyFrame(to: panel, isOpen: isOpen)
-            }
-            panel.orderFrontRegardless()
-
-            let bar = Self.makeBarPanel(notchFrame: anchorRect, anchorMaxY: screen.frame.maxY, timer: timer, model: model, nowPlaying: nowPlayingProvider, fullscreen: fullscreenObserver, calendar: calendarProvider, mode: mode, displayID: screen.displayID)
-            bar.orderFrontRegardless()
-
-            let hudPanel = Self.makeHudPanel(notchFrame: anchorRect, anchorMaxY: screen.frame.maxY, hud: hud)
-            hudPanel.orderFrontRegardless()
-
-            panelSets[key] = PanelSet(panel: panel, bar: bar, hud: hudPanel, model: model)
-
-            // `.notice` persists to the log store even in Release (`.info` does
-            // not — see FullscreenObserver.swift). The printed height
-            // distinguishes the launched-app menu-bar value from the 22pt
-            // status-bar fallback.
-            logger.notice("panel set key=\(key, privacy: .public) mode=\(mode.isPhysical ? "physical" : "synthetic", privacy: .public) anchor=\(NSStringFromRect(anchorRect), privacy: .public) menuBar=\(screen.menuBarHeight, privacy: .public)")
+            if !mode.isPhysical && !showOnNotchlessDisplays { continue }
+            desired[screen.displayKey] = (screen, mode)
         }
+
+        let diff = DisplaySetDiff(previous: Set(panelSets.keys), current: Set(desired.keys))
+
+        for key in diff.removed {
+            if let set = panelSets.removeValue(forKey: key) {
+                tearDown(set)
+            }
+        }
+
+        var rebuilt = 0
+        var kept = 0
+        for key in diff.kept {
+            guard let set = panelSets[key], let (screen, mode) = desired[key] else { continue }
+            if set.panel.notchFrame != mode.anchorRect || set.panel.anchorMaxY != screen.frame.maxY {
+                tearDown(set)
+                panelSets[key] = makePanelSet(for: screen, mode: mode, key: key)
+                rebuilt += 1
+            } else {
+                kept += 1
+            }
+        }
+
+        for key in diff.added {
+            guard let (screen, mode) = desired[key] else { continue }
+            panelSets[key] = makePanelSet(for: screen, mode: mode, key: key)
+        }
+
+        // `.notice` persists to the log store even in Release (`.info` does not — see
+        // FullscreenObserver.swift). A no-op notification (same keys, same geometry) logs
+        // added=0 removed=0 rebuilt=0 kept=N — the storm case from RESEARCH Pitfall 1 degrades to
+        // zero window churn, still observable in the log.
+        logger.notice("reconcile added=\(diff.added.count, privacy: .public) removed=\(diff.removed.count, privacy: .public) rebuilt=\(rebuilt, privacy: .public) kept=\(kept, privacy: .public) total=\(self.panelSets.count, privacy: .public)")
+    }
+
+    /// Cancels pending hover/dwell work items and orders out all three windows for a panel set —
+    /// the same three steps the old full-teardown loop performed per screen, extracted so both the
+    /// reconcile's `removed` and `rebuilt` paths share it. The set leaving `panelSets` (the
+    /// caller's `removeValue(forKey:)`) is what lets ARC free the windows afterward — no ghost.
+    private func tearDown(_ set: PanelSet) {
+        set.panel.pendingCollapse?.cancel()
+        set.panel.pendingDwellOpen?.cancel()
+        set.panel.pendingHoverClose?.cancel()
+        set.panel.orderOut(nil)
+        set.bar.orderOut(nil)
+        set.hud.orderOut(nil)
+    }
+
+    /// Builds a fresh `PanelSet` for one screen — extracted from the old inline creation loop so
+    /// the reconcile's `added` and `rebuilt` paths (Task 2) share identical construction.
+    private func makePanelSet(for screen: NSScreen, mode: NotchGeometry.Mode, key: String) -> PanelSet {
+        let anchorRect = mode.anchorRect
+
+        let model = NotchViewModel()
+        let panel = Self.makePanel(notchFrame: anchorRect, screen: screen, isPhysical: mode.isPhysical, model: model, timer: timer, calendar: calendarProvider, nowPlaying: nowPlayingProvider)
+        panel.displayID = screen.displayID
+        model.onOpenChange = { [weak self, weak panel] isOpen in
+            guard let self, let panel else { return }
+            self.applyFrame(to: panel, isOpen: isOpen)
+        }
+        panel.orderFrontRegardless()
+
+        let bar = Self.makeBarPanel(notchFrame: anchorRect, anchorMaxY: screen.frame.maxY, timer: timer, model: model, nowPlaying: nowPlayingProvider, fullscreen: fullscreenObserver, calendar: calendarProvider, mode: mode, displayID: screen.displayID)
+        bar.orderFrontRegardless()
+
+        let hudPanel = Self.makeHudPanel(notchFrame: anchorRect, anchorMaxY: screen.frame.maxY, hud: hud)
+        hudPanel.orderFrontRegardless()
+
+        // The printed height distinguishes the launched-app menu-bar value from the 22pt
+        // status-bar fallback.
+        logger.notice("panel set key=\(key, privacy: .public) mode=\(mode.isPhysical ? "physical" : "synthetic", privacy: .public) anchor=\(NSStringFromRect(anchorRect), privacy: .public) menuBar=\(screen.menuBarHeight, privacy: .public)")
+
+        return PanelSet(panel: panel, bar: bar, hud: hudPanel, model: model)
     }
 
     private static func makePanel(notchFrame: NSRect, screen: NSScreen, isPhysical: Bool, model: NotchViewModel, timer: TimerViewModel, calendar: CalendarProvider, nowPlaying: NowPlayingProvider) -> NotchPanel {
