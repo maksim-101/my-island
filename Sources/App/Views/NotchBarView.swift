@@ -61,6 +61,10 @@ struct NotchBarView: View {
     /// branch.
     let calendar: CalendarProvider
     let mode: NotchGeometry.Mode
+    /// Phase 6 Plan 03 (D-06): the screen this view is drawn on. Every suppression/glow read
+    /// gates on THIS display, not the global fullscreen signal — a fullscreen window on one
+    /// screen must never blank the other screen's island.
+    let displayID: CGDirectDisplayID?
 
     /// How far the glow's stroke extends past the notch's own edges — only left, right and
     /// bottom (never top, which is the physical screen edge/cutout with nothing to gain by
@@ -95,6 +99,11 @@ struct NotchBarView: View {
         }
     }
 
+    /// Phase 6 Plan 03 (D-06): the notch-locator glow is per-display too — a fullscreen window on
+    /// the OTHER screen must not draw THIS screen's glow. A single computed property backs both
+    /// consuming sites below (the `if` and the `.animation` trigger) so they can never disagree.
+    private var isFrontmostFullscreenHere: Bool { fullscreen.isFrontmostFullscreen(on: displayID) }
+
     private var physicalBody: some View {
         VStack(spacing: 0) {
             pill
@@ -103,7 +112,7 @@ struct NotchBarView: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .overlay(alignment: .topLeading) {
-            if fullscreen.isFrontmostFullscreen {
+            if isFrontmostFullscreenHere {
                 // topCornerRadius: 0, NOT `pill`'s 6 — see 260801-7h2-regressions round 3.
                 // `NotchShape.path(in:)` draws its top corners CONCAVE (the "ear" flowing into the
                 // physical camera housing), which keeps the LEFT/RIGHT vertical edges inset from
@@ -130,7 +139,7 @@ struct NotchBarView: View {
                     .allowsHitTesting(false)
             }
         }
-        .animation(.easeInOut(duration: 0.25), value: fullscreen.isFrontmostFullscreen)
+        .animation(.easeInOut(duration: 0.25), value: isFrontmostFullscreenHere)
     }
 
     private var pill: some View {
@@ -147,7 +156,7 @@ struct NotchBarView: View {
             // and still keeps the pill up on its own. Do not "simplify" this into a single
             // shared condition; that would silently re-suppress the timer too and break Phase 4
             // D-01.
-            if (timer.isRunning || (nowPlaying.displayEar && !fullscreen.isAmbientSuppressed)) && !model.isOpen {
+            if (timer.isRunning || (nowPlaying.displayEar && !fullscreen.isAmbientSuppressed(on: displayID))) && !model.isOpen {
                 NotchShape(topCornerRadius: 6, bottomCornerRadius: 14)
                     .fill(Color.black)
                     .overlay(alignment: .leading) {
@@ -176,14 +185,14 @@ struct NotchBarView: View {
                                     .fixedSize()
                             }
                             .padding(.leading, notchLocalFrame.maxX + Self.wingNotchGap)
-                        } else if nowPlaying.displayEar && !fullscreen.isAmbientSuppressed {
+                        } else if nowPlaying.displayEar && !fullscreen.isAmbientSuppressed(on: displayID) {
                             SoundWaveView()
                                 .padding(.leading, notchLocalFrame.maxX + Self.wingNotchGap)
                                 .opacity(nowPlaying.isPausedInGrace ? 0.55 : 1)
                         }
                     }
                     .overlay(alignment: .leading) {
-                        if nowPlaying.displayEar && !fullscreen.isAmbientSuppressed {
+                        if nowPlaying.displayEar && !fullscreen.isAmbientSuppressed(on: displayID) {
                             NowPlayingEarView(nowPlaying: nowPlaying, notchMinX: notchLocalFrame.minX)
                         }
                     }
@@ -203,7 +212,7 @@ struct NotchBarView: View {
             if !model.isOpen {
                 let scale = NotchGeometry.readoutScale(pillHeight: notchLocalFrame.height)
                 let showsTimer = timer.isRunning
-                let earVisible = nowPlaying.displayEar && !fullscreen.isAmbientSuppressed
+                let earVisible = nowPlaying.displayEar && !fullscreen.isAmbientSuppressed(on: displayID)
                 let center = SyntheticPillLayout.centerText(timer: timer, calendar: calendar, nowPlaying: nowPlaying, earVisible: earVisible)
                 let showsCenter = center != nil
                 let width = SyntheticPillLayout.pillWidth(

@@ -177,13 +177,14 @@ final class NotchPanelController: NSObject {
 
             let model = NotchViewModel()
             let panel = Self.makePanel(notchFrame: anchorRect, screen: screen, isPhysical: mode.isPhysical, model: model, timer: timer, calendar: calendarProvider, nowPlaying: nowPlayingProvider)
+            panel.displayID = screen.displayID
             model.onOpenChange = { [weak self, weak panel] isOpen in
                 guard let self, let panel else { return }
                 self.applyFrame(to: panel, isOpen: isOpen)
             }
             panel.orderFrontRegardless()
 
-            let bar = Self.makeBarPanel(notchFrame: anchorRect, anchorMaxY: screen.frame.maxY, timer: timer, model: model, nowPlaying: nowPlayingProvider, fullscreen: fullscreenObserver, calendar: calendarProvider, mode: mode)
+            let bar = Self.makeBarPanel(notchFrame: anchorRect, anchorMaxY: screen.frame.maxY, timer: timer, model: model, nowPlaying: nowPlayingProvider, fullscreen: fullscreenObserver, calendar: calendarProvider, mode: mode, displayID: screen.displayID)
             bar.orderFrontRegardless()
 
             let hudPanel = Self.makeHudPanel(notchFrame: anchorRect, anchorMaxY: screen.frame.maxY, hud: hud)
@@ -383,7 +384,7 @@ final class NotchPanelController: NSObject {
     /// stays fixed).
     private static let glowOutset: CGFloat = 3
 
-    private static func makeBarPanel(notchFrame: NSRect, anchorMaxY: CGFloat, timer: TimerViewModel, model: NotchViewModel, nowPlaying: NowPlayingProvider, fullscreen: FullscreenObserver, calendar: CalendarProvider, mode: NotchGeometry.Mode) -> NSPanel {
+    private static func makeBarPanel(notchFrame: NSRect, anchorMaxY: CGFloat, timer: TimerViewModel, model: NotchViewModel, nowPlaying: NowPlayingProvider, fullscreen: FullscreenObserver, calendar: CalendarProvider, mode: NotchGeometry.Mode, displayID: CGDirectDisplayID?) -> NSPanel {
         let frame: NSRect
         let notchLocalFrame: CGRect
 
@@ -423,7 +424,7 @@ final class NotchPanelController: NSObject {
 
         let container = NSView(frame: NSRect(origin: .zero, size: frame.size))
         container.autoresizesSubviews = true
-        let hosting = NSHostingView(rootView: NotchBarView(timer: timer, model: model, nowPlaying: nowPlaying, fullscreen: fullscreen, notchLocalFrame: notchLocalFrame, calendar: calendar, mode: mode))
+        let hosting = NSHostingView(rootView: NotchBarView(timer: timer, model: model, nowPlaying: nowPlaying, fullscreen: fullscreen, notchLocalFrame: notchLocalFrame, calendar: calendar, mode: mode, displayID: displayID))
         hosting.frame = NSRect(origin: .zero, size: frame.size)
         hosting.autoresizingMask = [.width, .height]
         container.addSubview(hosting)
@@ -580,7 +581,7 @@ final class NotchPanelController: NSObject {
         guard !panel.isPhysical else {
             return Self.barFrame(notchFrame: panel.notchFrame, anchorMaxY: panel.anchorMaxY)
         }
-        let earVisible = nowPlayingProvider.displayEar && !fullscreenObserver.isAmbientSuppressed
+        let earVisible = nowPlayingProvider.displayEar && !fullscreenObserver.isAmbientSuppressed(on: panel.displayID)
         let center = SyntheticPillLayout.centerText(timer: timer, calendar: calendarProvider, nowPlaying: nowPlayingProvider, earVisible: earVisible) != nil
         let scale = NotchGeometry.readoutScale(pillHeight: panel.notchFrame.height)
         let width = SyntheticPillLayout.pillWidth(
@@ -614,7 +615,7 @@ final class NotchPanelController: NSObject {
                 // Mirrors NotchBarView's pill gate exactly (T-7h2 Task 2): the timer
                 // disjunct sits OUTSIDE the fullscreen suppression, so the wing
                 // hover region never disappears out from under a running timer.
-                inBar = (timer.isRunning || (nowPlayingProvider.displayEar && !fullscreenObserver.isAmbientSuppressed))
+                inBar = (timer.isRunning || (nowPlayingProvider.displayEar && !fullscreenObserver.isAmbientSuppressed(on: panel.displayID)))
                     && Self.barFrame(notchFrame: panel.notchFrame, anchorMaxY: panel.anchorMaxY).contains(mouse)
             } else {
                 // D-03: the synthetic pill is always visible — no timer/ear gate, just "is the
@@ -707,6 +708,10 @@ private final class NotchPanel: NSPanel {
     // future per-display logic that needs the screen back.
     var isPhysical = true
     var screenFrame: NSRect = .zero
+    /// Phase 6 Plan 03 (D-06/D-07): the `CGDirectDisplayID` this panel was built for, set once in
+    /// `rebuildPanels()` from `screen.displayID`. Feeds `FullscreenObserver`'s per-display queries
+    /// and `canBecomeKey`'s pointer-display gate below.
+    var displayID: CGDirectDisplayID?
     var pendingCollapse: DispatchWorkItem?
     var pendingDwellOpen: DispatchWorkItem?
     var pendingHoverClose: DispatchWorkItem?
@@ -723,7 +728,15 @@ private final class NotchPanel: NSPanel {
     // Can become key (so the duration text field accepts typing) but only when
     // needed — `becomesKeyOnlyIfNeeded` limits that to text-field clicks, so the
     // panel stays a non-activating ambient overlay otherwise. Never main.
-    override var canBecomeKey: Bool { true }
+    //
+    // Phase 6 Plan 03 (D-07): the hotkey opens every panel at once, but only ONE panel may ever
+    // become key — the one whose `screenFrame` contains the pointer — so typed input (today: the
+    // minutes field after a click; Phase 8: keyboard navigation) always lands on the display the
+    // user is actually looking at, never on a panel the pointer isn't over. `toggle()` itself
+    // calls nothing that requests key status, so this gate alone (combined with
+    // `becomesKeyOnlyIfNeeded`) is what enforces the rule — no forced-key AppKit call exists
+    // anywhere in this file.
+    override var canBecomeKey: Bool { screenFrame.contains(NSEvent.mouseLocation) }
     override var canBecomeMain: Bool { false }
 
     // The notch overlay is a fixed, level-27 ambient window — it must never be
