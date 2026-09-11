@@ -5,18 +5,22 @@ import MyIslandCore
 
 @MainActor
 final class NotchPanelController: NSObject {
-    private var panels: [NotchPanel] = []
-    // One per notched screen: the collapsed notch's "extended pill" — a single
-    // continuous black shape spanning the cutout plus equal ear strips, with the
-    // running-timer readout on the right (see NotchBarView). The collapsed strip
-    // over the cutout is invisible to the eye, so the readout must live in the
-    // visible ears; drawing it as one shape avoids seams. Kept separate from the
-    // notch panel so it never participates in the open/HUD morph.
-    private var barPanels: [NSPanel] = []
-    // One per notched screen: the detached Liquid Glass Ambient HUD pill that
-    // floats just below the notch (HUDPillView). Independent of the notch/wings
-    // so its width never has to match them.
-    private var hudPanels: [NSPanel] = []
+    // One entry per connected screen, keyed by `NSScreen.displayKey` (Phase 6
+    // SHELL-07): the interactive notch panel, the non-interactive extended-pill
+    // bar (readouts, see NotchBarView), and the detached Ambient HUD pill
+    // (HUDPillView). Replaces the old parallel `panels`/`barPanels`/`hudPanels`
+    // arrays keyed only by rebuild order.
+    private struct PanelSet {
+        let panel: NotchPanel
+        let bar: NSPanel
+        let hud: NSPanel
+        let model: NotchViewModel
+    }
+    private var panelSets: [String: PanelSet] = [:]
+    // Kept so `toggle()`/`handleMouseMoved()`/`applyHover` — which only ever
+    // need "every panel", not the key — compile unchanged against the new
+    // dictionary-backed storage.
+    private var panels: [NotchPanel] { panelSets.values.map(\.panel) }
     private let logger = AppLog.make("NotchPanelController")
     nonisolated(unsafe) private var screenObserver: NSObjectProtocol?
     // Observe-only mouse monitors (never intercept clicks) that let a hover over
@@ -152,46 +156,50 @@ final class NotchPanelController: NSObject {
     /// `NSApplication.didChangeScreenParametersNotification` fires (clamshell
     /// open/close, display attach/detach).
     private func rebuildPanels() {
-        for panel in panels {
-            panel.pendingCollapse?.cancel()
-            panel.pendingDwellOpen?.cancel()
-            panel.pendingHoverClose?.cancel()
-            panel.orderOut(nil)
+        for set in panelSets.values {
+            set.panel.pendingCollapse?.cancel()
+            set.panel.pendingDwellOpen?.cancel()
+            set.panel.pendingHoverClose?.cancel()
+            set.panel.orderOut(nil)
+            set.bar.orderOut(nil)
+            set.hud.orderOut(nil)
         }
-        panels.removeAll()
-        barPanels.forEach { $0.orderOut(nil) }
-        barPanels.removeAll()
-        hudPanels.forEach { $0.orderOut(nil) }
-        hudPanels.removeAll()
+        panelSets.removeAll()
 
         for screen in NSScreen.screens {
-            guard let notchFrame = screen.notchFrame else {
-                logger.info("No notch on this screen — dormant, no panel created (SHELL-05/D-11)")
-                continue
-            }
+            // Every screen resolves to a Mode — physical cutout or synthetic
+            // top-center pill (Phase 6 SHELL-06/07). The Phase 2 "dormant
+            // elsewhere" skip is superseded; no screen is ever left without a
+            // panel set.
+            let mode = screen.notchMode
+            let anchorRect = mode.anchorRect
+            let key = screen.displayKey
 
             let model = NotchViewModel()
-            let panel = Self.makePanel(notchFrame: notchFrame, screen: screen, model: model, timer: timer, calendar: calendarProvider, nowPlaying: nowPlayingProvider)
+            let panel = Self.makePanel(notchFrame: anchorRect, screen: screen, isPhysical: mode.isPhysical, model: model, timer: timer, calendar: calendarProvider, nowPlaying: nowPlayingProvider)
             model.onOpenChange = { [weak self, weak panel] isOpen in
                 guard let self, let panel else { return }
                 self.applyFrame(to: panel, isOpen: isOpen)
             }
-            panels.append(panel)
             panel.orderFrontRegardless()
 
-            let bar = Self.makeBarPanel(notchFrame: notchFrame, anchorMaxY: screen.frame.maxY, timer: timer, model: model, nowPlaying: nowPlayingProvider, fullscreen: fullscreenObserver)
-            barPanels.append(bar)
+            let bar = Self.makeBarPanel(notchFrame: anchorRect, anchorMaxY: screen.frame.maxY, timer: timer, model: model, nowPlaying: nowPlayingProvider, fullscreen: fullscreenObserver)
             bar.orderFrontRegardless()
 
-            let hudPanel = Self.makeHudPanel(notchFrame: notchFrame, anchorMaxY: screen.frame.maxY, hud: hud)
-            hudPanels.append(hudPanel)
+            let hudPanel = Self.makeHudPanel(notchFrame: anchorRect, anchorMaxY: screen.frame.maxY, hud: hud)
             hudPanel.orderFrontRegardless()
-        }
 
-        logger.info("Initialized with \(self.panels.count, privacy: .public) notch panel(s)")
+            panelSets[key] = PanelSet(panel: panel, bar: bar, hud: hudPanel, model: model)
+
+            // `.notice` persists to the log store even in Release (`.info` does
+            // not — see FullscreenObserver.swift). The printed height
+            // distinguishes the launched-app menu-bar value from the 22pt
+            // status-bar fallback.
+            logger.notice("panel set key=\(key, privacy: .public) mode=\(mode.isPhysical ? "physical" : "synthetic", privacy: .public) anchor=\(NSStringFromRect(anchorRect), privacy: .public) menuBar=\(screen.menuBarHeight, privacy: .public)")
+        }
     }
 
-    private static func makePanel(notchFrame: NSRect, screen: NSScreen, model: NotchViewModel, timer: TimerViewModel, calendar: CalendarProvider, nowPlaying: NowPlayingProvider) -> NotchPanel {
+    private static func makePanel(notchFrame: NSRect, screen: NSScreen, isPhysical: Bool, model: NotchViewModel, timer: TimerViewModel, calendar: CalendarProvider, nowPlaying: NowPlayingProvider) -> NotchPanel {
         let anchorMaxY = screen.frame.maxY
         let collapsedFrame = Self.collapsedFrame(notchFrame: notchFrame, anchorMaxY: anchorMaxY)
         let styleMask: NSWindow.StyleMask = [.borderless, .nonactivatingPanel, .utilityWindow]
@@ -205,8 +213,10 @@ final class NotchPanelController: NSObject {
         panel.viewModel = model
         panel.notchFrame = notchFrame
         panel.anchorMaxY = anchorMaxY
+        panel.isPhysical = isPhysical
+        panel.screenFrame = screen.frame
 
-        let hostingView = NSHostingView(rootView: NotchContentView(model: model, notchSize: notchFrame.size, timer: timer, calendar: calendar, nowPlaying: nowPlaying))
+        let hostingView = NSHostingView(rootView: NotchContentView(model: model, notchSize: notchFrame.size, timer: timer, calendar: calendar, nowPlaying: nowPlaying, isPhysical: isPhysical))
         // Decouple from the window's Auto Layout / constraint-update cycle:
         // `applyFrame` resizes the panel manually via `setFrame`, and letting
         // the hosting view participate in constraint-based sizing causes an
@@ -225,7 +235,7 @@ final class NotchPanelController: NSObject {
         // `NSHostingView`, so no window-resize feedback can originate from
         // SwiftUI's layout pass — `applyFrame` remains the ONLY code that
         // resizes the window.
-        let expandedWidth = notchFrame.width * NotchLayout.expandedWidthMultiplier
+        let expandedWidth = NotchLayout.expandedWidth
         let expandedHeight = NotchLayout.expandedHeight
 
         // A plain `NSView` cannot be relied upon for hover detection here:
@@ -419,7 +429,7 @@ final class NotchPanelController: NSObject {
     /// The window frame while expanded — grows downward from the notch,
     /// staying horizontally centered on it.
     private static func expandedFrame(notchFrame: NSRect, anchorMaxY: CGFloat) -> NSRect {
-        let width = notchFrame.width * NotchLayout.expandedWidthMultiplier
+        let width = NotchLayout.expandedWidth
         let height = NotchLayout.expandedHeight
         return NSRect(
             x: notchFrame.midX - width / 2,
@@ -598,6 +608,12 @@ private final class NotchPanel: NSPanel {
     weak var viewModel: NotchViewModel?
     var notchFrame: NSRect = .zero
     var anchorMaxY: CGFloat = 0
+    // Phase 6 SHELL-06/07: which `NotchGeometry.Mode` case this panel was
+    // built from, and the owning screen's full frame — both set once in
+    // `makePanel`, read by `NotchContentView`'s corner-radius branch and any
+    // future per-display logic that needs the screen back.
+    var isPhysical = true
+    var screenFrame: NSRect = .zero
     var pendingCollapse: DispatchWorkItem?
     var pendingDwellOpen: DispatchWorkItem?
     var pendingHoverClose: DispatchWorkItem?

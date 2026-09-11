@@ -48,16 +48,17 @@ struct NotchContentView: View {
     let timer: TimerViewModel
     let calendar: CalendarProvider
     let nowPlaying: NowPlayingProvider
+    // Phase 6 SHELL-06: only the physical camera-cutout gets concave top
+    // "ears" (topCornerRadius 6) — a synthetic screen has no housing for
+    // those ears to flow into, so its drawn pill has square top corners.
+    let isPhysical: Bool
 
     @State private var flashOpacity: Double = 0
 
     private var collapsedSize: CGSize { notchSize }
 
     private var expandedSize: CGSize {
-        CGSize(
-            width: collapsedSize.width * NotchLayout.expandedWidthMultiplier,
-            height: NotchLayout.expandedHeight
-        )
+        CGSize(width: NotchLayout.expandedWidth, height: NotchLayout.expandedHeight)
     }
 
     var body: some View {
@@ -80,14 +81,14 @@ struct NotchContentView: View {
             // timer readout lives in the ear pill (NotchBarView) and the
             // Ambient HUD is a detached glass pill below the notch
             // (HUDPillView), so nothing is drawn over the camera cutout here.
-            NotchShape(topCornerRadius: 6, bottomCornerRadius: model.isOpen ? 24 : 14)
+            NotchShape(topCornerRadius: isPhysical ? 6 : 0, bottomCornerRadius: model.isOpen ? 24 : 14)
                 .fill(Color.black)
                 .frame(width: shapeSize.width, height: shapeSize.height)
 
             // A brief neutral/indigo flash on timer completion (D-11) — NEVER
             // amber (that's reserved for the Claude "needs you" attention
             // signal) and never a system notification.
-            NotchShape(topCornerRadius: 6, bottomCornerRadius: model.isOpen ? 24 : 14)
+            NotchShape(topCornerRadius: isPhysical ? 6 : 0, bottomCornerRadius: model.isOpen ? 24 : 14)
                 .fill(Tokens.Color.accent)
                 .frame(width: shapeSize.width, height: shapeSize.height)
                 .opacity(flashOpacity)
@@ -104,7 +105,7 @@ struct NotchContentView: View {
             ExpandedPanelView(timer: timer, calendar: calendar, nowPlaying: nowPlaying)
                 .frame(width: expandedSize.width, height: expandedSize.height, alignment: .topLeading)
                 .mask(alignment: .top) {
-                    NotchShape(topCornerRadius: 6, bottomCornerRadius: model.isOpen ? 24 : 14)
+                    NotchShape(topCornerRadius: isPhysical ? 6 : 0, bottomCornerRadius: model.isOpen ? 24 : 14)
                         .frame(width: shapeSize.width, height: shapeSize.height)
                 }
                 .opacity(model.isOpen ? 1 : 0)

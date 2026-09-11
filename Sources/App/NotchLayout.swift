@@ -4,7 +4,12 @@ import SwiftUI
 /// animation, shared by the AppKit window sizing in `NotchPanelController`
 /// and the SwiftUI content sizing in `NotchContentView` so they cannot drift.
 enum NotchLayout {
-    static let expandedWidthMultiplier: CGFloat = 2.2
+    // Phase 6 SHELL-08: the expanded panel is a CONSTANT 407×400 on every
+    // display, physical or synthetic — 185 (built-in notch width) × 2.2, the
+    // retired multiplier's own value on the one screen it always applied to.
+    // Never derive this from a per-screen pill width (RESEARCH anti-pattern):
+    // the Dell's idle pill (197–283pt) must not leak into expanded sizing.
+    static let expandedWidth: CGFloat = 407
     // Tall enough to show ExpandedPanelView's full content stack — title +
     // Timer group (mode switch, ring/readout, and the preset/Start row) +
     // Clipboard group. At 160 the preset row (incl. the "Start" button and
