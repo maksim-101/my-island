@@ -71,6 +71,24 @@ public enum NotchGeometry {
         )
     }
 
+    /// D-01: the content-driven floor for the synthetic pill's drawn width —
+    /// idle stays at the damped formula's `idleWidth`; the live readout
+    /// layout (artwork + center text + timer) may widen it further, never
+    /// shrink it below the formula.
+    public static func syntheticWidth(idleWidth: CGFloat, contentWidth: CGFloat) -> CGFloat {
+        max(idleWidth, contentWidth)
+    }
+
+    /// D-04: every readout on the drawn pill scales proportionally to the
+    /// pill's own height, referenced against the built-in's physical notch
+    /// height (32pt) — the size the v1.0 readouts were designed for. Never
+    /// exceeds 1 (a taller-than-32pt pill does not enlarge readouts), and a
+    /// degenerate (zero or negative) height never collapses them to nothing.
+    public static func readoutScale(pillHeight: CGFloat) -> CGFloat {
+        guard pillHeight > 0 else { return 1 }
+        return min(1, pillHeight / 32)
+    }
+
     /// The single call site deciding "notched or not" for a screen — always
     /// returns a usable anchor, never nil (assumption_delta_decision: the
     /// promote invariant). `.physical` when the unchanged `notchFrame(...)`
