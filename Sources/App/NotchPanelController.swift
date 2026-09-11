@@ -468,16 +468,31 @@ final class NotchPanelController: NSObject {
         // click-probe log lines from round 4 — testing whether the panel is
         // collapsing right around the moment a click on Grant Access lands.
         let frame = resolvedFrame(for: panel)
+        let container = panel.contentView as? HoverTrackingView
 
         if isOpen {
+            // The whole expanded window is the hover target again.
+            container?.hoverRect = nil
             panel.setFrame(frame, display: true)
         } else {
+            // D-11: shrink the tracking rect to the collapsed pill immediately —
+            // before the window itself shrinks — so a cursor sweeping through
+            // the dead zone below the still-oversized window never re-arms the
+            // dwell, while moving onto the pill itself still gets a fresh
+            // `mouseEntered` at any point during the 0.45s collapse animation.
+            container?.hoverRect = NotchGeometry.collapsedHoverRect(
+                containerSize: panel.frame.size,
+                notchSize: panel.notchFrame.size
+            )
             let work = DispatchWorkItem { [weak self, weak panel] in
                 guard let self, let panel, panel.viewModel?.isOpen != true else {
                     return
                 }
                 let collapseFrame = self.resolvedFrame(for: panel)
                 panel.setFrame(collapseFrame, display: true)
+                // The collapsed window now IS the pill — `.inVisibleRect`
+                // tracking is correct again, and cheaper.
+                (panel.contentView as? HoverTrackingView)?.hoverRect = nil
             }
             panel.pendingCollapse = work
             DispatchQueue.main.asyncAfter(deadline: .now() + NotchLayout.collapseWindowDelay, execute: work)
@@ -567,12 +582,18 @@ final class NotchPanelController: NSObject {
 
 /// Tracks hover over the container's full bounds via AppKit's
 /// `NSTrackingArea` rather than SwiftUI `.onHover`, which is unreliable here
-/// (see `container` comment in `NotchPanelController.makePanel`). `.zero` +
-/// `.inVisibleRect` keeps the tracking rect pinned to the view's current
-/// bounds automatically as `applyFrame` resizes the window between the
-/// collapsed notch size and the expanded panel size.
+/// (see `container` comment in `NotchPanelController.makePanel`). Two
+/// regimes (D-11): when `hoverRect` is nil, `.zero` + `.inVisibleRect` keeps
+/// the tracking rect pinned to the view's current bounds automatically as
+/// `applyFrame` resizes the window between the collapsed notch size and the
+/// expanded panel size — used while open/expanded and once fully collapsed.
+/// When `hoverRect` is set (during the collapse animation, before the window
+/// itself has shrunk), the tracking area is pinned to that explicit rect
+/// instead, so the dead zone below the still-oversized window never re-arms
+/// the hover dwell.
 private final class HoverTrackingView: NSView {
     var onHoverChange: ((Bool) -> Void)?
+    var hoverRect: NSRect? { didSet { updateTrackingAreas() } }
 
     /// Keeps the (wider-than-container) hosting subview horizontally centered
     /// and top-pinned on every window resize, replacing the `autoresizingMask`
@@ -590,12 +611,23 @@ private final class HoverTrackingView: NSView {
     override func updateTrackingAreas() {
         super.updateTrackingAreas()
         trackingAreas.forEach(removeTrackingArea)
-        addTrackingArea(NSTrackingArea(
-            rect: .zero,
-            options: [.mouseEnteredAndExited, .activeAlways, .inVisibleRect],
-            owner: self,
-            userInfo: nil
-        ))
+        if let hoverRect {
+            // Explicit rect — no `.inVisibleRect`, which would override it and
+            // track the full (still-oversized, mid-collapse) bounds instead.
+            addTrackingArea(NSTrackingArea(
+                rect: hoverRect,
+                options: [.mouseEnteredAndExited, .activeAlways],
+                owner: self,
+                userInfo: nil
+            ))
+        } else {
+            addTrackingArea(NSTrackingArea(
+                rect: .zero,
+                options: [.mouseEnteredAndExited, .activeAlways, .inVisibleRect],
+                owner: self,
+                userInfo: nil
+            ))
+        }
     }
 
     override func mouseEntered(with event: NSEvent) { onHoverChange?(true) }
