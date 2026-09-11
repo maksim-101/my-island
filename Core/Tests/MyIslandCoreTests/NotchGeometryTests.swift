@@ -136,3 +136,40 @@ import CoreGraphics
     #expect(synthetic.anchorRect == syntheticRect)
     #expect(synthetic.isPhysical == false)
 }
+
+// MARK: - Phase 6 Task 2: D-11 collapsed-hover-target shrink
+
+@Test func collapsedHoverRectIsCenteredAndTopPinned() {
+    // Built-in notch: container is the expanded 407×400 panel, notch is the
+    // physical 185×32 rect — hover target during collapse is centered
+    // horizontally and pinned to the container's top edge.
+    let result = NotchGeometry.collapsedHoverRect(
+        containerSize: CGSize(width: 407, height: 400),
+        notchSize: CGSize(width: 185, height: 32)
+    )
+    #expect(result == CGRect(x: 111, y: 368, width: 185, height: 32))
+}
+
+@Test func collapsedHoverRectForSyntheticPill() {
+    // Dell synthetic pill: unrounded damped width means the centering math
+    // must round the x origin (bottom-left-origin AppKit view coordinates),
+    // while width/height carry the unrounded pill size through unchanged.
+    let result = NotchGeometry.collapsedHoverRect(
+        containerSize: CGSize(width: 407, height: 400),
+        notchSize: CGSize(width: 197.33, height: 30)
+    )
+    #expect(result.origin.x == 105)
+    #expect(result.origin.y == 370)
+    #expect(result.size == CGSize(width: 197.33, height: 30))
+}
+
+@Test func collapsedHoverRectEqualsContainerWhenAlreadyCollapsed() {
+    // Once the window itself has finished collapsing, container == notch
+    // size — the hover rect degenerates to the full container, matching
+    // `.inVisibleRect` tracking.
+    let result = NotchGeometry.collapsedHoverRect(
+        containerSize: CGSize(width: 185, height: 32),
+        notchSize: CGSize(width: 185, height: 32)
+    )
+    #expect(result == CGRect(x: 0, y: 0, width: 185, height: 32))
+}
