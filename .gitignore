@@ -9,3 +9,4 @@ DerivedData/
 .claude/
 .env.build
 dist/
+.gsd/
