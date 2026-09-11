@@ -137,6 +137,24 @@ import CoreGraphics
     #expect(synthetic.isPhysical == false)
 }
 
+// MARK: - Phase 6 Plan 02 Task 1: D-01 content-driven width floor, D-04 readout scale
+
+@Test func syntheticWidthNeverDropsBelowIdle() {
+    #expect(NotchGeometry.syntheticWidth(idleWidth: 197.33, contentWidth: 120) == 197.33)
+    #expect(NotchGeometry.syntheticWidth(idleWidth: 197.33, contentWidth: 310) == 310)
+    #expect(NotchGeometry.syntheticWidth(idleWidth: 197.33, contentWidth: 197.33) == 197.33)
+    #expect(NotchGeometry.syntheticWidth(idleWidth: 197.33, contentWidth: 0) == 197.33)
+}
+
+@Test func readoutScaleIsProportionalAndCappedAtOne() {
+    #expect(NotchGeometry.readoutScale(pillHeight: 30) == 0.9375)
+    #expect(NotchGeometry.readoutScale(pillHeight: 32) == 1)
+    #expect(NotchGeometry.readoutScale(pillHeight: 33) == 1)
+    #expect(NotchGeometry.readoutScale(pillHeight: 16) == 0.5)
+    #expect(NotchGeometry.readoutScale(pillHeight: 0) == 1)
+    #expect(NotchGeometry.readoutScale(pillHeight: -5) == 1)
+}
+
 // MARK: - Phase 6 Task 2: D-11 collapsed-hover-target shrink
 
 @Test func collapsedHoverRectIsCenteredAndTopPinned() {
