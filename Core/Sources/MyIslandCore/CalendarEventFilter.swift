@@ -97,4 +97,13 @@ public struct ThresholdScheduler {
             .filter { $0 > now }
             .sorted()
     }
+
+    /// Whether `remaining` (seconds until start; an already-started event reads <= 0) sits inside
+    /// the meeting's own 15m/5m/1m bump window — the proximity test the synthetic pill's centre
+    /// slot reuses instead of inventing a new cutoff (06-UI-SPEC.md "Centre slot decoupled from
+    /// the timer", 2026-09-12 Amendment #2). An already-running meeting always qualifies, since
+    /// "now" is the closest a meeting can be.
+    public static func isWithinBumpWindow(remaining: TimeInterval) -> Bool {
+        remaining <= (thresholds.max() ?? 0)
+    }
 }

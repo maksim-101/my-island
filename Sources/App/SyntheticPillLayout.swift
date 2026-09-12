@@ -88,19 +88,26 @@ enum SyntheticPillLayout {
         pillWidth(idleWidth: idleWidth, scale: scale, showsArtwork: true, showsWave: true, showsCenter: true, showsTimer: true)
     }
 
-    /// D-02's center-slot rule: the next-meeting countdown while a timer runs
-    /// AND a meeting is upcoming, otherwise the Now Playing title/artist while
-    /// music plays, otherwise nil (the idle dot). A running timer with no
-    /// upcoming meeting falls through to the music branch — it does not
-    /// suppress the center slot.
+    /// 2026-09-12 Amendment #2 ("Centre slot decoupled from the timer") center-slot rule: the
+    /// next-meeting countdown when, and only when, that meeting is inside its own threshold-bump
+    /// window (`ThresholdScheduler.isWithinBumpWindow`, 900s/15m — an already-running meeting
+    /// always qualifies), otherwise the Now Playing title/artist while music plays, otherwise nil
+    /// (the idle dot). `timer.isRunning` plays no part in this priority order — a distant meeting
+    /// no longer appears just because a timer started, and a close meeting no longer disappears
+    /// just because a timer was reset.
+    ///
+    /// The `timer:` parameter is retained but unused in this body: `NotchPanelController.swift`
+    /// also calls this function and is off-limits to a concurrent executor's edits during this
+    /// task, so the signature-hygiene removal the spec calls for is deferred to a future edit of
+    /// that file.
     static func centerText(
         timer: TimerViewModel,
         calendar: CalendarProvider,
         nowPlaying: NowPlayingProvider,
         earVisible: Bool
     ) -> String? {
-        if timer.isRunning,
-           let event = calendar.displayedEvents.first,
+        if let event = calendar.displayedEvents.first,
+           ThresholdScheduler.isWithinBumpWindow(remaining: event.startDate.timeIntervalSinceNow),
            let countdown = calendar.countdowns[event.id] {
             return countdown == "now" ? "\(event.title) now" : "\(event.title) in \(countdown)"
         }

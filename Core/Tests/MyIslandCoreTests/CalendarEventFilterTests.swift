@@ -66,6 +66,22 @@ import Foundation
 
 /// The 06:00–07:00 / 06:15 case from real-hardware UAT: the running meeting
 /// must not hide the one starting behind it.
+@Test func isWithinBumpWindowTrueJustInsideFifteenMinutes() {
+    #expect(ThresholdScheduler.isWithinBumpWindow(remaining: 899))
+}
+
+@Test func isWithinBumpWindowTrueAtExactlyFifteenMinutes() {
+    #expect(ThresholdScheduler.isWithinBumpWindow(remaining: 900))
+}
+
+@Test func isWithinBumpWindowFalseJustOutsideFifteenMinutes() {
+    #expect(!ThresholdScheduler.isWithinBumpWindow(remaining: 901))
+}
+
+@Test func isWithinBumpWindowTrueForAlreadyStartedEvent() {
+    #expect(ThresholdScheduler.isWithinBumpWindow(remaining: -30))
+}
+
 @Test func selectSurfacesBothWhenUpcomingStartsBeforeRunningEnds() {
     let now = Date(timeIntervalSince1970: 0)
     let slots = [
