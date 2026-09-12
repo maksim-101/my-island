@@ -132,7 +132,14 @@ final class NotchPanelController: NSObject {
             for (key, set) in self.panelSets {
                 guard !set.panel.isPhysical else { continue }
                 let sliverActive = self.fullscreenObserver.isFrontmostFullscreen(on: set.panel.displayID)
-                self.logger.notice("sliverState key=\(key, privacy: .public) active=\(sliverActive, privacy: .public) hoverRect=\(NSStringFromRect(self.pillHoverFrame(for: set.panel)), privacy: .public)")
+                // 20260912-menubar-coverage-rule (Task 2): panelH/barH added — the frame-vs-view
+                // correlation the Space-switch-flash re-diagnosis needs. This session confirmed by
+                // direct reading that neither window's content draws anything (interactive panel,
+                // collapsed+closed on synthetic mode) or resizes its AppKit frame (bar window,
+                // fixed-size in synthetic mode) in a way that could itself cause a visible
+                // mismatch — this line is the positive, on-hardware confirmation of that reading,
+                // not a hedge against it being wrong.
+                self.logger.notice("sliverState key=\(key, privacy: .public) active=\(sliverActive, privacy: .public) hoverRect=\(NSStringFromRect(self.pillHoverFrame(for: set.panel)), privacy: .public) panelH=\(set.panel.frame.height, privacy: .public) barH=\(set.bar.frame.height, privacy: .public)")
                 guard set.model.isOpen != true, set.panel.pendingCollapse == nil else { continue }
                 set.panel.setFrame(self.resolvedFrame(for: set.panel), display: true)
                 (set.panel.contentView as? HoverTrackingView)?.hoverRect = nil

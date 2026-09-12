@@ -180,7 +180,7 @@ final class FullscreenObserver {
         // in System Settings takes effect on the next poll with no relaunch. An untrusted state
         // is not a degraded mode in practice, because SkyLight's `CGSCopyManagedDisplaySpaces` is
         // the permission-free PRIMARY fullscreen signal and AX is only the secondary fallback.
-        refresh(isFirstQuery: true)
+        refresh(isFirstQuery: true, trigger: "init")
         startPolling()
 
         // 20260912 (sliver-stuck-and-popover-glow, Task 3): the coordinator's own repro —
@@ -204,7 +204,7 @@ final class FullscreenObserver {
             // actor isolation — mirrors `NotchPanelController`'s identical
             // `didChangeScreenParametersNotification` observer's `Task { @MainActor in ... }` hop.
             Task { @MainActor in
-                self?.refresh(isFirstQuery: false)
+                self?.refresh(isFirstQuery: false, trigger: "space")
             }
         }
     }
@@ -245,14 +245,34 @@ final class FullscreenObserver {
         // application's fullscreen transition.
         pollTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] _ in
             Task { @MainActor in
-                self?.refresh(isFirstQuery: false)
+                self?.refresh(isFirstQuery: false, trigger: "poll")
             }
         }
     }
 
-    private func refresh(isFirstQuery: Bool) {
+    /// `trigger` identifies which caller drove this evaluation — `"init"`, `"poll"` (the 1s
+    /// backstop) or `"space"` (`activeSpaceDidChangeNotification`) — purely for the diagnostic
+    /// line below; it never changes classification behavior.
+    private func refresh(isFirstQuery: Bool, trigger: String) {
         let axTrusted = AXIsProcessTrusted()
         let result = Self.classify(axTrusted: axTrusted)
+
+        // 20260912-menubar-coverage-rule (Task 2): unconditional — logged BEFORE the change-guard
+        // below, and regardless of whether anything changed. 194d4ca's own log looked clean (a
+        // single `sliverState` transition, no intervening full-height line) precisely because the
+        // guard only fires on a state change; a space-triggered refresh that resolves to the SAME
+        // state as the previous poll produced zero output, indistinguishable from "never
+        // evaluated." This line exists so every Space-switch evaluation is visible in `log show`
+        // regardless of outcome, closing that blind spot before drawing any timing conclusion from
+        // the log.
+        if trigger == "space" {
+            logger.notice("""
+                spaceSwitchProbe frontmost=\(result.bundleID ?? "none", privacy: .public) \
+                onFullscreenSpace=\(result.onFullscreenSpaceRaw.map(String.init) ?? "nil", privacy: .public) \
+                via=\(result.via, privacy: .public) \
+                isFullscreen=\(result.isFullscreen, privacy: .public)
+                """)
+        }
 
         if isFirstQuery {
             isAvailable = result.hasUsableWindowInfo
