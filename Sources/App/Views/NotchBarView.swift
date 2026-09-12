@@ -55,11 +55,12 @@ struct NotchBarView: View {
     let nowPlaying: NowPlayingProvider
     let fullscreen: FullscreenObserver
     let notchLocalFrame: CGRect
-    /// Phase 6 Plan 02 (D-01..D-04): `calendar` feeds the synthetic pill's
-    /// center-slot meeting countdown (`SyntheticPillLayout.centerText`);
-    /// `mode` selects which branch of `body` renders — the physical pill is
-    /// untouched, the synthetic pill is new. Both are unused by the physical
-    /// branch.
+    /// Phase 6 Plan 02 (D-01..D-04): `calendar` is passed through to
+    /// `SyntheticPillLayout.centerText`, which no longer reads it (2026-09-12, thread 13 — the
+    /// calendar left the idle pill entirely) but keeps the parameter since
+    /// `NotchPanelController.swift` shares that call site and is off-limits this task; `mode`
+    /// selects which branch of `body` renders — the physical pill is untouched, the synthetic
+    /// pill is new. Both are unused by the physical branch.
     let calendar: CalendarProvider
     let mode: NotchGeometry.Mode
     /// Phase 6 Plan 03 (D-06): the screen this view is drawn on. Every suppression/glow read

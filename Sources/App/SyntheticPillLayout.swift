@@ -94,29 +94,23 @@ enum SyntheticPillLayout {
         pillWidth(idleWidth: idleWidth, scale: scale, showsArtwork: true, showsWave: true, showsCenter: true, showsTimer: true)
     }
 
-    /// 2026-09-12 Amendment #2 ("Centre slot decoupled from the timer") center-slot rule: the
-    /// next-meeting countdown when, and only when, that meeting is inside its own threshold-bump
-    /// window (`ThresholdScheduler.isWithinBumpWindow`, 900s/15m — an already-running meeting
-    /// always qualifies), otherwise the Now Playing title/artist while music plays, otherwise nil
-    /// (the idle dot). `timer.isRunning` plays no part in this priority order — a distant meeting
-    /// no longer appears just because a timer started, and a close meeting no longer disappears
-    /// just because a timer was reset.
+    /// 2026-09-12 ("Calendar leaves the idle pill entirely", thread 13) center-slot rule: the Now
+    /// Playing title/artist while music plays, otherwise nil (the idle dot). The next meeting is
+    /// deliberately NOT surfaced here any more — a title alone carries no information the user
+    /// doesn't already have, and a scrolling marquee for it is an attention trap in peripheral
+    /// vision; the calendar is an alert (`CalendarProvider.onThresholdCrossed`'s HUD bump at
+    /// 1h/15m/at-start) now, not ambient centre-slot content.
     ///
-    /// The `timer:` parameter is retained but unused in this body: `NotchPanelController.swift`
-    /// also calls this function and is off-limits to a concurrent executor's edits during this
-    /// task, so the signature-hygiene removal the spec calls for is deferred to a future edit of
-    /// that file.
+    /// The `timer:` and `calendar:` parameters are retained but unused in this body:
+    /// `NotchPanelController.swift` also calls this function and is off-limits to a concurrent
+    /// executor's edits during this task, so the signature-hygiene removal is deferred to a
+    /// future edit of that file.
     static func centerText(
         timer: TimerViewModel,
         calendar: CalendarProvider,
         nowPlaying: NowPlayingProvider,
         earVisible: Bool
     ) -> String? {
-        if let event = calendar.displayedEvents.first,
-           ThresholdScheduler.isWithinBumpWindow(remaining: event.startDate.timeIntervalSinceNow),
-           let countdown = calendar.countdowns[event.id] {
-            return countdown == "now" ? "\(event.title) now" : "\(event.title) in \(countdown)"
-        }
         if earVisible {
             let model = nowPlaying.currentModel
             let text = NowPlayingFormatting.earText(title: model?.title, artist: model?.artist)

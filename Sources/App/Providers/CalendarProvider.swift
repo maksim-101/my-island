@@ -287,7 +287,7 @@ final class CalendarProvider {
         }
     }
 
-    // MARK: - 15m/5m/1m threshold-bump scheduling (Pattern 3)
+    // MARK: - 1h/15m/at-start threshold-bump scheduling (Pattern 3)
 
     /// Invalidates any pending threshold timer and re-derives the pending fire
     /// dates from the current `nextEvent` via `ThresholdScheduler.pendingFireDates`
@@ -331,23 +331,33 @@ final class CalendarProvider {
         // .default mode is silently starved while the run loop sits in event
         // tracking (hover/menu), and an idle agent app's timers get coalesced by
         // App Nap — both would drop a bump on the floor.
-        timer.tolerance = 1
+        //
+        // The at-start (zero-offset) fire gets NO tolerance, unlike the 1h/15m ones: a
+        // `refreshNextEvent()` reschedule (e.g. the 20-minute `fallbackTimer`) landing in the
+        // ~1s window this timer's tolerance would otherwise grant invalidates it (top of
+        // `rescheduleThresholds()`) before it fires — `events.first(where: { $0.startDate >
+        // .now })` no longer matches the now-started event, so nothing re-arms it. Zero
+        // tolerance shrinks that window to ordinary timer jitter instead of a full second.
+        timer.tolerance = (next == event.startDate) ? 0 : 1
         RunLoop.main.add(timer, forMode: .common)
         thresholdTimer = timer
     }
 
-    /// Records the fired date, invokes `onThresholdCrossed` with the
-    /// "{title} in {N}m" text (title truncation is HUDPillView's job via
-    /// `.lineLimit(1)`), then arms the next pending threshold for the same
-    /// event. Guards against a stale timer firing after `nextEvent` has
-    /// already moved on to a different event.
+    /// Records the fired date, invokes `onThresholdCrossed` with the "{title} in {N}m" text (or
+    /// "{title} now" at the at-start threshold — title truncation is HUDPillView's job via
+    /// `.lineLimit(1)`), then arms the next pending threshold for the same event. Guards against
+    /// a stale timer firing after `nextEvent` has already moved on to a different event.
     private func fireThreshold(fireDate: Date, event: CalendarEventModel) {
         guard events.contains(where: { $0.id == event.id }) else {
             return
         }
         firedThresholds.insert(fireDate)
         let unit = RelativeTimeFormat.string(remaining: event.startDate.timeIntervalSince(fireDate), rounding: .nearest)
-        onThresholdCrossed?("\(event.title) in \(unit)")
+        // RelativeTimeFormat already returns "now" for the at-start (zero-remaining) threshold —
+        // "in now" reads wrong, so drop the "in" for that case (mirrors the same idiom at
+        // SyntheticPillLayout.swift's Now Playing/countdown text) rather than a new zero check.
+        let text = unit == "now" ? "\(event.title) now" : "\(event.title) in \(unit)"
+        onThresholdCrossed?(text)
         armNextThreshold(for: event)
     }
 
