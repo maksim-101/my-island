@@ -107,20 +107,25 @@ struct NotchBarView: View {
             // pixels. While `isFrontmostFullscreenHere` (the same signal driving the built-in's
             // own notch-locator glow, not the narrower `isAmbientSuppressed`) is true, the pill
             // withdraws to a 4pt glowing `Capsule` marker instead of drawing content.
+            //
+            // 20260912 (sliver-stuck-and-popover-glow) — `&& !model.isOpen` added: the open
+            // popover already covers this area, so the sliver has no job to do while it's up —
+            // same idiom `pill`'s own content gate and `syntheticPill`'s `if !model.isOpen` below
+            // already use.
             VStack(spacing: 0) {
                 Group {
-                    if isFrontmostFullscreenHere {
+                    if showsFullscreenSliver {
                         fullscreenSliver
                     } else {
                         syntheticPill
                             .transition(.opacity)
                     }
                 }
-                .frame(height: isFrontmostFullscreenHere ? SyntheticPillLayout.fullscreenSliverHeight : notchLocalFrame.height)
+                .frame(height: showsFullscreenSliver ? SyntheticPillLayout.fullscreenSliverHeight : notchLocalFrame.height)
                 Spacer(minLength: 0)
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .animation(NotchLayout.morphAnimation, value: isFrontmostFullscreenHere)
+            .animation(NotchLayout.morphAnimation, value: showsFullscreenSliver)
             .onChange(of: isFrontmostFullscreenHere) { _, newValue in
                 pillDiagLogger.notice("""
                     sliverState display=\(displayID.map(String.init) ?? "none", privacy: .public) \
@@ -155,6 +160,16 @@ struct NotchBarView: View {
     /// consuming sites below (the `if` and the `.animation` trigger) so they can never disagree.
     private var isFrontmostFullscreenHere: Bool { fullscreen.isFrontmostFullscreen(on: displayID) }
 
+    /// 20260912 (sliver-stuck-and-popover-glow): what the synthetic branch actually RENDERS as
+    /// the sliver — `isFrontmostFullscreenHere` gated on the panel being collapsed. Kept separate
+    /// from `isFrontmostFullscreenHere` itself so the `sliverState` diagnostic log (which tracks
+    /// the raw detection signal, not the render gate) is unaffected by this change.
+    private var showsFullscreenSliver: Bool { isFrontmostFullscreenHere && !model.isOpen }
+
+    /// 20260912 (sliver-stuck-and-popover-glow): the physical branch's counterpart to
+    /// `showsFullscreenSliver` — gates the notch-locator glow overlay on the panel being closed.
+    private var showsFullscreenGlow: Bool { isFrontmostFullscreenHere && !model.isOpen }
+
     private var physicalBody: some View {
         VStack(spacing: 0) {
             pill
@@ -163,7 +178,10 @@ struct NotchBarView: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .overlay(alignment: .topLeading) {
-            if isFrontmostFullscreenHere {
+            // 20260912 (sliver-stuck-and-popover-glow) — `&& !model.isOpen` added: the open
+            // popover already covers the notch area, so the locator glow has no job to do while
+            // it's up — same idiom as `pill`'s own content gate and `syntheticPill`'s below.
+            if showsFullscreenGlow {
                 // topCornerRadius: 0, NOT `pill`'s 6 — see 260801-7h2-regressions round 3.
                 // `NotchShape.path(in:)` draws its top corners CONCAVE (the "ear" flowing into the
                 // physical camera housing), which keeps the LEFT/RIGHT vertical edges inset from
@@ -190,7 +208,7 @@ struct NotchBarView: View {
                     .allowsHitTesting(false)
             }
         }
-        .animation(.easeInOut(duration: 0.25), value: isFrontmostFullscreenHere)
+        .animation(.easeInOut(duration: 0.25), value: showsFullscreenGlow)
     }
 
     private var pill: some View {
