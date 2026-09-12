@@ -111,6 +111,24 @@ public enum NotchGeometry {
         )
     }
 
+    /// 260912 iterm2-fullscreen-detection: whether `bounds` fills `displayBounds` from
+    /// `topInset` down (0 = the literal full display, the notch/safe-area height, or the plain
+    /// menu-bar height are the three candidates `FullscreenObserver` tries per screen), within
+    /// `tolerance` on every edge. Used to widen fullscreen detection to also accept a merely
+    /// maximized window — a deliberate, user-confirmed tradeoff, not a false-positive bug.
+    public static func fillsDisplay(bounds: CGRect, displayBounds: CGRect, topInset: CGFloat, tolerance: CGFloat) -> Bool {
+        let candidate = CGRect(
+            x: displayBounds.minX,
+            y: displayBounds.minY + topInset,
+            width: displayBounds.width,
+            height: displayBounds.height - topInset
+        )
+        return abs(bounds.minX - candidate.minX) <= tolerance &&
+            abs(bounds.minY - candidate.minY) <= tolerance &&
+            abs(bounds.width - candidate.width) <= tolerance &&
+            abs(bounds.height - candidate.height) <= tolerance
+    }
+
     public static func resolveMode(
         screenFrame: CGRect,
         auxiliaryTopLeftMaxX: CGFloat?,

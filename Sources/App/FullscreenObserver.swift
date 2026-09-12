@@ -35,18 +35,18 @@ import MyIslandCore
 /// effect the ENTIRE time, reintroducing the exact maximized-window false positive it was meant to
 /// only reintroduce in a rare degraded state.
 ///
-/// The round-2 fix (`isGenuineFullscreen`) makes the PRIMARY disambiguator SkyLight's
-/// `CGSCopyManagedDisplaySpaces` — a private but permission-free API (no TCC prompt, ever) that
-/// reports, per display, the currently-active managed Space's `type` and (for fullscreen spaces)
-/// the owning process's `pid`. Measured directly across 4 states on this hardware: a merely-
-/// maximized window leaves the Space `type` at `0` (ordinary desktop) exactly like a small
-/// windowed tab does, while BOTH plain Safari-native fullscreen AND nested element/video
-/// fullscreen (`WKFullScreenWindowController`, e.g. fullscreening a YouTube video inside an
-/// already-fullscreen Safari window) put the display's current Space at `type == 4` with `pid`
-/// equal to the owning app — a clean, unconditional, permission-free signal. AX `AXFullScreen` is
-/// kept as a SECONDARY fallback only for the case SkyLight's private symbols fail to resolve (a
-/// future OS could remove them, unlikely but not guaranteed); accepting the bounds match
-/// unconditionally remains the final, last-resort fallback if BOTH are unavailable.
+/// The round-2 fix used SkyLight's `CGSCopyManagedDisplaySpaces` — a private but permission-free
+/// API (no TCC prompt, ever) that reports, per display, the currently-active managed Space's
+/// `type` and (for fullscreen spaces) the owning process's `pid` — as the disambiguator for a
+/// bounds match that excluded the notch/menu-bar strip: a merely-maximized window leaves the
+/// Space `type` at `0` (ordinary desktop) exactly like a small windowed tab does, while BOTH plain
+/// Safari-native fullscreen AND nested element/video fullscreen (`WKFullScreenWindowController`,
+/// e.g. fullscreening a YouTube video inside an already-fullscreen Safari window) put the
+/// display's current Space at `type == 4` with `pid` equal to the owning app. **260912
+/// superseded:** that disambiguation (`isGenuineFullscreen`, AX `AXFullScreen` as its secondary
+/// fallback) is removed — see the widening note below. The SkyLight Space check itself
+/// (`fullscreenSpaceCheck`) remains, now as the unconditional PRIMARY signal rather than a
+/// disambiguator nested inside the bounds loop.
 ///
 /// `isAmbientSuppressed` (T-7h2 Task 2) additionally reads AX facts — but ONLY when the frontmost
 /// app is fullscreen AND is a browser AND Accessibility is granted (`AXIsProcessTrusted()`); a
@@ -65,6 +65,19 @@ import MyIslandCore
 /// autonomously"). An untrusted state degrades to `isAmbientSuppressed ==
 /// isFrontmostFullscreen`'s old behavior for non-browsers and to never-suppress for browsers —
 /// i.e. today's behavior, never a crash or a permanent hide.
+///
+/// **260912 iterm2-fullscreen-detection widening:** the round-2 "genuine fullscreen" disambiguator
+/// (`isGenuineFullscreen`, now removed) rejected iTerm2's Cmd+Return fullscreen because it never
+/// creates a real macOS Space (`isOnFullscreenSpace` measured `false` for it, 6/6 occurrences) —
+/// structurally identical, by that check, to a merely maximized window. User's explicit decision:
+/// widen fullscreen detection to accept ANY frontmost window whose bounds fill a display's frame
+/// minus some top strip (the literal full bounds, the notch/safe-area height, or the plain
+/// menu-bar height), deliberately including merely-maximized windows — told explicitly this was
+/// the tradeoff and chose it anyway. `classify()` now runs the SkyLight Space check
+/// (`isOnFullscreenSpace`) FIRST, unconditionally — previously nested inside the bounds loop's
+/// notch-excluded arm, which was dead code on any notchless display (required `safeAreaTop > 0`).
+/// A confirmed genuine Space resolves fullscreen bounds-independently; everything else falls
+/// through to the widened, ungated bounds-fill check.
 // 260801-7h2-regressions round 3 (SUPPRESSION-STALENESS): this class was never marked
 // `@Observable`, unlike every sibling provider `NotchBarView` reads (`NowPlayingProvider`,
 // `TimerViewModel`, `NotchViewModel` are all `@MainActor @Observable`) — and `onChange` (below) is
@@ -240,14 +253,17 @@ final class FullscreenObserver {
             fullscreen=\(self.isFrontmostFullscreen, privacy: .public) \
             suppressed=\(self.isAmbientSuppressed, privacy: .public) \
             displayID=\(self.fullscreenDisplayID.map(String.init) ?? "none", privacy: .public) \
+            via=\(result.via, privacy: .public) \
             bundleID=\(result.bundleID ?? "none", privacy: .public) \
             isBrowser=\(isBrowser, privacy: .public) \
             axTrusted=\(axTrusted, privacy: .public) \
             subrole=\(axSubrole ?? "none", privacy: .public) \
             titleEmpty=\(axTitleIsEmpty.map(String.init) ?? "none", privacy: .public) \
             foundOwnedWindow=\(result.foundOwnedWindow, privacy: .public) \
-            boundsMatchedScreen=\(result.boundsMatched, privacy: .public)
+            boundsMatchedScreen=\(result.boundsMatched, privacy: .public) \
+            onFullscreenSpace=\(result.onFullscreenSpaceRaw.map(String.init) ?? "nil", privacy: .public)
             """)
+
         onChange?()
     }
 
@@ -259,9 +275,17 @@ final class FullscreenObserver {
         var foundOwnedWindow = false
         var boundsMatched = false
         var hasUsableWindowInfo = false
-        /// Phase 6 Plan 03 (D-06): the display `screenMatch` matched the fullscreen bounds
-        /// against, set on both the `.exact` and confirmed `.notchExcluded` returns.
+        /// Phase 6 Plan 03 (D-06): the display `screenMatch`/the Space check matched the
+        /// fullscreen window against.
         var displayID: CGDirectDisplayID?
+        /// Raw `isOnFullscreenSpace(pid:)` result for the frontmost PID — logged unconditionally
+        /// (260912) so a human can tell a genuine geometry/layer miss apart from a Lion-style
+        /// (non-Space) fullscreen window without needing a separate debug build.
+        var onFullscreenSpaceRaw: Bool?
+        /// 260912: which detection path resolved `isFullscreen` — `"space"` (SkyLight genuine
+        /// fullscreen Space, bounds-independent), `"bounds"` (the widened fill check), or
+        /// `"none"` when nothing matched.
+        var via: String = "none"
     }
 
     private static func classify(axTrusted: Bool) -> ClassificationResult {
@@ -275,6 +299,22 @@ final class FullscreenObserver {
         result.bundleURL = frontmost.bundleURL
         let frontmostPID = frontmost.processIdentifier
 
+        // PRIMARY, bounds-independent signal (260912 fix): SkyLight's `CGSCopyManagedDisplaySpaces`
+        // reports whether this pid genuinely owns a fullscreen Space, regardless of what any
+        // window's on-screen bounds happen to read this poll. Previously this was only ever
+        // consulted from inside the bounds loop's notch-excluded arm below — dead code on any
+        // notchless display (required `safeAreaTop > 0`) and never reached at all when no
+        // window's bounds matched. Checking it here first fixes both.
+        let spaceCheck = Self.fullscreenSpaceCheck(pid: frontmostPID)
+        result.onFullscreenSpaceRaw = spaceCheck.isOnFullscreenSpace
+        if spaceCheck.isOnFullscreenSpace == true {
+            result.isFullscreen = true
+            result.displayID = spaceCheck.displayID
+            result.via = "space"
+            result.hasUsableWindowInfo = true
+            return result
+        }
+
         let options: CGWindowListOption = [.optionOnScreenOnly, .excludeDesktopElements]
         guard let windowList = CGWindowListCopyWindowInfo(options, kCGNullWindowID) as? [[String: AnyObject]] else {
             return result
@@ -286,71 +326,43 @@ final class FullscreenObserver {
                   ownerPID == frontmostPID else { continue }
             guard let layer = windowInfo[kCGWindowLayer as String] as? Int,
                   layer == normalWindowLayer else { continue }
+            // 260912: a fully transparent window must never count as fullscreen content — the
+            // Vivaldi trace showed a 1728x32 alpha=0 window alongside its real content window.
+            let alpha = windowInfo[kCGWindowAlpha as String] as? Double ?? 1
+            guard alpha != 0 else { continue }
             guard let boundsDict = windowInfo[kCGWindowBounds as String] as? [String: Any],
                   let bounds = CGRect(dictionaryRepresentation: boundsDict as CFDictionary) else { continue }
 
             result.foundOwnedWindow = true
 
-            let match = screenMatch(bounds: bounds)
-            switch match.kind {
-            case .exact:
-                // Window covers the ENTIRE display, menu-bar strip included — only real
-                // fullscreen (or a borderless overlay) does that; a zoomed window never does.
+            // SECONDARY, widened signal (260912, user decision): a window whose bounds fill a
+            // display's frame minus SOME top strip (the literal full bounds, the notch/safe-area
+            // height, or the plain menu-bar height) counts as fullscreen — unconditionally, no
+            // "genuine Space" gate. This deliberately also catches a merely maximized window
+            // (UAT 2026-07-31's original concern) — the user was told that tradeoff explicitly
+            // and chose it anyway (iTerm2's Cmd+Return fullscreen never creates a real Space, so
+            // the old gate rejected it outright).
+            if let match = screenMatch(bounds: bounds) {
                 result.boundsMatched = true
                 result.isFullscreen = true
-                result.displayID = match.displayID
+                result.displayID = match
+                result.via = "bounds"
                 return result
-            case .notchExcluded:
-                // Bounds == display minus the menu-bar/notch strip. A REAL fullscreen app on a
-                // notched display reports exactly this — but so does a merely MAXIMIZED (green-
-                // zoom) window with the Dock auto-hidden (UAT 2026-07-31: Apple Music maximized was
-                // misread as fullscreen and the Now Playing ear was wrongly suppressed).
-                //
-                // 260801-7h2-regressions round 1 disambiguated this with the AX `AXFullScreen`
-                // attribute, falling back to accepting the bounds match unconditionally when
-                // Accessibility was untrusted. Round 2 found that fallback was live 100% of the
-                // time in practice (Accessibility was never actually granted, across three
-                // different app builds/signing identities) — so the maximized-window false
-                // positive was back, confirmed live via the app's own log
-                // (`fullscreen=true ... boundsMatchedScreen=true` for a merely-maximized window).
-                //
-                // Fix: `isGenuineFullscreen` now checks SkyLight's `CGSCopyManagedDisplaySpaces`
-                // FIRST — permission-free (no TCC prompt, ever) and measured to discriminate
-                // cleanly: a merely-maximized window leaves the display's current Space at
-                // `type == 0` (ordinary desktop), while both plain Safari-native fullscreen AND
-                // nested element/video fullscreen put it at `type == 4` with `pid` equal to the
-                // owning app. AX `AXFullScreen` remains a secondary fallback (SkyLight symbols
-                // failing to resolve on some future OS), and accepting the bounds match
-                // unconditionally remains the final, last-resort fallback if both are unavailable.
-                if Self.isGenuineFullscreen(pid: frontmostPID, axTrusted: axTrusted) {
-                    result.boundsMatched = true
-                    result.isFullscreen = true
-                    result.displayID = match.displayID
-                    return result
-                }
-            case .none:
-                break
             }
         }
 
         return result
     }
 
-    private enum ScreenMatchKind { case none, exact, notchExcluded }
-
-    /// Whether `bounds` covers an entire screen — either exactly (an
-    /// ordinary fullscreen window) or the screen frame extended over its
-    /// safe-area/notch inset (RESEARCH Pitfall 4's documented false
-    /// negative: a notched built-in display can report fullscreen bounds
-    /// that exclude the safe area). Compared in Quartz's top-left-origin
-    /// display coordinate space via `CGDisplayBounds`, the SAME space
-    /// `CGWindowListCopyWindowInfo` reports bounds in — never
-    /// `NSScreen.frame`, which is Cocoa's bottom-left-origin space and would
-    /// silently misalign this comparison.
-    /// Phase 6 Plan 03 (D-06): also returns the `CGDirectDisplayID` of the matched screen — the
-    /// loop already computes it per iteration, so this is a refinement of the existing detector,
-    /// not a rewrite (`.none` carries no display).
-    private static func screenMatch(bounds: CGRect) -> (kind: ScreenMatchKind, displayID: CGDirectDisplayID?) {
+    /// Whether `bounds` fills a screen's frame minus one of that screen's own candidate top
+    /// strips (0 = the literal full display, its safe-area/notch height, or its menu-bar height —
+    /// deduplicated, since on this hardware the built-in's notch height and menu-bar height
+    /// happen to coincide). Compared in Quartz's top-left-origin display coordinate space via
+    /// `CGDisplayBounds`, the SAME space `CGWindowListCopyWindowInfo` reports bounds in — never
+    /// `NSScreen.frame`, which is Cocoa's bottom-left-origin space and would silently misalign
+    /// this comparison. Returns the matched screen's `CGDirectDisplayID`, or `nil` if no screen's
+    /// candidates match.
+    private static func screenMatch(bounds: CGRect) -> CGDirectDisplayID? {
         for screen in NSScreen.screens {
             guard let screenNumber = screen.deviceDescription[
                 NSDeviceDescriptionKey("NSScreenNumber")
@@ -358,30 +370,17 @@ final class FullscreenObserver {
             let displayID = CGDirectDisplayID(screenNumber.uint32Value)
             let displayBounds = CGDisplayBounds(displayID)
 
-            if approximatelyEqual(bounds, displayBounds) {
-                return (.exact, displayID)
-            }
+            var topInsets: Set<CGFloat> = [0]
+            if screen.safeAreaInsets.top > 0 { topInsets.insert(screen.safeAreaInsets.top) }
+            if screen.menuBarHeight > 0 { topInsets.insert(screen.menuBarHeight) }
 
-            let safeAreaTop = screen.safeAreaInsets.top
-            guard safeAreaTop > 0 else { continue }
-            let notchExcludedBounds = CGRect(
-                x: displayBounds.minX,
-                y: displayBounds.minY + safeAreaTop,
-                width: displayBounds.width,
-                height: displayBounds.height - safeAreaTop
-            )
-            if approximatelyEqual(bounds, notchExcludedBounds) {
-                return (.notchExcluded, displayID)
+            for inset in topInsets where NotchGeometry.fillsDisplay(
+                bounds: bounds, displayBounds: displayBounds, topInset: inset, tolerance: boundsTolerance
+            ) {
+                return displayID
             }
         }
-        return (.none, nil)
-    }
-
-    private static func approximatelyEqual(_ a: CGRect, _ b: CGRect) -> Bool {
-        abs(a.minX - b.minX) <= boundsTolerance &&
-        abs(a.minY - b.minY) <= boundsTolerance &&
-        abs(a.width - b.width) <= boundsTolerance &&
-        abs(a.height - b.height) <= boundsTolerance
+        return nil
     }
 
     /// Dynamic browser detection — no bundle-ID table (locked constraint: "dynamic, not
@@ -407,24 +406,6 @@ final class FullscreenObserver {
         return standardized
     }
 
-    /// Disambiguates a `.notchExcluded` bounds match (real fullscreen vs. a merely maximized
-    /// window with the Dock auto-hidden). PRIMARY signal (260801-7h2-regressions round 2):
-    /// SkyLight's `CGSCopyManagedDisplaySpaces` — permission-free, measured to discriminate
-    /// cleanly (see `isOnFullscreenSpace`). SECONDARY fallback, only when the SkyLight symbols
-    /// fail to resolve: the AX `AXFullScreen` attribute (round 1's fix) — untrusted, or any AX
-    /// read failure, resolves to `true` (accept the bounds match), the final last-resort fallback
-    /// that keeps the base signal permission-free even if BOTH SkyLight and AX are unavailable.
-    private static func isGenuineFullscreen(pid: pid_t, axTrusted: Bool) -> Bool {
-        if let onFullscreenSpace = isOnFullscreenSpace(pid: pid) {
-            return onFullscreenSpace
-        }
-        guard axTrusted else { return true }
-        let axApp = AXUIElementCreateApplication(pid)
-        guard let window = axWindowElement(axApp) else { return true }
-        guard let isFullscreen = axBool(window, "AXFullScreen") else { return true }
-        return isFullscreen
-    }
-
     // MARK: - SkyLight Spaces (permission-free fullscreen-Space confirmation)
 
     private typealias CGSMainConnectionIDFunction = @convention(c) () -> Int32
@@ -443,6 +424,18 @@ final class FullscreenObserver {
         return unsafeBitCast(symbol, to: CGSCopyManagedDisplaySpacesFunction.self)
     }()
 
+    private struct SpaceCheckResult {
+        /// `nil` (undetermined — callers should fall back to another signal, never treat as "not
+        /// fullscreen") only if the private symbols fail to resolve or the query itself fails.
+        var isOnFullscreenSpace: Bool?
+        /// The display hosting the matched fullscreen Space, resolved via the per-display dict's
+        /// own `"Display Identifier"` UUID string — confirmed live on this hardware (260912
+        /// probe) to match `CGDisplayCreateUUIDFromDisplayID`'s string form exactly, so this needs
+        /// no bounds lookup at all. `nil` when `isOnFullscreenSpace != true`, or when true but the
+        /// UUID couldn't be matched to a currently-connected `NSScreen`.
+        var displayID: CGDirectDisplayID?
+    }
+
     /// Whether `pid` currently owns a genuine fullscreen Space, per SkyLight's own per-display
     /// Spaces bookkeeping (260801-7h2-regressions round 2, measured directly across 4 states on
     /// notched hardware): a merely-maximized/zoomed window never creates a new Space — the
@@ -452,21 +445,29 @@ final class FullscreenObserver {
     /// an already-fullscreen browser) BOTH move the display onto a dedicated Space reported here
     /// as `type == 4`, whose dict carries a `pid` field equal to the owning process — checked
     /// across every connected display so this degrades gracefully on multi-display setups.
-    /// Returns `nil` (undetermined — callers should fall back to another signal, never treat as
-    /// "not fullscreen") only if the private symbols fail to resolve or the query itself fails.
-    private static func isOnFullscreenSpace(pid: pid_t) -> Bool? {
-        guard let cgsMainConnectionID, let cgsCopyManagedDisplaySpaces else { return nil }
+    private static func fullscreenSpaceCheck(pid: pid_t) -> SpaceCheckResult {
+        guard let cgsMainConnectionID, let cgsCopyManagedDisplaySpaces else {
+            return SpaceCheckResult(isOnFullscreenSpace: nil, displayID: nil)
+        }
         let connection = cgsMainConnectionID()
         guard let displays = cgsCopyManagedDisplaySpaces(connection)?.takeRetainedValue() as? [[String: Any]] else {
-            return nil
+            return SpaceCheckResult(isOnFullscreenSpace: nil, displayID: nil)
         }
         for display in displays {
             guard let currentSpace = display["Current Space"] as? [String: Any],
                   let type = currentSpace["type"] as? Int, type == 4,
                   let spacePID = currentSpace["pid"] as? Int, pid_t(spacePID) == pid else { continue }
-            return true
+            let uuid = display["Display Identifier"] as? String
+            return SpaceCheckResult(isOnFullscreenSpace: true, displayID: uuid.flatMap(Self.displayID(forUUIDString:)))
         }
-        return false
+        return SpaceCheckResult(isOnFullscreenSpace: false, displayID: nil)
+    }
+
+    /// Resolves a SkyLight `"Display Identifier"` UUID string back to the `CGDirectDisplayID` of
+    /// a currently-connected `NSScreen`, via the same `displayUUID` `CGDisplayCreateUUIDFromDisplayID`
+    /// string form `NSScreen+Notch.swift` already exposes.
+    private static func displayID(forUUIDString uuid: String) -> CGDirectDisplayID? {
+        NSScreen.screens.first { $0.displayUUID == uuid }?.displayID
     }
 
     // MARK: - AX reads (frontmost app's focused window only, read-only, never `kAXWindowsAttribute`)

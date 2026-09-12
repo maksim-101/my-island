@@ -181,6 +181,45 @@ import CoreGraphics
     #expect(result.size == CGSize(width: 197.33, height: 30))
 }
 
+// MARK: - 260912 iterm2-fullscreen-detection: widened fill detection (FullscreenObserver)
+
+@Test func fillsDisplayMatchesExactBounds() {
+    let displayBounds = CGRect(x: 0, y: 0, width: 1728, height: 1117)
+    #expect(NotchGeometry.fillsDisplay(bounds: displayBounds, displayBounds: displayBounds, topInset: 0, tolerance: 4))
+}
+
+@Test func fillsDisplayMatchesNotchOrMenuBarInset() {
+    let displayBounds = CGRect(x: 0, y: 0, width: 1728, height: 1117)
+    // iTerm2's measured bounds: 0,33,1728x1084 — fills the display minus a 33pt top strip
+    // (the built-in's notch/safe-area height, which on this hardware equals its menu-bar height).
+    let iterm2Bounds = CGRect(x: 0, y: 33, width: 1728, height: 1084)
+    #expect(NotchGeometry.fillsDisplay(bounds: iterm2Bounds, displayBounds: displayBounds, topInset: 33, tolerance: 4))
+    // Wrong inset must not match.
+    #expect(!NotchGeometry.fillsDisplay(bounds: iterm2Bounds, displayBounds: displayBounds, topInset: 0, tolerance: 4))
+}
+
+@Test func fillsDisplayToleratesSmallRoundingDrift() {
+    let displayBounds = CGRect(x: 0, y: 0, width: 1728, height: 1117)
+    let offByThree = CGRect(x: 3, y: 30, width: 1725, height: 1087)
+    #expect(NotchGeometry.fillsDisplay(bounds: offByThree, displayBounds: displayBounds, topInset: 33, tolerance: 4))
+}
+
+@Test func fillsDisplayRejectsBeyondTolerance() {
+    let displayBounds = CGRect(x: 0, y: 0, width: 1728, height: 1117)
+    let offByFive = CGRect(x: 5, y: 28, width: 1723, height: 1089)
+    #expect(!NotchGeometry.fillsDisplay(bounds: offByFive, displayBounds: displayBounds, topInset: 33, tolerance: 4))
+}
+
+@Test func fillsDisplayRejectsNarrowStrip() {
+    // The Vivaldi trace's own 1728x32 alpha=0 strip window — must never be mistaken for a
+    // fullscreen-filling window regardless of inset tried (this is the shape rejection; the
+    // alpha==0 exclusion itself lives in FullscreenObserver, not here).
+    let displayBounds = CGRect(x: 0, y: 0, width: 1728, height: 1117)
+    let strip = CGRect(x: 0, y: 0, width: 1728, height: 32)
+    #expect(!NotchGeometry.fillsDisplay(bounds: strip, displayBounds: displayBounds, topInset: 0, tolerance: 4))
+    #expect(!NotchGeometry.fillsDisplay(bounds: strip, displayBounds: displayBounds, topInset: 33, tolerance: 4))
+}
+
 @Test func collapsedHoverRectEqualsContainerWhenAlreadyCollapsed() {
     // Once the window itself has finished collapsing, container == notch
     // size — the hover rect degenerates to the full container, matching
