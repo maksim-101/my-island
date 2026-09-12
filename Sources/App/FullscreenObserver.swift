@@ -129,6 +129,10 @@ final class FullscreenObserver {
     // touched there (mirrors `BrightnessProvider.pollTimer`).
     nonisolated(unsafe) private var pollTimer: Timer?
 
+    // 20260912 (sliver-stuck-and-popover-glow, Task 3): same nonisolated-from-deinit shape as
+    // `pollTimer` above — `NotificationCenter.removeObserver` is thread-agnostic.
+    nonisolated(unsafe) private var spaceChangeObserver: NSObjectProtocol?
+
     private let logger = AppLog.make("FullscreenObserver")
 
     /// Points of slack on each edge for the bounds-match comparison — a real
@@ -153,10 +157,38 @@ final class FullscreenObserver {
         // the permission-free PRIMARY fullscreen signal and AX is only the secondary fallback.
         refresh(isFirstQuery: true)
         startPolling()
+
+        // 20260912 (sliver-stuck-and-popover-glow, Task 3): the coordinator's own repro —
+        // switching Spaces on the Dell briefly showed the full pill before collapsing to the
+        // sliver. The 1s poll (above) means a Space switch's new fullscreen state isn't observed
+        // until the next tick, so the stale pre-switch frame renders for up to a second. This
+        // fires the SAME `refresh()` the poll calls, immediately on the notification, so the two
+        // paths can never disagree — the poll stays as-is as the backstop for transitions with no
+        // Space event at all (`via=bounds`, e.g. iTerm2's Cmd+Return pseudo-fullscreen never
+        // creates a real Space). Per RESEARCH Pitfall 4 (measured on this codebase:
+        // `CGWindowListCopyWindowInfo` can report Mission-Control miniature bounds mid-transition),
+        // this notification-triggered read can itself still catch the ~0.5s transition window —
+        // the following poll tick is what corrects it, same as it always has for any other
+        // transient misread.
+        spaceChangeObserver = NSWorkspace.shared.notificationCenter.addObserver(
+            forName: NSWorkspace.activeSpaceDidChangeNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            // `queue: .main` only guarantees runtime dispatch to the main queue, not compile-time
+            // actor isolation — mirrors `NotchPanelController`'s identical
+            // `didChangeScreenParametersNotification` observer's `Task { @MainActor in ... }` hop.
+            Task { @MainActor in
+                self?.refresh(isFirstQuery: false)
+            }
+        }
     }
 
     deinit {
         pollTimer?.invalidate()
+        if let spaceChangeObserver {
+            NSWorkspace.shared.notificationCenter.removeObserver(spaceChangeObserver)
+        }
     }
 
     /// Phase 6 Plan 03 (D-06): `true` on the display currently hosting a fullscreen window.

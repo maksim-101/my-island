@@ -124,8 +124,16 @@ struct NotchBarView: View {
                 .frame(height: showsFullscreenSliver ? SyntheticPillLayout.fullscreenSliverHeight : notchLocalFrame.height)
                 Spacer(minLength: 0)
             }
+            // 20260912 (sliver-stuck-and-popover-glow, Task 3): the `.animation` that used to
+            // morph this sliver↔pill toggle is removed — a Space switch on the Dell briefly showed
+            // the full pill (stale pre-switch state, corrected by the immediate
+            // `activeSpaceDidChangeNotification` refresh in `FullscreenObserver`) then animated
+            // down to the sliver, reading as a glitch rather than a clean cut. This transition now
+            // snaps. Every other `NotchLayout.morphAnimation` use (the live width/scale morphs
+            // inside `syntheticPill` itself, driven by hover/dwell) and `physicalBody`'s
+            // `.easeInOut` glow fade are untouched — neither was implicated in this report and
+            // both are specified by `06-UI-SPEC.md`.
             .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .animation(NotchLayout.morphAnimation, value: showsFullscreenSliver)
             .onChange(of: isFrontmostFullscreenHere) { _, newValue in
                 pillDiagLogger.notice("""
                     sliverState display=\(displayID.map(String.init) ?? "none", privacy: .public) \
