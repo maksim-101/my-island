@@ -225,17 +225,20 @@ final class NotchPanelController: NSObject {
         logger.notice("reconcile added=\(diff.added.count, privacy: .public) removed=\(diff.removed.count, privacy: .public) rebuilt=\(rebuilt, privacy: .public) kept=\(kept, privacy: .public) total=\(self.panelSets.count, privacy: .public)")
     }
 
-    /// Cancels pending hover/dwell work items and orders out all three windows for a panel set —
-    /// the same three steps the old full-teardown loop performed per screen, extracted so both the
-    /// reconcile's `removed` and `rebuilt` paths share it. The set leaving `panelSets` (the
-    /// caller's `removeValue(forKey:)`) is what lets ARC free the windows afterward — no ghost.
+    /// Cancels pending hover/dwell work items and closes all three windows for a panel set — the
+    /// same three steps the old full-teardown loop performed per screen, extracted so both the
+    /// reconcile's `removed` and `rebuilt` paths share it. `close()` (not `orderOut(nil)`, which
+    /// only hides a window) is what detaches each window from AppKit's own window list — that
+    /// detach, combined with the set leaving `panelSets` (the caller's `removeValue(forKey:)`), is
+    /// what lets ARC actually free the windows afterward. `isReleasedWhenClosed = false` on all
+    /// three window kinds is exactly what makes this caller-driven `close()` safe.
     private func tearDown(_ set: PanelSet) {
         set.panel.pendingCollapse?.cancel()
         set.panel.pendingDwellOpen?.cancel()
         set.panel.pendingHoverClose?.cancel()
-        set.panel.orderOut(nil)
-        set.bar.orderOut(nil)
-        set.hud.orderOut(nil)
+        set.panel.close()
+        set.bar.close()
+        set.hud.close()
     }
 
     /// Builds a fresh `PanelSet` for one screen — extracted from the old inline creation loop so
