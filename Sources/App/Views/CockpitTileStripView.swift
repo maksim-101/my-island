@@ -133,8 +133,11 @@ struct CockpitTileStripView: View {
 
     private var calendarValue: String {
         guard let event = calendar.events.first else { return "None" }
-        let short = event.title.split(separator: " ").first.map(String.init) ?? event.title
-        return "\(Self.compactCountdown(to: event.startDate)) \u{00B7} \(short)"
+        // 06-UI-SPEC.md "Panel Content — Calendar Title Truncation": the full title, truncated by
+        // the tile's own .lineLimit(1)/.truncationMode(.tail) against its real rendered width —
+        // not a fixed one-word guess. Achievable ceiling: ~18 chars of title at two tiles, ~9 at
+        // three (narrower when Now Playing is also visible).
+        return "\(Self.compactCountdown(to: event.startDate)) \u{00B7} \(event.title)"
     }
 
     private var nowPlayingValue: String {

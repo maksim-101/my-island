@@ -83,12 +83,31 @@ private struct EventPillView: View {
             Button {
                 openInCalendar()
             } label: {
-                HStack(spacing: Tokens.Spacing.sm) {
-                    Text(chipText)
+                HStack(spacing: Tokens.Spacing.xs) {
+                    // 06-UI-SPEC.md "Panel Content — Calendar Title Truncation": explicit priority
+                    // order, title highest, location droppable first. Title raised above the
+                    // HStack's implicit default (0) so it is the last thing SwiftUI shrinks; Time
+                    // is .fixedSize() so it always renders in full; Location is left at the
+                    // default priority so it degrades before Title ever loses a character.
+                    Text(event.title)
                         .font(Tokens.Font.bodyMD)
                         .foregroundStyle(Tokens.Color.text)
                         .lineLimit(1)
                         .truncationMode(.tail)
+                        .layoutPriority(2)
+
+                    if let location = event.location, !location.isEmpty {
+                        Text("— \(location)")
+                            .font(Tokens.Font.bodyMD)
+                            .foregroundStyle(Tokens.Color.text)
+                            .lineLimit(1)
+                            .truncationMode(.tail)
+                    }
+
+                    Text("\u{00B7} \(Self.timeFormatter.string(from: event.startDate))")
+                        .font(Tokens.Font.bodyMD)
+                        .foregroundStyle(Tokens.Color.text)
+                        .fixedSize()
 
                     Spacer(minLength: Tokens.Spacing.sm)
 
@@ -159,14 +178,6 @@ private struct EventPillView: View {
         process.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
         process.arguments = ["-e", script]
         try? process.run()
-    }
-
-    private var chipText: String {
-        let time = Self.timeFormatter.string(from: event.startDate)
-        if let location = event.location, !location.isEmpty {
-            return "\(event.title) — \(location) \u{00B7} \(time)"
-        }
-        return "\(event.title) \u{00B7} \(time)"
     }
 
     private static let timeFormatter: DateFormatter = {
