@@ -649,11 +649,15 @@ final class NotchPanelController: NSObject {
         }
     }
 
+    /// 2026-09-12 amendment ("Hotkey scope" — supersedes D-07's "the global hotkey opens every
+    /// panel"): resolves the panel under `NSEvent.mouseLocation`, the identical gate
+    /// `NotchPanel.canBecomeKey` already uses, and toggles only that one island. Every other
+    /// island's `HoverDwell` state is untouched. No fallback state needed — the pointer always
+    /// resolves to exactly one screen, the same assumption `canBecomeKey` already relies on.
     func toggle() {
+        guard let panel = panels.first(where: { $0.screenFrame.contains(NSEvent.mouseLocation) }) else { return }
         withAnimation(NotchLayout.morphAnimation) {
-            for panel in panels {
-                panel.viewModel?.toggle()
-            }
+            panel.viewModel?.toggle()
         }
     }
 
