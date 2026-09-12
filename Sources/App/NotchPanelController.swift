@@ -17,11 +17,20 @@ final class NotchPanelController: NSObject {
         let model: NotchViewModel
     }
     private var panelSets: [String: PanelSet] = [:]
-    /// 20260912 (hide-through-space-switch): armed on every `hideThroughSpaceSwitch`, cancelled on
-    /// every `restoreAfterSpaceSwitch` — the fail-toward-visible backstop. 1.0s matches
-    /// `FullscreenObserver`'s existing 1Hz poll: by then that poll has independently resolved
-    /// fullscreen state even if both the fast-poll and notification-based restore signals were
-    /// somehow lost, so the island is never left hidden indefinitely.
+    /// 20260912 (hide-through-space-switch, bumped 20260912-hide-during-space-slide): armed on
+    /// every `hideThroughSpaceSwitch`, cancelled on every `restoreAfterSpaceSwitch` — the
+    /// fail-toward-visible backstop. Was 1.0s when the only hide trigger was the ~300-370ms-late
+    /// tail signal (CGS identity flip / notification). Now that `FullscreenObserver`'s new
+    /// bounds-based slide detector can hide as early as slide-start+~100ms, a hide from THAT
+    /// trigger plus the OLD 1.0s deadline would fire at slide-start+~1100ms — squarely inside the
+    /// ~1010-1110ms window where the CGS per-display identity poll (measured in
+    /// `20260912-hide-through-space-switch`: flips ~29ms after the ~950-1000ms slide ends)
+    /// independently re-arms the SAME hide via another `hideThroughSpaceSwitch` call. Left at 1.0s,
+    /// a real switch would restore alpha to 1 (showing the stale, now-settled content) right before
+    /// the CGS-triggered re-hide snapped it back to 0 — a NEW, worse flash than the one this file
+    /// exists to close. 1.5s clears that window with margin. Trade-off, stated plainly: a
+    /// slide-detector false positive with no real Space switch following it now blanks the pill for
+    /// up to 1.5s (was 1.0s) before this backstop restores it.
     private var spaceSwitchHideTimeout: DispatchWorkItem?
     // Kept so `toggle()`/`handleMouseMoved()`/`applyHover` — which only ever
     // need "every panel", not the key — compile unchanged against the new
@@ -152,15 +161,18 @@ final class NotchPanelController: NSObject {
             }
         }
 
-        // 20260912 (hide-through-space-switch): measured directly (see that task's SUMMARY) —
-        // `.stationary` (restored this task) keeps all three windows fixed on screen through a
-        // Space switch's ~1s visible OS slide, showing stale pre-switch content the whole time.
-        // Neither signal FullscreenObserver can offer fires before or during that slide; hiding on
-        // `onSpaceChangeDetected` (the earliest available, ~300-370ms ahead of the old
-        // notification-only reaction) and restoring on `onSpaceSettled` converts that tail from
-        // "visibly wrong content" to "briefly absent," per the user's own stated preference — it
-        // does NOT suppress the ~1s mid-slide portion itself, which remains visible; see the
-        // SUMMARY for why no earlier permission-free signal exists.
+        // 20260912 (hide-through-space-switch, extended 20260912-hide-during-space-slide):
+        // `.stationary` keeps all three windows fixed on screen through a Space switch's
+        // ~950-1000ms visible OS slide, showing stale pre-switch content the whole time unless
+        // hidden. `onSpaceChangeDetected` now fires from TWO sources in `FullscreenObserver`: its
+        // original CGS per-display identity poll (fires at the slide's tail, ~300-370ms ahead of
+        // the old notification-only reaction) and a newer bounds-based slide detector (fires
+        // within ~100ms of the slide STARTING). Both call this same closure — a second call while
+        // already hidden is a harmless re-arm of the timeout in `hideThroughSpaceSwitch`, see that
+        // method's updated 1.5s timeout comment for why the deadline was bumped to absorb it.
+        // Restoring on `onSpaceSettled` converts the measured window (now most of the slide, not
+        // just its tail) from "visibly wrong content" to "briefly absent," per the user's stated
+        // preference.
         fullscreenObserver.onSpaceChangeDetected = { [weak self] displayIDs in
             self?.hideThroughSpaceSwitch(affecting: displayIDs)
         }
@@ -358,7 +370,7 @@ final class NotchPanelController: NSObject {
             self?.restoreAfterSpaceSwitch(reason: "timeout")
         }
         spaceSwitchHideTimeout = timeout
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0, execute: timeout)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5, execute: timeout)
     }
 
     /// 20260912 (hide-through-space-switch): unconditional restore of every panel set, regardless
