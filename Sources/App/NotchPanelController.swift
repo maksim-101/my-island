@@ -793,8 +793,20 @@ final class NotchPanelController: NSObject {
                 containerSize: panel.frame.size,
                 notchSize: collapsedNotchFrame(for: panel).size
             )
-            let work = DispatchWorkItem { [weak self, weak panel] in
-                guard let self, let panel, panel.viewModel?.isOpen != true else {
+            var work: DispatchWorkItem!
+            work = DispatchWorkItem { [weak self, weak panel] in
+                guard let panel else { return }
+                // Reset on every exit from this item (panel gone, panel reopened
+                // before this fired, or the normal collapse-applied path below) —
+                // never leave a stale reference behind, which permanently blocked
+                // the sliver-follow guard's `pendingCollapse == nil` check above.
+                // The identity check guards against a newer item clobbering itself
+                // out from under a future call site; today every supersession path
+                // (`applyFrame`'s own cancel+nil above, and `tearDown`) already
+                // cancels this item before it can fire on the serial main queue, so
+                // this branch is currently unreachable — it's defense-in-depth.
+                defer { if panel.pendingCollapse === work { panel.pendingCollapse = nil } }
+                guard let self, panel.viewModel?.isOpen != true else {
                     return
                 }
                 let collapseFrame = self.resolvedFrame(for: panel)
