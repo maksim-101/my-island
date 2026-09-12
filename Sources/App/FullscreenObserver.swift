@@ -196,6 +196,45 @@ final class FullscreenObserver {
     /// attribute it to a display, without needing the fuller `classify()`/AX pass.
     private var lastSpaceIdentities: [String: Int] = [:]
 
+    /// 20260912-hide-during-space-slide: an even faster poll (50ms) than `fastSpacePollTimer`
+    /// (100ms), because it exists to catch the ~950-1000ms visible OS slide itself (measured in
+    /// `20260912-hide-through-space-switch`) rather than its aftermath — `fastSpacePollTimer`'s CGS
+    /// per-display identity only flips ~29ms AFTER that slide ends, so it can never be the trigger
+    /// for hiding DURING the slide, only for re-arming the hide/timeout near its tail (see
+    /// `NotchPanelController.hideThroughSpaceSwitch`'s updated 1.5s timeout comment). Each tick is a
+    /// no-op beyond the `watchedDisplayIDs.isEmpty` check unless a notchless display with an
+    /// available fullscreen Space actually exists — the one case that can flash — so the added
+    /// `CGWindowListCopyWindowInfo` cost is scoped to exactly that case, never paid on a
+    /// single-display or all-physical setup.
+    nonisolated(unsafe) private var slidePollTimer: Timer?
+
+    /// Recomputed on every `refresh()` call (init/1Hz-poll/space-notification triggers) — which
+    /// notchless (`!screen.notchMode.isPhysical`) displays currently have at least one `type == 4`
+    /// (fullscreen) entry in `CGSCopyManagedDisplaySpaces`'s per-display `"Spaces"` array, regardless
+    /// of whether that Space is the CURRENTLY active one. Confirmed empirically before this was
+    /// written (live dump of `CGSCopyManagedDisplaySpaces` on this hardware): the Dell's dict carries
+    /// `"Spaces"` entries for Vivaldi's and Safari's fullscreen Spaces even while its own *current*
+    /// Space is an ordinary desktop — this is what lets `slidePollTimer` stay gated off on a setup
+    /// with no fullscreen Space anywhere to switch into/out of.
+    private var watchedDisplayIDs: Set<CGDirectDisplayID> = []
+
+    /// The last sample `slidePollTimer` saw: which window (`kCGWindowNumber`, not frontmost-app
+    /// PID — see `topmostSlideCandidate` doc comment for why) and its bounds/display, so the next
+    /// tick can diff against it via `NotchGeometry.isSlideStep`.
+    private var lastSlideSample: (windowNumber: Int, bounds: CGRect, displayID: CGDirectDisplayID)?
+
+    /// How many CONSECUTIVE ticks have matched `NotchGeometry.isSlideStep` against the previous
+    /// one — `onSpaceChangeDetected` only fires once this reaches 2 (~100ms of consistent
+    /// horizontal-only motion), not on the first match, so a single instantaneous programmatic
+    /// window jump (which would also pass a one-tick check) can't fire this early-hide path.
+    private var consecutiveSlideTicks = 0
+
+    /// Set once `onSpaceChangeDetected` has fired for the CURRENT run of matching ticks, so a
+    /// single slide fires the callback exactly once rather than once per tick for its remaining
+    /// duration; reset to `false` the moment the discriminator stops matching, so a later, distinct
+    /// slide can fire again.
+    private var slideAlreadyFired = false
+
     private let logger = AppLog.make("FullscreenObserver")
 
     /// Points of slack on each edge for the bounds-match comparison — a real
@@ -228,6 +267,16 @@ final class FullscreenObserver {
         fastSpacePollTimer = Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { [weak self] _ in
             Task { @MainActor in
                 self?.checkForSpaceIdentityChange(source: "fastPoll")
+            }
+        }
+
+        // 20260912-hide-during-space-slide: `watchedDisplayIDs` is already populated by the
+        // `refresh(isFirstQuery: true, trigger: "init")` call above (it recomputes the gate
+        // unconditionally on every call), so this timer's very first tick compares against real
+        // gate state rather than an empty set.
+        slidePollTimer = Timer.scheduledTimer(withTimeInterval: 0.05, repeats: true) { [weak self] _ in
+            Task { @MainActor in
+                self?.checkForBoundsSlide()
             }
         }
 
@@ -272,6 +321,7 @@ final class FullscreenObserver {
     deinit {
         pollTimer?.invalidate()
         fastSpacePollTimer?.invalidate()
+        slidePollTimer?.invalidate()
         if let spaceChangeObserver {
             NSWorkspace.shared.notificationCenter.removeObserver(spaceChangeObserver)
         }
@@ -304,6 +354,62 @@ final class FullscreenObserver {
             displays=\(changedDisplayIDs.isEmpty ? "unresolved" : changedDisplayIDs.map(String.init).joined(separator: ","), privacy: .public)
             """)
         onSpaceChangeDetected?(changedDisplayIDs.isEmpty ? nil : changedDisplayIDs)
+    }
+
+    /// 20260912-hide-during-space-slide: `slidePollTimer`'s 50ms tick. Fires `onSpaceChangeDetected`
+    /// — the SAME callback `checkForSpaceIdentityChange` above already fires at the slide's tail —
+    /// within ~100ms of a genuine slide starting, up to ~900ms earlier than that tail signal. Both
+    /// paths landing on the same `hideThroughSpaceSwitch` call is intentional and harmless: a second
+    /// call while already hidden just re-arms the same timeout (see
+    /// `NotchPanelController.hideThroughSpaceSwitch`'s updated comment for why that backstop was
+    /// bumped to 1.5s to absorb exactly this double-fire).
+    private func checkForBoundsSlide() {
+        guard !watchedDisplayIDs.isEmpty else {
+            lastSlideSample = nil
+            consecutiveSlideTicks = 0
+            slideAlreadyFired = false
+            return
+        }
+        guard let candidate = Self.topmostSlideCandidate(watchedDisplayIDs: watchedDisplayIDs) else {
+            // No watched display currently has an on-screen normal-layer window at all (e.g. the
+            // Dell's own desktop background between Spaces) — nothing to compare, not a slide.
+            lastSlideSample = nil
+            consecutiveSlideTicks = 0
+            return
+        }
+        defer { lastSlideSample = candidate }
+
+        guard let last = lastSlideSample, last.windowNumber == candidate.windowNumber else {
+            // Either the very first sample, or the topmost window changed identity between ticks
+            // (a different window is now topmost) — not a comparable pair.
+            consecutiveSlideTicks = 0
+            slideAlreadyFired = false
+            return
+        }
+
+        let isStep = MyIslandCore.NotchGeometry.isSlideStep(
+            previousWindowNumber: last.windowNumber,
+            currentWindowNumber: candidate.windowNumber,
+            previousBounds: last.bounds,
+            currentBounds: candidate.bounds,
+            mouseButtonsPressed: NSEvent.pressedMouseButtons != 0
+        )
+        guard isStep else {
+            consecutiveSlideTicks = 0
+            slideAlreadyFired = false
+            return
+        }
+
+        consecutiveSlideTicks += 1
+        guard consecutiveSlideTicks >= 2, !slideAlreadyFired else { return }
+        slideAlreadyFired = true
+
+        let dx = candidate.bounds.origin.x - last.bounds.origin.x
+        logger.notice("""
+            boundsSlideDetected windowNumber=\(candidate.windowNumber, privacy: .public) \
+            display=\(candidate.displayID, privacy: .public) dx=\(dx, privacy: .public)
+            """)
+        onSpaceChangeDetected?([candidate.displayID])
     }
 
     /// Phase 6 Plan 03 (D-06): `true` on the display currently hosting a fullscreen window.
@@ -344,6 +450,13 @@ final class FullscreenObserver {
     /// backstop) or `"space"` (`activeSpaceDidChangeNotification`) — purely for the diagnostic
     /// line below; it never changes classification behavior.
     private func refresh(isFirstQuery: Bool, trigger: String) {
+        // 20260912-hide-during-space-slide: recomputed unconditionally on every `refresh()` call
+        // (init/1Hz-poll/space-notification triggers already cover every point this needs to stay
+        // current at) — never gated behind the change-guard below, since `slidePollTimer`'s own gate
+        // check must see a display's fullscreen-Space availability appearing or disappearing even
+        // when nothing else this function tracks changed.
+        watchedDisplayIDs = Self.notchlessDisplaysWithFullscreenSpace()
+
         let axTrusted = AXIsProcessTrusted()
         let result = Self.classify(axTrusted: axTrusted)
 
@@ -688,6 +801,70 @@ final class FullscreenObserver {
             result[uuid] = spaceID
         }
         return result
+    }
+
+    /// 20260912-hide-during-space-slide: the gate `checkForBoundsSlide` checks before doing any
+    /// `CGWindowListCopyWindowInfo` work — which currently-connected notchless displays have at
+    /// least one `type == 4` entry in THEIR OWN `"Spaces"` array (every Space available to switch
+    /// into on that display, not just the currently active one — confirmed live via a raw dump of
+    /// `CGSCopyManagedDisplaySpaces` before this was written: the field exists and is populated
+    /// exactly as expected even while the display's *current* Space is an ordinary desktop). A
+    /// display with no fullscreen Space anywhere to switch into/out of can't produce the sliver
+    /// full-pill flash this task exists to close, so it's excluded from the poll entirely — the
+    /// stated cost bound.
+    private static func notchlessDisplaysWithFullscreenSpace() -> Set<CGDirectDisplayID> {
+        guard let cgsMainConnectionID, let cgsCopyManagedDisplaySpaces else { return [] }
+        let connection = cgsMainConnectionID()
+        guard let displays = cgsCopyManagedDisplaySpaces(connection)?.takeRetainedValue() as? [[String: Any]] else {
+            return []
+        }
+        var result: Set<CGDirectDisplayID> = []
+        for display in displays {
+            guard let uuid = display["Display Identifier"] as? String,
+                  let displayID = Self.displayID(forUUIDString: uuid) else { continue }
+            guard let screen = NSScreen.screens.first(where: { $0.displayID == displayID }) else { continue }
+            guard !screen.notchMode.isPhysical else { continue }
+            let spaces = display["Spaces"] as? [[String: Any]] ?? []
+            if spaces.contains(where: { ($0["type"] as? Int) == 4 }) {
+                result.insert(displayID)
+            }
+        }
+        return result
+    }
+
+    /// 20260912-hide-during-space-slide: the first normal-layer (`kCGWindowLayer == 0`), non-zero-
+    /// alpha window whose bounds intersect any watched display, identified by `kCGWindowNumber` —
+    /// not by frontmost-app PID, unlike `classify()`'s bounds loop above. Advisor-reviewed
+    /// correction to this task's own initial plan: on the DEPARTING leg of a Space switch, the
+    /// frontmost app can still be the one that owned the Space being left behind, while what's
+    /// actually sliding across the display is the ARRIVING Space's content, which may not be
+    /// frontmost yet. Window-number identity, diffed tick to tick by the caller, is robust to
+    /// either leg without caring which app currently owns "frontmost." No window title is ever
+    /// requested here — same privacy posture as every other `CGWindowListCopyWindowInfo` call in
+    /// this file.
+    private static func topmostSlideCandidate(
+        watchedDisplayIDs: Set<CGDirectDisplayID>
+    ) -> (windowNumber: Int, bounds: CGRect, displayID: CGDirectDisplayID)? {
+        guard !watchedDisplayIDs.isEmpty else { return nil }
+        let displayBoundsByID = watchedDisplayIDs.reduce(into: [CGDirectDisplayID: CGRect]()) { partial, id in
+            partial[id] = CGDisplayBounds(id)
+        }
+        let options: CGWindowListOption = [.optionOnScreenOnly, .excludeDesktopElements]
+        guard let windowList = CGWindowListCopyWindowInfo(options, kCGNullWindowID) as? [[String: AnyObject]] else {
+            return nil
+        }
+        for windowInfo in windowList {
+            guard let layer = windowInfo[kCGWindowLayer as String] as? Int, layer == normalWindowLayer else { continue }
+            let alpha = windowInfo[kCGWindowAlpha as String] as? Double ?? 1
+            guard alpha != 0 else { continue }
+            guard let windowNumber = windowInfo[kCGWindowNumber as String] as? Int else { continue }
+            guard let boundsDict = windowInfo[kCGWindowBounds as String] as? [String: Any],
+                  let bounds = CGRect(dictionaryRepresentation: boundsDict as CFDictionary) else { continue }
+            for (displayID, displayBounds) in displayBoundsByID where bounds.intersects(displayBounds) {
+                return (windowNumber, bounds, displayID)
+            }
+        }
+        return nil
     }
 
     // MARK: - AX reads (frontmost app's focused window only, read-only, never `kAXWindowsAttribute`)
