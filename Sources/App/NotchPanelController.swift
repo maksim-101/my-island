@@ -236,6 +236,7 @@ final class NotchPanelController: NSObject {
                 panelSets[key] = makePanelSet(for: screen, mode: mode, key: key)
                 rebuilt += 1
             } else {
+                reapplyFrames(to: set, screen: screen, mode: mode, key: key)
                 kept += 1
             }
         }
@@ -250,6 +251,41 @@ final class NotchPanelController: NSObject {
         // added=0 removed=0 rebuilt=0 kept=N — the storm case from RESEARCH Pitfall 1 degrades to
         // zero window churn, still observable in the log.
         logger.notice("reconcile added=\(diff.added.count, privacy: .public) removed=\(diff.removed.count, privacy: .public) rebuilt=\(rebuilt, privacy: .public) kept=\(kept, privacy: .public) total=\(self.panelSets.count, privacy: .public)")
+    }
+
+    /// 260912 SC4 kept-set-reposition fix: `rebuildPanels()`'s `kept` branch previously did
+    /// nothing at all once it decided a set's anchor math hadn't changed — but "the app's own
+    /// anchor math agrees with itself" doesn't guarantee the WINDOWS are still where that math
+    /// says they should be. Observed on-hardware: a display disconnect left the surviving
+    /// display's panel/bar/hud windows displaced (uniformly, by the same offset on all three) even
+    /// though the reconcile logged `kept=1` — root mechanism not fully established (plausibly
+    /// WindowServer's own display-removal window-rescue behavior, independent of this app's frame
+    /// bookkeeping), but the fix is correct regardless of cause: always re-assert the trusted
+    /// anchor onto every kept window. Cheap (`setFrame` only, no window create/destroy) and a
+    /// genuine no-op — no log line, no `setFrame` call — whenever nothing actually drifted, so
+    /// SHELL-09's "zero window churn on a no-op notification" contract is unaffected.
+    private func reapplyFrames(to set: PanelSet, screen: NSScreen, mode: NotchGeometry.Mode, key: String) {
+        set.panel.notchFrame = mode.anchorRect
+        set.panel.anchorMaxY = screen.frame.maxY
+        set.panel.screenFrame = screen.frame
+
+        let panelTarget = resolvedFrame(for: set.panel)
+        if set.panel.frame != panelTarget {
+            logger.notice("kept-reapplied key=\(key, privacy: .public) window=panel before=\(NSStringFromRect(set.panel.frame), privacy: .public) after=\(NSStringFromRect(panelTarget), privacy: .public)")
+            set.panel.setFrame(panelTarget, display: true)
+        }
+
+        let barTarget = Self.barPanelFrame(notchFrame: set.panel.notchFrame, anchorMaxY: set.panel.anchorMaxY, mode: mode).frame
+        if set.bar.frame != barTarget {
+            logger.notice("kept-reapplied key=\(key, privacy: .public) window=bar before=\(NSStringFromRect(set.bar.frame), privacy: .public) after=\(NSStringFromRect(barTarget), privacy: .public)")
+            set.bar.setFrame(barTarget, display: true)
+        }
+
+        let hudTarget = Self.hudPanelFrame(notchFrame: set.panel.notchFrame, anchorMaxY: set.panel.anchorMaxY)
+        if set.hud.frame != hudTarget {
+            logger.notice("kept-reapplied key=\(key, privacy: .public) window=hud before=\(NSStringFromRect(set.hud.frame), privacy: .public) after=\(NSStringFromRect(hudTarget), privacy: .public)")
+            set.hud.setFrame(hudTarget, display: true)
+        }
     }
 
     /// Cancels pending hover/dwell work items and closes all three windows for a panel set — the
@@ -444,18 +480,24 @@ final class NotchPanelController: NSObject {
     /// The Ambient HUD pill window — floats centered just below the notch, sized
     /// generously so the Liquid Glass capsule + its transition never clip. The
     /// pill content shows/hides itself as SwiftUI observes `hud`.
-    private static func makeHudPanel(notchFrame: NSRect, anchorMaxY: CGFloat, hud: HUDViewModel) -> NSPanel {
+    /// 260912 kept-set-reposition fix: extracted from `makeHudPanel` so construction and the
+    /// reconcile's `kept`-branch reapply step share one source of truth for this window's frame.
+    private static func hudPanelFrame(notchFrame: NSRect, anchorMaxY: CGFloat) -> NSRect {
         // Generous window so the pill's glow/shadow never clip; HUDPillView pins
         // its capsule to the top so it hangs just under the notch, with the
         // extra height below reserved for the glow.
         let width: CGFloat = 220
         let height: CGFloat = 56
-        let frame = NSRect(
+        return NSRect(
             x: notchFrame.midX - width / 2,
             y: anchorMaxY - notchFrame.height - NotchLayout.hudPillGap - height,
             width: width,
             height: height
         )
+    }
+
+    private static func makeHudPanel(notchFrame: NSRect, anchorMaxY: CGFloat, hud: HUDViewModel) -> NSPanel {
+        let frame = hudPanelFrame(notchFrame: notchFrame, anchorMaxY: anchorMaxY)
         let panel = NSPanel(contentRect: frame, styleMask: [.borderless, .nonactivatingPanel, .utilityWindow], backing: .buffered, defer: false)
 
         let container = NSView(frame: NSRect(origin: .zero, size: frame.size))
@@ -487,13 +529,14 @@ final class NotchPanelController: NSObject {
     /// stays fixed).
     private static let glowOutset: CGFloat = 3
 
-    private static func makeBarPanel(notchFrame: NSRect, anchorMaxY: CGFloat, timer: TimerViewModel, model: NotchViewModel, nowPlaying: NowPlayingProvider, fullscreen: FullscreenObserver, calendar: CalendarProvider, mode: NotchGeometry.Mode, displayID: CGDirectDisplayID?) -> NSPanel {
-        let frame: NSRect
-        let notchLocalFrame: CGRect
-
+    /// 260912 kept-set-reposition fix: extracted from `makeBarPanel` so construction and the
+    /// reconcile's `kept`-branch reapply step share one source of truth for this window's frame.
+    /// Purely a function of the anchor geometry and mode — never live content — so it's safe to
+    /// recompute on every reconcile, not just at construction.
+    private static func barPanelFrame(notchFrame: NSRect, anchorMaxY: CGFloat, mode: NotchGeometry.Mode) -> (frame: NSRect, notchLocalFrame: CGRect) {
         if mode.isPhysical {
             let bar = barFrame(notchFrame: notchFrame, anchorMaxY: anchorMaxY)
-            frame = NSRect(
+            let frame = NSRect(
                 x: bar.minX,
                 y: bar.minY - glowOutset,
                 width: bar.width,
@@ -503,7 +546,8 @@ final class NotchPanelController: NSObject {
             // coordinate space: the pill content and the glow's un-outset top edge both anchor to
             // this rect's origin (y: 0 — the physical notch top, unchanged by the outward growth
             // below it).
-            notchLocalFrame = CGRect(x: leftEar, y: 0, width: notchFrame.width, height: notchFrame.height)
+            let notchLocalFrame = CGRect(x: leftEar, y: 0, width: notchFrame.width, height: notchFrame.height)
+            return (frame, notchLocalFrame)
         } else {
             // Phase 6 Plan 02 (SHELL-08/D-01): the bar window is sized to the WIDEST the drawn
             // pill can ever get (every readout shown at once) so it never has to resize as
@@ -511,7 +555,7 @@ final class NotchPanelController: NSObject {
             // changes width. No glow outset — there is no cutout to locate on a drawn pill.
             let scale = NotchGeometry.readoutScale(pillHeight: notchFrame.height)
             let width = SyntheticPillLayout.maxPillWidth(idleWidth: notchFrame.width, scale: scale)
-            frame = NSRect(
+            let frame = NSRect(
                 x: notchFrame.midX - width / 2,
                 y: anchorMaxY - notchFrame.height,
                 width: width,
@@ -520,8 +564,13 @@ final class NotchPanelController: NSObject {
             // Centers the anchor's own local frame within the (wider) window, so
             // `notchLocalFrame.midX` always equals the window's own horizontal center — exactly
             // where `NotchBarView.syntheticPill` centers its drawn, content-driven-width pill.
-            notchLocalFrame = CGRect(x: (width - notchFrame.width) / 2, y: 0, width: notchFrame.width, height: notchFrame.height)
+            let notchLocalFrame = CGRect(x: (width - notchFrame.width) / 2, y: 0, width: notchFrame.width, height: notchFrame.height)
+            return (frame, notchLocalFrame)
         }
+    }
+
+    private static func makeBarPanel(notchFrame: NSRect, anchorMaxY: CGFloat, timer: TimerViewModel, model: NotchViewModel, nowPlaying: NowPlayingProvider, fullscreen: FullscreenObserver, calendar: CalendarProvider, mode: NotchGeometry.Mode, displayID: CGDirectDisplayID?) -> NSPanel {
+        let (frame, notchLocalFrame) = barPanelFrame(notchFrame: notchFrame, anchorMaxY: anchorMaxY, mode: mode)
 
         let panel = NSPanel(contentRect: frame, styleMask: [.borderless, .nonactivatingPanel, .utilityWindow], backing: .buffered, defer: false)
 
