@@ -114,6 +114,16 @@ final class FullscreenObserver {
     /// fullscreen" from "this signal never worked" (RESEARCH Assumption A3).
     private(set) var isAvailable: Bool = false
 
+    /// 20260912 (sliver-stuck-and-popover-glow): tracked so `refresh()`'s change-guard can also
+    /// fire when the DETECTION PATH or the responsible app changes without either tracked boolean
+    /// changing — e.g. one already-fullscreen app handing off to another on the same display
+    /// (`displayID` unchanged, `isFrontmostFullscreen` unchanged). Without this, that handoff
+    /// produces zero log output, which reads indistinguishable from a stuck state to anyone
+    /// reading `log show` after the fact. Not `@Observable`-relevant (no UI reads these) — plain
+    /// `private var`, not `private(set)`.
+    private var previousVia: String = "none"
+    private var previousBundleID: String?
+
     // Accessed from `deinit`, which runs nonisolated — safe because
     // `Timer.invalidate()` is thread-agnostic and no other isolated state is
     // touched there (mirrors `BrightnessProvider.pollTimer`).
@@ -226,10 +236,33 @@ final class FullscreenObserver {
         // above don't change.
         fullscreenDisplayID = result.isFullscreen ? result.displayID : nil
 
+        // 20260912 (sliver-stuck-and-popover-glow): a fullscreen-app HANDOFF on the same display
+        // (e.g. Safari's fullscreen Space handing off to Vivaldi's) changes neither
+        // `isFrontmostFullscreen`, `isAmbientSuppressed` nor `fullscreenDisplayID` — measured live
+        // during this task's investigation — so without also comparing `via`/`bundleID` here, that
+        // transition produces zero log output and reads indistinguishable from a stuck state to
+        // anyone reading `log show` after the fact.
         guard isFrontmostFullscreen != previousFullscreen
             || isAmbientSuppressed != previousSuppressed
-            || fullscreenDisplayID != previousDisplayID else {
+            || fullscreenDisplayID != previousDisplayID
+            || result.via != previousVia
+            || result.bundleID != previousBundleID else {
             return
+        }
+        previousVia = result.via
+        previousBundleID = result.bundleID
+
+        // 20260912 (sliver-stuck-and-popover-glow): `matches(_:)`'s documented (T-06-06)
+        // never-false-negative degrade rule treats an unresolved `fullscreenDisplayID` as "true on
+        // every display" — the one path that can light up the WRONG display's sliver. Every
+        // sample taken during this task's live investigation resolved correctly, so this was not
+        // the reproduced bug, but it previously failed silently; flagging it here makes a future
+        // occurrence diagnosable from `log show` alone.
+        if isFrontmostFullscreen, fullscreenDisplayID == nil {
+            logger.notice("""
+                fullscreenDisplayUnresolved bundleID=\(result.bundleID ?? "none", privacy: .public) \
+                via=\(result.via, privacy: .public)
+                """)
         }
 
         // Diagnostic evidence for the on-hardware human-check (05-05-PLAN.md Task 2 / T-7h2 Task
