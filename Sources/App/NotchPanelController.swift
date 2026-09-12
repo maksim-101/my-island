@@ -17,6 +17,12 @@ final class NotchPanelController: NSObject {
         let model: NotchViewModel
     }
     private var panelSets: [String: PanelSet] = [:]
+    /// 20260912 (hide-through-space-switch): armed on every `hideThroughSpaceSwitch`, cancelled on
+    /// every `restoreAfterSpaceSwitch` — the fail-toward-visible backstop. 1.0s matches
+    /// `FullscreenObserver`'s existing 1Hz poll: by then that poll has independently resolved
+    /// fullscreen state even if both the fast-poll and notification-based restore signals were
+    /// somehow lost, so the island is never left hidden indefinitely.
+    private var spaceSwitchHideTimeout: DispatchWorkItem?
     // Kept so `toggle()`/`handleMouseMoved()`/`applyHover` — which only ever
     // need "every panel", not the key — compile unchanged against the new
     // dictionary-backed storage.
@@ -144,6 +150,22 @@ final class NotchPanelController: NSObject {
                 set.panel.setFrame(self.resolvedFrame(for: set.panel), display: true)
                 (set.panel.contentView as? HoverTrackingView)?.hoverRect = nil
             }
+        }
+
+        // 20260912 (hide-through-space-switch): measured directly (see that task's SUMMARY) —
+        // `.stationary` (restored this task) keeps all three windows fixed on screen through a
+        // Space switch's ~1s visible OS slide, showing stale pre-switch content the whole time.
+        // Neither signal FullscreenObserver can offer fires before or during that slide; hiding on
+        // `onSpaceChangeDetected` (the earliest available, ~300-370ms ahead of the old
+        // notification-only reaction) and restoring on `onSpaceSettled` converts that tail from
+        // "visibly wrong content" to "briefly absent," per the user's own stated preference — it
+        // does NOT suppress the ~1s mid-slide portion itself, which remains visible; see the
+        // SUMMARY for why no earlier permission-free signal exists.
+        fullscreenObserver.onSpaceChangeDetected = { [weak self] displayIDs in
+            self?.hideThroughSpaceSwitch(affecting: displayIDs)
+        }
+        fullscreenObserver.onSpaceSettled = { [weak self] in
+            self?.restoreAfterSpaceSwitch()
         }
 
         rebuildPanels()
@@ -292,6 +314,59 @@ final class NotchPanelController: NSObject {
         if set.hud.frame != hudTarget {
             logger.notice("kept-reapplied key=\(key, privacy: .public) window=hud before=\(NSStringFromRect(set.hud.frame), privacy: .public) after=\(NSStringFromRect(hudTarget), privacy: .public)")
             set.hud.setFrame(hudTarget, display: true)
+        }
+    }
+
+    /// 20260912 (hide-through-space-switch): sets `alphaValue = 0` on all three windows of the
+    /// affected panel set(s) — never `orderOut`/`close`, which would detach the window from
+    /// AppKit's window list and interact with `.canJoinAllSpaces`/`.stationary` for no benefit, and
+    /// never touches `panelSets` itself, so `rebuildPanels()`'s `added`/`removed`/`rebuilt`/`kept`
+    /// accounting is completely unaffected — a hide is not a teardown. `displayIDs == nil` (the
+    /// change was detected but couldn't be attributed to a specific display) falls back to hiding
+    /// every panel set, matching this class's own no-false-negative convention elsewhere
+    /// (`FullscreenObserver.matches(_:)`'s T-06-06 degrade rule) — briefly hiding an unaffected
+    /// display's island is a harmless, momentary no-op compared to showing wrong content on the
+    /// affected one. A panel whose own `displayID` is unresolved is included in ANY non-empty
+    /// `displayIDs` set for the same reason.
+    private func hideThroughSpaceSwitch(affecting displayIDs: Set<CGDirectDisplayID>?) {
+        spaceSwitchHideTimeout?.cancel()
+
+        let targets: [PanelSet]
+        if let displayIDs, !displayIDs.isEmpty {
+            targets = panelSets.values.filter { set in
+                guard let id = set.panel.displayID else { return true }
+                return displayIDs.contains(id)
+            }
+        } else {
+            targets = Array(panelSets.values)
+        }
+        for set in targets {
+            set.panel.alphaValue = 0
+            set.bar.alphaValue = 0
+            set.hud.alphaValue = 0
+        }
+
+        let timeout = DispatchWorkItem { [weak self] in
+            self?.restoreAfterSpaceSwitch()
+        }
+        spaceSwitchHideTimeout = timeout
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0, execute: timeout)
+    }
+
+    /// 20260912 (hide-through-space-switch): unconditional restore of every panel set, regardless
+    /// of which one(s) `hideThroughSpaceSwitch` actually hid — setting `alphaValue = 1` on an
+    /// already-visible window is a harmless no-op, and this keeps the fail-toward-visible guarantee
+    /// simple (no bookkeeping of which sets were hidden that could itself go stale). A set created
+    /// fresh by `makePanelSet` during the hidden window is unaffected either way — new `NSPanel`s
+    /// default to `alphaValue == 1`. A set torn down mid-hide is `close()`d by `tearDown`, which
+    /// this never races against (both run on the main actor).
+    private func restoreAfterSpaceSwitch() {
+        spaceSwitchHideTimeout?.cancel()
+        spaceSwitchHideTimeout = nil
+        for set in panelSets.values {
+            set.panel.alphaValue = 1
+            set.bar.alphaValue = 1
+            set.hud.alphaValue = 1
         }
     }
 

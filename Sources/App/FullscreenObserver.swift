@@ -139,6 +139,27 @@ final class FullscreenObserver {
     /// fullscreen" from "this signal never worked" (RESEARCH Assumption A3).
     private(set) var isAvailable: Bool = false
 
+    /// 20260912 (hide-through-space-switch): fired as early as this class can detect a Space
+    /// switch is underway, on whichever fires first — the fast CGS per-display "Current Space"
+    /// poll below, or `activeSpaceDidChangeNotification` itself as a backstop. Carries the
+    /// affected display(s), or `nil` when the change was detected but couldn't be attributed to a
+    /// specific display (the caller's documented fallback: treat as "every display"). Measured
+    /// directly (see 20260912-hide-through-space-switch SUMMARY): neither signal fires before or
+    /// during the ~1s visible OS slide — only at its tail, ~300-370ms before `onChange` itself
+    /// would fire — so this exists as a strictly earlier (not instant) hide trigger, not a
+    /// pre-slide one.
+    var onSpaceChangeDetected: ((Set<CGDirectDisplayID>?) -> Void)?
+    /// Fired unconditionally after every `activeSpaceDidChangeNotification`, once this class's own
+    /// state has been re-resolved AND after a `DispatchQueue.main.async` hop past that point — the
+    /// hop matters: without it, a caller hiding then restoring an `NSView`/`NSWindow` in the same
+    /// run-loop turn as this class writing new `@Observable` state would restore visibility before
+    /// SwiftUI has had a chance to re-render with that new state, showing the stale frame for one
+    /// more frame anyway. Fires even when nothing about the resolved fullscreen state actually
+    /// changed (`refresh()`'s own change-guard would otherwise skip `onChange` entirely) — a caller
+    /// hiding on `onSpaceChangeDetected` must always get a matching settle signal, or it can only
+    /// ever un-hide via its own fail-safe timeout.
+    var onSpaceSettled: (() -> Void)?
+
     /// 20260912 (sliver-stuck-and-popover-glow): tracked so `refresh()`'s change-guard can also
     /// fire when the DETECTION PATH or the responsible app changes without either tracked boolean
     /// changing — e.g. one already-fullscreen app handing off to another on the same display
@@ -157,6 +178,23 @@ final class FullscreenObserver {
     // 20260912 (sliver-stuck-and-popover-glow, Task 3): same nonisolated-from-deinit shape as
     // `pollTimer` above — `NotificationCenter.removeObserver` is thread-agnostic.
     nonisolated(unsafe) private var spaceChangeObserver: NSObjectProtocol?
+
+    /// 20260912 (hide-through-space-switch): a second, much faster poll than `pollTimer` (100ms
+    /// vs 1s) of ONLY the per-display Space identity — not the full `classify()` pass — measured
+    /// live (external probe, see SUMMARY) to be the earliest permission-free signal available: it
+    /// registers a Space switch ~12ms after `NSWorkspace.didActivateApplicationNotification` (not
+    /// meaningfully earlier) and ~300-370ms before this class's own `activeSpaceDidChangeNotification`
+    /// -triggered `refresh()` resolves. 100ms (10x the existing poll's rate) is cheap — one dlopen'd
+    /// SkyLight call, no `CGWindowListCopyWindowInfo` enumeration — and a real Space switch takes
+    /// ~1s end to end, so 100ms resolution costs at most one tick of extra latency relative to the
+    /// poll's own granularity.
+    nonisolated(unsafe) private var fastSpacePollTimer: Timer?
+
+    /// The last-seen per-display Space identity, keyed by the SkyLight "Display Identifier" UUID
+    /// string (same key space `displayID(forUUIDString:)` already resolves) — compared on every
+    /// fast-poll tick and on every `activeSpaceDidChangeNotification` to detect a change and
+    /// attribute it to a display, without needing the fuller `classify()`/AX pass.
+    private var lastSpaceIdentities: [String: Int] = [:]
 
     private let logger = AppLog.make("FullscreenObserver")
 
@@ -183,6 +221,16 @@ final class FullscreenObserver {
         refresh(isFirstQuery: true, trigger: "init")
         startPolling()
 
+        // 20260912 (hide-through-space-switch): baseline BEFORE the fast poll starts, so its
+        // first tick compares against real state rather than an empty dict (which would read as
+        // "every display changed" and fire a spurious hide at launch).
+        lastSpaceIdentities = Self.currentSpaceIdentities()
+        fastSpacePollTimer = Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { [weak self] _ in
+            Task { @MainActor in
+                self?.checkForSpaceIdentityChange(source: "fastPoll")
+            }
+        }
+
         // 20260912 (sliver-stuck-and-popover-glow, Task 3): the coordinator's own repro —
         // switching Spaces on the Dell briefly showed the full pill before collapsing to the
         // sliver. The 1s poll (above) means a Space switch's new fullscreen state isn't observed
@@ -204,16 +252,47 @@ final class FullscreenObserver {
             // actor isolation — mirrors `NotchPanelController`'s identical
             // `didChangeScreenParametersNotification` observer's `Task { @MainActor in ... }` hop.
             Task { @MainActor in
-                self?.refresh(isFirstQuery: false, trigger: "space")
+                guard let self else { return }
+                // 20260912 (hide-through-space-switch): backstop for the fast poll above — same
+                // diff function, so if the poll's 100ms tick already caught this exact change,
+                // this call finds `current == lastSpaceIdentities` and is a no-op (never a second,
+                // competing hide call against a different/unaffected display).
+                self.checkForSpaceIdentityChange(source: "notification")
+                self.refresh(isFirstQuery: false, trigger: "space")
+                // The hop matters (see `onSpaceSettled` doc comment): lets SwiftUI's own
+                // `@Observable`-driven re-render, triggered by `refresh()`'s state mutation above,
+                // actually run before a caller restores visibility.
+                DispatchQueue.main.async {
+                    self.onSpaceSettled?()
+                }
             }
         }
     }
 
     deinit {
         pollTimer?.invalidate()
+        fastSpacePollTimer?.invalidate()
         if let spaceChangeObserver {
             NSWorkspace.shared.notificationCenter.removeObserver(spaceChangeObserver)
         }
+    }
+
+    /// 20260912 (hide-through-space-switch): compares the current per-display Space identity
+    /// against `lastSpaceIdentities`, fires `onSpaceChangeDetected` with the attributed display(s)
+    /// on a real change, and updates the baseline either way. Shared by the fast poll and the
+    /// notification backstop (see call sites) so they can never independently decide "changed" for
+    /// the same transition.
+    private func checkForSpaceIdentityChange(source: String) {
+        let current = Self.currentSpaceIdentities()
+        guard current != lastSpaceIdentities else { return }
+        let changedUUIDs = current.filter { lastSpaceIdentities[$0.key] != $0.value }.keys
+        let changedDisplayIDs = Set(changedUUIDs.compactMap(Self.displayID(forUUIDString:)))
+        lastSpaceIdentities = current
+        logger.notice("""
+            earlySpaceChange source=\(source, privacy: .public) \
+            displays=\(changedDisplayIDs.isEmpty ? "unresolved" : changedDisplayIDs.map(String.init).joined(separator: ","), privacy: .public)
+            """)
+        onSpaceChangeDetected?(changedDisplayIDs.isEmpty ? nil : changedDisplayIDs)
     }
 
     /// Phase 6 Plan 03 (D-06): `true` on the display currently hosting a fullscreen window.
@@ -573,6 +652,31 @@ final class FullscreenObserver {
     /// string form `NSScreen+Notch.swift` already exposes.
     private static func displayID(forUUIDString uuid: String) -> CGDirectDisplayID? {
         NSScreen.screens.first { $0.displayUUID == uuid }?.displayID
+    }
+
+    /// 20260912 (hide-through-space-switch): per-display Space identity regardless of whether
+    /// that Space is fullscreen — unlike `fullscreenSpaceCheck(pid:)`, which only looks for
+    /// `type == 4`. Switching between two ordinary desktop Spaces (no fullscreen involved at all)
+    /// still needs to register as "the Space changed" here, since the hide/restore mechanism must
+    /// work for that case too. Tries `ManagedSpaceID` first (confirmed present live during this
+    /// task's measurement), falling back to `id64`/`id` for robustness against a field-name
+    /// difference on other macOS versions — never crashes or throws if none resolve, the display
+    /// is simply absent from the returned dict (degrades to "unresolved," the documented
+    /// hide-everything fallback).
+    private static func currentSpaceIdentities() -> [String: Int] {
+        guard let cgsMainConnectionID, let cgsCopyManagedDisplaySpaces else { return [:] }
+        let connection = cgsMainConnectionID()
+        guard let displays = cgsCopyManagedDisplaySpaces(connection)?.takeRetainedValue() as? [[String: Any]] else {
+            return [:]
+        }
+        var result: [String: Int] = [:]
+        for display in displays {
+            guard let uuid = display["Display Identifier"] as? String,
+                  let current = display["Current Space"] as? [String: Any] else { continue }
+            guard let spaceID = (current["ManagedSpaceID"] as? Int) ?? (current["id64"] as? Int) ?? (current["id"] as? Int) else { continue }
+            result[uuid] = spaceID
+        }
+        return result
     }
 
     // MARK: - AX reads (frontmost app's focused window only, read-only, never `kAXWindowsAttribute`)
