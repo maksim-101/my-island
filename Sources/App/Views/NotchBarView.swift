@@ -1,5 +1,6 @@
 import AppKit
 import SwiftUI
+import OSLog
 import MyIslandCore
 
 /// The collapsed notch's "extended pill": a SINGLE continuous black shape that
@@ -65,6 +66,15 @@ struct NotchBarView: View {
     /// gates on THIS display, not the global fullscreen signal — a fullscreen window on one
     /// screen must never blank the other screen's island.
     let displayID: CGDirectDisplayID?
+
+    /// Synthetic pill render diagnostics: derived width, shown-section flags, and the pill's
+    /// own live-drawn geometry — the only observability into what the synthetic pill actually
+    /// renders on a notchless display. `.notice` so it survives Release builds, but only reaches
+    /// the log store when `MyIslandVerboseLogging` is set (see AppLog.swift) — silent no-op
+    /// otherwise, zero cost to a normal run.
+    private let pillDiagLogger = AppLog.make("SyntheticPillDiag")
+    @State private var pillDiagWindowFrame: CGRect = .zero
+    @State private var pillDiagPillBounds: CGRect = .zero
 
     /// How far the glow's stroke extends past the notch's own edges — only left, right and
     /// bottom (never top, which is the physical screen edge/cutout with nothing to gain by
@@ -223,7 +233,16 @@ struct NotchBarView: View {
                     showsCenter: showsCenter,
                     showsTimer: showsTimer
                 )
-
+                // `let _ =` (not a bare statement): a Void-returning call is not itself a `View`,
+                // and this sits inside a `@ViewBuilder` `if` branch — the standard escape hatch
+                // for a side effect mid-body (SwiftUI's own documented pattern for this exact
+                // situation, e.g. `let _ = print(...)`).
+                let _ = pillDiagLogger.notice("""
+                    pillState display=\(displayID.map(String.init) ?? "none", privacy: .public) mode=synthetic \
+                    width=\(width, privacy: .public) showsArtwork=\(earVisible, privacy: .public) \
+                    showsWave=\(earVisible, privacy: .public) showsCenter=\(showsCenter, privacy: .public) \
+                    showsTimer=\(showsTimer, privacy: .public)
+                    """)
                 NotchShape(topCornerRadius: 0, bottomCornerRadius: SyntheticPillLayout.bottomCornerRadius)
                     .fill(Color.black)
                     .overlay {
@@ -281,9 +300,20 @@ struct NotchBarView: View {
                     }
                     .frame(width: width)
                     .animation(NotchLayout.morphAnimation, value: width)
+                    // The pill's own live-drawn global bounds — during a `morphAnimation`
+                    // tween this can differ from `width` above, which is only the animation target.
+                    .onGeometryChange(for: CGRect.self, of: { $0.frame(in: .global) }) { newValue in
+                        pillDiagPillBounds = newValue
+                        pillDiagLogger.notice("pillGeom window=\(NSStringFromRect(pillDiagWindowFrame), privacy: .public) pill=\(NSStringFromRect(newValue), privacy: .public)")
+                    }
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+        // The bar window's own live-drawn bounds — this frame fills its entire content view.
+        .onGeometryChange(for: CGRect.self, of: { $0.frame(in: .global) }) { newValue in
+            pillDiagWindowFrame = newValue
+            pillDiagLogger.notice("pillGeom window=\(NSStringFromRect(newValue), privacy: .public) pill=\(NSStringFromRect(pillDiagPillBounds), privacy: .public)")
+        }
     }
 
     private func formatted(_ interval: TimeInterval) -> String {

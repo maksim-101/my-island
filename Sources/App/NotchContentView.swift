@@ -81,18 +81,31 @@ struct NotchContentView: View {
             // timer readout lives in the ear pill (NotchBarView) and the
             // Ambient HUD is a detached glass pill below the notch
             // (HUDPillView), so nothing is drawn over the camera cutout here.
-            NotchShape(topCornerRadius: isPhysical ? 6 : 0, bottomCornerRadius: model.isOpen ? 24 : 14)
-                .fill(Color.black)
-                .frame(width: shapeSize.width, height: shapeSize.height)
+            //
+            // timer-readout-truncation (2026-09-12): "nothing is drawn over the camera
+            // cutout" is only true when a camera cutout exists to make these pixels
+            // permanently invisible. In synthetic mode this view's window (`panel`) shares
+            // its `NSWindow.Level` with `NotchBarView`'s `bar` window with no enforced
+            // relative order — when `panel` sits in front (confirmed live), this shape's
+            // idle-width black rect opaquely covers the center of `bar`'s wider,
+            // content-driven pill, leaving only its edges visible. Gating both fills
+            // below on `isPhysical || model.isOpen` makes the comment's stated intent
+            // true for synthetic mode too; physical is unchanged (`isPhysical` always
+            // satisfies the condition).
+            if isPhysical || model.isOpen {
+                NotchShape(topCornerRadius: isPhysical ? 6 : 0, bottomCornerRadius: model.isOpen ? 24 : 14)
+                    .fill(Color.black)
+                    .frame(width: shapeSize.width, height: shapeSize.height)
 
-            // A brief neutral/indigo flash on timer completion (D-11) — NEVER
-            // amber (that's reserved for the Claude "needs you" attention
-            // signal) and never a system notification.
-            NotchShape(topCornerRadius: isPhysical ? 6 : 0, bottomCornerRadius: model.isOpen ? 24 : 14)
-                .fill(Tokens.Color.accent)
-                .frame(width: shapeSize.width, height: shapeSize.height)
-                .opacity(flashOpacity)
-                .allowsHitTesting(false)
+                // A brief neutral/indigo flash on timer completion (D-11) — NEVER
+                // amber (that's reserved for the Claude "needs you" attention
+                // signal) and never a system notification.
+                NotchShape(topCornerRadius: isPhysical ? 6 : 0, bottomCornerRadius: model.isOpen ? 24 : 14)
+                    .fill(Tokens.Color.accent)
+                    .frame(width: shapeSize.width, height: shapeSize.height)
+                    .opacity(flashOpacity)
+                    .allowsHitTesting(false)
+            }
 
             // Laid out at a CONSTANT expanded size (never `shapeSize`) so its
             // VStack/HStack is always measured at its final geometry and never
