@@ -112,6 +112,33 @@ final class NotchPanelController: NSObject {
             self.hud.showMeeting(text: text)
         }
 
+        // 2026-09-12 amendment ("Fullscreen sliver on synthetic displays"): `onChange` was
+        // declared on `FullscreenObserver` but never wired by this controller (see that class's
+        // own doc comment on the 260801-7h2-regressions round-3 fix). SwiftUI's own re-render of
+        // `NotchBarView`'s content already reacts to `isFrontmostFullscreen` changing (that's the
+        // `@Observable` fix), but the INTERACTIVE `NotchPanel`'s own AppKit window frame is a
+        // separate thing entirely — nothing resizes it just because fullscreen state flipped while
+        // the panel stayed collapsed the whole time (no open/close event to otherwise trigger
+        // `applyFrame`). Without this, the panel keeps its stale pre-transition collapsed size
+        // until the next hover-driven `applyFrame` call, which could be long after the sliver
+        // itself has visually appeared or disappeared. `pendingCollapse == nil` skips a panel
+        // mid-collapse-animation — that work item already calls `resolvedFrame` (now sliver-aware)
+        // at its own fire time. Setting `hoverRect = nil` even when it's already nil forces
+        // `HoverTrackingView.updateTrackingAreas()` to run (Swift's `didSet` always fires on
+        // assignment), refreshing the `.inVisibleRect` tracking area to the just-resized bounds —
+        // mirrors the ordering `applyFrame`'s own collapse-completion step already uses.
+        fullscreenObserver.onChange = { [weak self] in
+            guard let self else { return }
+            for (key, set) in self.panelSets {
+                guard !set.panel.isPhysical else { continue }
+                let sliverActive = self.fullscreenObserver.isFrontmostFullscreen(on: set.panel.displayID)
+                self.logger.notice("sliverState key=\(key, privacy: .public) active=\(sliverActive, privacy: .public) hoverRect=\(NSStringFromRect(self.pillHoverFrame(for: set.panel)), privacy: .public)")
+                guard set.model.isOpen != true, set.panel.pendingCollapse == nil else { continue }
+                set.panel.setFrame(self.resolvedFrame(for: set.panel), display: true)
+                (set.panel.contentView as? HoverTrackingView)?.hoverRect = nil
+            }
+        }
+
         rebuildPanels()
 
         // T-02-03 (02-SECURITY.md): a non-global replacement was evaluated first and rejected —
@@ -252,6 +279,14 @@ final class NotchPanelController: NSObject {
         model.onOpenChange = { [weak self, weak panel] isOpen in
             guard let self, let panel else { return }
             self.applyFrame(to: panel, isOpen: isOpen)
+        }
+        // 2026-09-12 amendment ("Fullscreen sliver on synthetic displays"): a synthetic display
+        // reconnecting (or the app relaunching) while its fullscreen Space is already active must
+        // not create the interactive panel at its full 30pt-ish collapsed size — `resolvedFrame`
+        // is sliver-aware from this point on, so this one-time correction just applies it before
+        // the panel is ever shown.
+        if !mode.isPhysical, fullscreenObserver.isFrontmostFullscreen(on: screen.displayID) {
+            panel.setFrame(resolvedFrame(for: panel), display: true)
         }
         panel.orderFrontRegardless()
 
@@ -532,6 +567,28 @@ final class NotchPanelController: NSObject {
         )
     }
 
+    /// 2026-09-12 amendment ("Fullscreen sliver on synthetic displays"): `panel.notchFrame` itself
+    /// is a fixed per-screen anchor (SHELL-06/07) and must stay that way — the reconcile's
+    /// `notchFrame != anchorRect` rebuild check in `rebuildPanels()` depends on it never changing
+    /// out from under a live panel. This returns the EFFECTIVE collapsed geometry a caller should
+    /// actually use instead: unchanged on a physical panel or whenever the synthetic display isn't
+    /// in the fullscreen sliver state, otherwise the same x/width with height overridden to
+    /// `SyntheticPillLayout.fullscreenSliverHeight` (top-flush anchor preserved, since
+    /// `notchFrame.maxY == anchorMaxY` always). The single source both `resolvedFrame(for:)` (the
+    /// interactive panel's real, if invisible, window bounds) and the hover-geometry functions
+    /// below consult, so they can never disagree about how tall the collapsed target currently is.
+    private func collapsedNotchFrame(for panel: NotchPanel) -> NSRect {
+        guard !panel.isPhysical, fullscreenObserver.isFrontmostFullscreen(on: panel.displayID) else {
+            return panel.notchFrame
+        }
+        return NSRect(
+            x: panel.notchFrame.minX,
+            y: panel.notchFrame.maxY - SyntheticPillLayout.fullscreenSliverHeight,
+            width: panel.notchFrame.width,
+            height: SyntheticPillLayout.fullscreenSliverHeight
+        )
+    }
+
     /// The one place that decides whether a given panel's window is at its
     /// collapsed (notch) or expanded size. The Ambient HUD no longer factors in
     /// here — it's a detached pill in its own window.
@@ -539,7 +596,7 @@ final class NotchPanelController: NSObject {
         if panel.viewModel?.isOpen == true {
             return Self.expandedFrame(notchFrame: panel.notchFrame, anchorMaxY: panel.anchorMaxY)
         }
-        return Self.collapsedFrame(notchFrame: panel.notchFrame, anchorMaxY: panel.anchorMaxY)
+        return Self.collapsedFrame(notchFrame: collapsedNotchFrame(for: panel), anchorMaxY: panel.anchorMaxY)
     }
 
     /// Drives the AppKit window frame in step with the model's open/close
@@ -575,7 +632,7 @@ final class NotchPanelController: NSObject {
             // `mouseEntered` at any point during the 0.45s collapse animation.
             container?.hoverRect = NotchGeometry.collapsedHoverRect(
                 containerSize: panel.frame.size,
-                notchSize: panel.notchFrame.size
+                notchSize: collapsedNotchFrame(for: panel).size
             )
             let work = DispatchWorkItem { [weak self, weak panel] in
                 guard let self, let panel, panel.viewModel?.isOpen != true else {
@@ -648,6 +705,16 @@ final class NotchPanelController: NSObject {
     private func pillHoverFrame(for panel: NotchPanel) -> NSRect {
         guard !panel.isPhysical else {
             return Self.barFrame(notchFrame: panel.notchFrame, anchorMaxY: panel.anchorMaxY)
+        }
+        // 2026-09-12 amendment ("Fullscreen sliver on synthetic displays"): while the sliver is
+        // showing, the drawn pill never routes through the content-driven width formula below —
+        // it draws no readout content regardless of what's playing or running — so this must
+        // short-circuit here. Left unchanged, a running timer or playing track during fullscreen
+        // would compute a wing rect WIDER than the sliver actually drawn, and — combined with the
+        // stale 30pt-tall `panel.notchFrame` a caller might otherwise use — reopen exactly the
+        // "hover strip over real fullscreen picture" failure this feature exists to close.
+        if fullscreenObserver.isFrontmostFullscreen(on: panel.displayID) {
+            return collapsedNotchFrame(for: panel)
         }
         let earVisible = nowPlayingProvider.displayEar && !fullscreenObserver.isAmbientSuppressed(on: panel.displayID)
         let center = SyntheticPillLayout.centerText(timer: timer, calendar: calendarProvider, nowPlaying: nowPlayingProvider, earVisible: earVisible) != nil

@@ -100,13 +100,54 @@ struct NotchBarView: View {
             // drawn width is live real estate (user feedback after wave 1:
             // "the space is not really filled at all"). No fullscreen glow —
             // there is no cutout to locate, the pill is always visible (D-03).
+            //
+            // 2026-09-12 amendment ("Fullscreen sliver on synthetic displays"): UAT row 5 found
+            // that suppressing readouts alone still leaves the full-height pill sitting on real
+            // fullscreen picture, since there is no camera housing here to justify the occupied
+            // pixels. While `isFrontmostFullscreenHere` (the same signal driving the built-in's
+            // own notch-locator glow, not the narrower `isAmbientSuppressed`) is true, the pill
+            // withdraws to a 4pt glowing `Capsule` marker instead of drawing content.
             VStack(spacing: 0) {
-                syntheticPill
-                    .frame(height: notchLocalFrame.height)
+                Group {
+                    if isFrontmostFullscreenHere {
+                        fullscreenSliver
+                    } else {
+                        syntheticPill
+                            .transition(.opacity)
+                    }
+                }
+                .frame(height: isFrontmostFullscreenHere ? SyntheticPillLayout.fullscreenSliverHeight : notchLocalFrame.height)
                 Spacer(minLength: 0)
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .animation(NotchLayout.morphAnimation, value: isFrontmostFullscreenHere)
+            .onChange(of: isFrontmostFullscreenHere) { _, newValue in
+                pillDiagLogger.notice("""
+                    sliverState display=\(displayID.map(String.init) ?? "none", privacy: .public) \
+                    active=\(newValue, privacy: .public)
+                    """)
+            }
         }
+    }
+
+    /// 2026-09-12 amendment: the fullscreen sliver — a pure hover affordance, never
+    /// content-driven. Width is pinned to `notchLocalFrame.width` (the idle damped-width formula,
+    /// unconditionally — never `SyntheticPillLayout.pillWidth`'s content floor, since the sliver
+    /// draws no readout content regardless of what is playing or running). Reuses the built-in's
+    /// own fullscreen-glow numbers verbatim (`glowLineOutset`'s stroke/shadow opacities), just
+    /// reassigned from an outline-only overlay to a filled `Capsule` — full rounding on all four
+    /// corners reads as a glow affordance rather than attached menu-bar chrome, unlike `NotchShape`'s
+    /// square-top/rounded-bottom treatment (meaningless at 4pt tall). Static, never pulsing — the
+    /// built-in's own fullscreen glow only fades, it never pulses either.
+    private var fullscreenSliver: some View {
+        Capsule()
+            .fill(Color.black)
+            .overlay(
+                Capsule().stroke(Tokens.Color.accent.opacity(0.45), lineWidth: 1)
+            )
+            .shadow(color: Tokens.Color.accent.opacity(0.35), radius: 3)
+            .frame(width: notchLocalFrame.width, height: SyntheticPillLayout.fullscreenSliverHeight)
+            .transition(.opacity)
     }
 
     /// Phase 6 Plan 03 (D-06): the notch-locator glow is per-display too — a fullscreen window on

@@ -17,6 +17,12 @@ enum SyntheticPillLayout {
     static let centerViewportWidth: CGFloat = 160
     static let timerReadoutWidth: CGFloat = 54
     static let idleMarkSize: CGFloat = 4
+    /// 2026-09-12 amendment ("Fullscreen sliver on synthetic displays"): the drawn height of the
+    /// sliver a synthetic display collapses to while `FullscreenObserver.isFrontmostFullscreen(on:)`
+    /// is true — `Tokens.Spacing.xs` reused verbatim, fixed across every synthetic display
+    /// regardless of that screen's own menu-bar height (the sliver represents no menu-bar surface,
+    /// so it needs no per-screen height like the normal pill does).
+    static let fullscreenSliverHeight: CGFloat = Tokens.Spacing.xs
     static let edgePadding: CGFloat = Tokens.Spacing.md
     static let clusterGap: CGFloat = Tokens.Spacing.sm
     static let sectionGap: CGFloat = Tokens.Spacing.md
