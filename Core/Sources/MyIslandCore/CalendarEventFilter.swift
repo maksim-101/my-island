@@ -80,30 +80,25 @@ public enum CalendarSlotSelector {
     }
 }
 
-/// Pure threshold-bump scheduler for the 15m/5m/1m meeting-countdown bump (CAL-01).
-/// `now` is always an injected parameter — no live-clock calls inside — so a
-/// just-launched app never fires a threshold that's already in the past.
+/// Pure threshold-bump scheduler for the 1h/15m/at-start meeting alert (CAL-01). `now` is always
+/// an injected parameter — no live-clock calls inside — so a just-launched app never fires a
+/// threshold that's already in the past.
 ///
-/// Source: .planning/phases/04-calendar/04-RESEARCH.md Pattern 3.
+/// Source: .planning/phases/04-calendar/04-RESEARCH.md Pattern 3. Retimed from 15m/5m/1m
+/// 2026-09-12 (thread 13): the calendar is an alert, not ambient content — see
+/// `SyntheticPillLayout.centerText`, which no longer surfaces meeting text at all.
 public struct ThresholdScheduler {
-    public static let thresholds: [TimeInterval] = [15 * 60, 5 * 60, 60]   // 15m, 5m, 1m before start
+    public static let thresholds: [TimeInterval] = [60 * 60, 15 * 60, 0]   // 1h, 15m, at start
 
     /// Returns only the thresholds that are still in the future relative to `now`,
     /// as absolute fire dates, so a just-launched app doesn't fire a "15m" bump
-    /// for a meeting that's actually 10 minutes away.
+    /// for a meeting that's actually 10 minutes away. The zero (at-start) offset is an exact
+    /// `eventStart` fire date: the strict `>` keeps it while `now` is even a moment before start,
+    /// and correctly drops it once the meeting has actually begun — no special-casing needed.
     public static func pendingFireDates(eventStart: Date, now: Date) -> [Date] {
         thresholds
             .map { eventStart.addingTimeInterval(-$0) }
             .filter { $0 > now }
             .sorted()
-    }
-
-    /// Whether `remaining` (seconds until start; an already-started event reads <= 0) sits inside
-    /// the meeting's own 15m/5m/1m bump window — the proximity test the synthetic pill's centre
-    /// slot reuses instead of inventing a new cutoff (06-UI-SPEC.md "Centre slot decoupled from
-    /// the timer", 2026-09-12 Amendment #2). An already-running meeting always qualifies, since
-    /// "now" is the closest a meeting can be.
-    public static func isWithinBumpWindow(remaining: TimeInterval) -> Bool {
-        remaining <= (thresholds.max() ?? 0)
     }
 }

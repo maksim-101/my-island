@@ -42,45 +42,49 @@ import Foundation
     #expect(result)
 }
 
-@Test func pendingFireDatesSkipsAlreadyPastThresholdFor14MinutesOut() {
+@Test func pendingFireDatesSkipsPastOneHourThresholdWhenFiftyMinutesOut() {
     let now = Date(timeIntervalSince1970: 0)
-    let eventStart = now.addingTimeInterval(14 * 60)
+    let eventStart = now.addingTimeInterval(50 * 60)
     let result = ThresholdScheduler.pendingFireDates(eventStart: eventStart, now: now)
-    let expected = [eventStart.addingTimeInterval(-5 * 60), eventStart.addingTimeInterval(-60)]
+    let expected = [eventStart.addingTimeInterval(-15 * 60), eventStart]
     #expect(result == expected)
 }
 
-@Test func pendingFireDatesReturnsAllThreeFor20MinutesOut() {
+@Test func pendingFireDatesReturnsAllThreeWhenNinetyMinutesOut() {
     let now = Date(timeIntervalSince1970: 0)
-    let eventStart = now.addingTimeInterval(20 * 60)
+    let eventStart = now.addingTimeInterval(90 * 60)
     let result = ThresholdScheduler.pendingFireDates(eventStart: eventStart, now: now)
     let expected = [
+        eventStart.addingTimeInterval(-60 * 60),
         eventStart.addingTimeInterval(-15 * 60),
-        eventStart.addingTimeInterval(-5 * 60),
-        eventStart.addingTimeInterval(-60),
+        eventStart,
     ]
     #expect(result == expected)
+}
+
+/// The at-start (zero-offset) fire date is exactly `eventStart` — this proves the shared
+/// `filter { $0 > now }` keeps it while `now` is even a moment before start, with no
+/// special-casing needed for the zero offset.
+@Test func pendingFireDatesIncludesAtStartFireWhenCalledJustBeforeEventStarts() {
+    let eventStart = Date(timeIntervalSince1970: 1_000)
+    let now = eventStart.addingTimeInterval(-1)
+    let result = ThresholdScheduler.pendingFireDates(eventStart: eventStart, now: now)
+    #expect(result == [eventStart])
+}
+
+/// Once the meeting has actually started, the at-start fire date must NOT reappear as
+/// pending — a reschedule after start (e.g. the 20-minute calendar fallback refresh) must not
+/// re-arm a bump for a meeting already under way.
+@Test func pendingFireDatesExcludesAtStartFireOnceEventHasStarted() {
+    let eventStart = Date(timeIntervalSince1970: 1_000)
+    let result = ThresholdScheduler.pendingFireDates(eventStart: eventStart, now: eventStart)
+    #expect(result.isEmpty)
 }
 
 // MARK: - CalendarSlotSelector (overlapping meetings)
 
 /// The 06:00–07:00 / 06:15 case from real-hardware UAT: the running meeting
 /// must not hide the one starting behind it.
-@Test func isWithinBumpWindowTrueJustInsideFifteenMinutes() {
-    #expect(ThresholdScheduler.isWithinBumpWindow(remaining: 899))
-}
-
-@Test func isWithinBumpWindowTrueAtExactlyFifteenMinutes() {
-    #expect(ThresholdScheduler.isWithinBumpWindow(remaining: 900))
-}
-
-@Test func isWithinBumpWindowFalseJustOutsideFifteenMinutes() {
-    #expect(!ThresholdScheduler.isWithinBumpWindow(remaining: 901))
-}
-
-@Test func isWithinBumpWindowTrueForAlreadyStartedEvent() {
-    #expect(ThresholdScheduler.isWithinBumpWindow(remaining: -30))
-}
 
 @Test func selectSurfacesBothWhenUpcomingStartsBeforeRunningEnds() {
     let now = Date(timeIntervalSince1970: 0)
