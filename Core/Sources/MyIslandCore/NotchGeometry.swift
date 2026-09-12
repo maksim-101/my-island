@@ -151,4 +151,34 @@ public enum NotchGeometry {
         let height = syntheticHeight(menuBarHeight: menuBarHeight, statusBarThickness: statusBarThickness)
         return .synthetic(syntheticAnchor(screenFrame: screenFrame, height: height))
     }
+
+    /// 20260912-hide-during-space-slide: whether one bounds sample to the next looks like a step of
+    /// the ~950-1000ms OS Space-switch slide (measured in `20260912-hide-through-space-switch`) —
+    /// horizontal-only motion at an unchanged window identity/size, with no mouse button held (which
+    /// would indicate a user-driven drag, not a programmatic Space transition). Deliberately has NO
+    /// velocity floor: an eased slide animation moves slowest at its own start, which is exactly the
+    /// tick this needs to catch, so a peak-velocity threshold (the plan's own initial "~50px/10ms"
+    /// framing) would risk missing the first, slowest tick(s) — the position/size-unchanged checks
+    /// alone already discriminate a slide step from a stationary window without needing one.
+    /// Same-window-identity (`previousWindowNumber == currentWindowNumber`) is the caller's job to
+    /// establish before calling this — a window swap between samples (different `kCGWindowNumber`)
+    /// is not a comparable pair and must never reach this function as if it were.
+    public static func isSlideStep(
+        previousWindowNumber: Int,
+        currentWindowNumber: Int,
+        previousBounds: CGRect,
+        currentBounds: CGRect,
+        mouseButtonsPressed: Bool,
+        minHorizontalDelta: CGFloat = 3,
+        maxVerticalDelta: CGFloat = 1,
+        maxSizeDelta: CGFloat = 1
+    ) -> Bool {
+        guard previousWindowNumber == currentWindowNumber, !mouseButtonsPressed else { return false }
+        let dx = abs(currentBounds.origin.x - previousBounds.origin.x)
+        let dy = abs(currentBounds.origin.y - previousBounds.origin.y)
+        let dw = abs(currentBounds.width - previousBounds.width)
+        let dh = abs(currentBounds.height - previousBounds.height)
+        guard dy <= maxVerticalDelta, dw <= maxSizeDelta, dh <= maxSizeDelta else { return false }
+        return dx >= minHorizontalDelta
+    }
 }

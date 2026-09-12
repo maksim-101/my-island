@@ -230,3 +230,69 @@ import CoreGraphics
     )
     #expect(result == CGRect(x: 0, y: 0, width: 185, height: 32))
 }
+
+// MARK: - 20260912-hide-during-space-slide: NotchGeometry.isSlideStep
+
+@Test func isSlideStepAcceptsHorizontalOnlyMotionAtUnchangedSize() {
+    let previous = CGRect(x: 0, y: 0, width: 2560, height: 1080)
+    let current = CGRect(x: 40, y: 0, width: 2560, height: 1080)
+    #expect(NotchGeometry.isSlideStep(
+        previousWindowNumber: 42, currentWindowNumber: 42,
+        previousBounds: previous, currentBounds: current,
+        mouseButtonsPressed: false
+    ))
+}
+
+@Test func isSlideStepRejectsDifferentWindowNumber() {
+    let previous = CGRect(x: 0, y: 0, width: 2560, height: 1080)
+    let current = CGRect(x: 40, y: 0, width: 2560, height: 1080)
+    #expect(!NotchGeometry.isSlideStep(
+        previousWindowNumber: 42, currentWindowNumber: 43,
+        previousBounds: previous, currentBounds: current,
+        mouseButtonsPressed: false
+    ))
+}
+
+@Test func isSlideStepRejectsWhenMouseButtonPressed() {
+    // A user-driven drag reports real horizontal motion too — the mouse-down check is what tells
+    // it apart from a programmatic Space-switch slide.
+    let previous = CGRect(x: 0, y: 0, width: 2560, height: 1080)
+    let current = CGRect(x: 40, y: 0, width: 2560, height: 1080)
+    #expect(!NotchGeometry.isSlideStep(
+        previousWindowNumber: 42, currentWindowNumber: 42,
+        previousBounds: previous, currentBounds: current,
+        mouseButtonsPressed: true
+    ))
+}
+
+@Test func isSlideStepRejectsVerticalMotion() {
+    let previous = CGRect(x: 0, y: 0, width: 2560, height: 1080)
+    let current = CGRect(x: 40, y: 40, width: 2560, height: 1080)
+    #expect(!NotchGeometry.isSlideStep(
+        previousWindowNumber: 42, currentWindowNumber: 42,
+        previousBounds: previous, currentBounds: current,
+        mouseButtonsPressed: false
+    ))
+}
+
+@Test func isSlideStepRejectsSizeChange() {
+    // A resize (e.g. Mission Control's window-shrink animation) must never read as a slide step.
+    let previous = CGRect(x: 0, y: 0, width: 2560, height: 1080)
+    let current = CGRect(x: 40, y: 0, width: 2500, height: 1060)
+    #expect(!NotchGeometry.isSlideStep(
+        previousWindowNumber: 42, currentWindowNumber: 42,
+        previousBounds: previous, currentBounds: current,
+        mouseButtonsPressed: false
+    ))
+}
+
+@Test func isSlideStepRejectsSubThresholdJitter() {
+    // Sub-pixel/rounding noise between ticks of an otherwise-stationary window must not fire.
+    let previous = CGRect(x: 0, y: 0, width: 2560, height: 1080)
+    let current = CGRect(x: 1, y: 0, width: 2560, height: 1080)
+    #expect(!NotchGeometry.isSlideStep(
+        previousWindowNumber: 42, currentWindowNumber: 42,
+        previousBounds: previous, currentBounds: current,
+        mouseButtonsPressed: false
+    ))
+}
