@@ -1,5 +1,6 @@
 import SwiftUI
 import Foundation
+import MyIslandCore
 
 /// The Cockpit-3 tile strip (popup-cockpit3-FINAL.html "tiles3"): three tappable
 /// tiles — Timer / Next / Playing — each a leading SF Symbol plus a mono
@@ -146,11 +147,9 @@ struct CockpitTileStripView: View {
         return String(format: "%d:%02d", total / 60, total % 60)
     }
 
-    /// Glanceable "{N}h"/"{N}m" summary for the tile — coarser than the pill's
-    /// per-minute countdown, since the tile is a one-line dashboard readout.
+    /// Glanceable "{N}h"/"{N}m" summary for the tile — a thin wrapper around the shared
+    /// `RelativeTimeFormat` (06-UI-SPEC.md "Format Contract — Relative Time").
     private static func compactCountdown(to date: Date) -> String {
-        let minutes = Int(max(0, date.timeIntervalSinceNow) / 60)
-        if minutes < 60 { return "\(minutes)m" }
-        return "\(minutes / 60)h"
+        RelativeTimeFormat.string(remaining: date.timeIntervalSinceNow, rounding: .floor)
     }
 }

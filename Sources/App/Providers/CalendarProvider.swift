@@ -346,8 +346,8 @@ final class CalendarProvider {
             return
         }
         firedThresholds.insert(fireDate)
-        let minutes = max(1, Int((event.startDate.timeIntervalSince(fireDate) / 60).rounded()))
-        onThresholdCrossed?("\(event.title) in \(minutes)m")
+        let unit = RelativeTimeFormat.string(remaining: event.startDate.timeIntervalSince(fireDate), rounding: .nearest)
+        onThresholdCrossed?("\(event.title) in \(unit)")
         armNextThreshold(for: event)
     }
 
@@ -433,7 +433,7 @@ final class CalendarProvider {
 
         countdowns = Dictionary(uniqueKeysWithValues: events.map { event in
             let remaining = event.startDate.timeIntervalSince(now)
-            return (event.id, remaining <= 0 ? "now" : "\(Int(remaining / 60))m")
+            return (event.id, RelativeTimeFormat.string(remaining: remaining, rounding: .floor))
         })
 
         let selection = CalendarSlotSelector.select(
