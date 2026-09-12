@@ -165,7 +165,7 @@ final class NotchPanelController: NSObject {
             self?.hideThroughSpaceSwitch(affecting: displayIDs)
         }
         fullscreenObserver.onSpaceSettled = { [weak self] in
-            self?.restoreAfterSpaceSwitch()
+            self?.restoreAfterSpaceSwitch(reason: "settled")
         }
 
         rebuildPanels()
@@ -323,31 +323,39 @@ final class NotchPanelController: NSObject {
     /// never touches `panelSets` itself, so `rebuildPanels()`'s `added`/`removed`/`rebuilt`/`kept`
     /// accounting is completely unaffected — a hide is not a teardown. `displayIDs == nil` (the
     /// change was detected but couldn't be attributed to a specific display) falls back to hiding
-    /// every panel set, matching this class's own no-false-negative convention elsewhere
+    /// every eligible panel set, matching this class's own no-false-negative convention elsewhere
     /// (`FullscreenObserver.matches(_:)`'s T-06-06 degrade rule) — briefly hiding an unaffected
     /// display's island is a harmless, momentary no-op compared to showing wrong content on the
     /// affected one. A panel whose own `displayID` is unresolved is included in ANY non-empty
-    /// `displayIDs` set for the same reason.
+    /// `displayIDs` set for the same reason. **Physical (built-in notch) panel sets are always
+    /// excluded** — mirrors `fullscreenObserver.onChange`'s own `!set.panel.isPhysical` guard
+    /// above: the reported flash and the user's fix request are specific to the Dell's synthetic
+    /// pill switching between full content and the sliver; the physical notch has no matching
+    /// defect, and blinking its timer/now-playing readout on every Space switch would be new,
+    /// unrequested, user-visible behavior on a display nothing was wrong with.
     private func hideThroughSpaceSwitch(affecting displayIDs: Set<CGDirectDisplayID>?) {
-        spaceSwitchHideTimeout?.cancel()
-
         let targets: [PanelSet]
         if let displayIDs, !displayIDs.isEmpty {
             targets = panelSets.values.filter { set in
+                guard !set.panel.isPhysical else { return false }
                 guard let id = set.panel.displayID else { return true }
                 return displayIDs.contains(id)
             }
         } else {
-            targets = Array(panelSets.values)
+            targets = panelSets.values.filter { !$0.panel.isPhysical }
         }
+        guard !targets.isEmpty else { return }
+
+        spaceSwitchHideTimeout?.cancel()
         for set in targets {
             set.panel.alphaValue = 0
             set.bar.alphaValue = 0
             set.hud.alphaValue = 0
         }
+        logger.notice("islandHide count=\(targets.count, privacy: .public)")
 
         let timeout = DispatchWorkItem { [weak self] in
-            self?.restoreAfterSpaceSwitch()
+            self?.restoreAfterSpaceSwitch(reason: "timeout")
         }
         spaceSwitchHideTimeout = timeout
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.0, execute: timeout)
@@ -355,12 +363,19 @@ final class NotchPanelController: NSObject {
 
     /// 20260912 (hide-through-space-switch): unconditional restore of every panel set, regardless
     /// of which one(s) `hideThroughSpaceSwitch` actually hid — setting `alphaValue = 1` on an
-    /// already-visible window is a harmless no-op, and this keeps the fail-toward-visible guarantee
-    /// simple (no bookkeeping of which sets were hidden that could itself go stale). A set created
-    /// fresh by `makePanelSet` during the hidden window is unaffected either way — new `NSPanel`s
-    /// default to `alphaValue == 1`. A set torn down mid-hide is `close()`d by `tearDown`, which
-    /// this never races against (both run on the main actor).
-    private func restoreAfterSpaceSwitch() {
+    /// already-visible window (including every physical set, never hidden by this mechanism at
+    /// all) is a harmless no-op, and this keeps the fail-toward-visible guarantee simple (no
+    /// bookkeeping of which sets were hidden that could itself go stale). A set created fresh by
+    /// `makePanelSet` during the hidden window is unaffected either way — new `NSPanel`s default to
+    /// `alphaValue == 1`. A set torn down mid-hide is `close()`d by `tearDown`, which this never
+    /// races against (both run on the main actor). `reason` (`"settled"` from
+    /// `fullscreenObserver.onSpaceSettled`, `"timeout"` from the fail-safe above) is logged only —
+    /// this is the ordering evidence the plan asked for: a live `log show` should show
+    /// `islandRestore` timestamped after that display's `sliverState`/`pillState` line for the new
+    /// state when `reason=settled` (proving render-before-restore); a `reason=timeout` line with no
+    /// preceding `islandRestore reason=settled` for the same hide is the tell that the settle path
+    /// was lost and the backstop, not the primary path, is what un-hid the island.
+    private func restoreAfterSpaceSwitch(reason: String) {
         spaceSwitchHideTimeout?.cancel()
         spaceSwitchHideTimeout = nil
         for set in panelSets.values {
@@ -368,6 +383,7 @@ final class NotchPanelController: NSObject {
             set.bar.alphaValue = 1
             set.hud.alphaValue = 1
         }
+        logger.notice("islandRestore reason=\(reason, privacy: .public)")
     }
 
     /// Cancels pending hover/dwell work items and closes all three windows for a panel set — the

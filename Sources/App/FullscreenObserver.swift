@@ -284,10 +284,21 @@ final class FullscreenObserver {
     /// the same transition.
     private func checkForSpaceIdentityChange(source: String) {
         let current = Self.currentSpaceIdentities()
-        guard current != lastSpaceIdentities else { return }
-        let changedUUIDs = current.filter { lastSpaceIdentities[$0.key] != $0.value }.keys
+        defer { lastSpaceIdentities = current }
+        // Only a VALUE change on a key present in BOTH snapshots counts as "the Space changed."
+        // A key appearing or disappearing (display connect/disconnect) is a structural diff with
+        // no Space transition involved and must never fire a hide — an earlier version compared
+        // the two dicts directly (`current != lastSpaceIdentities`) and fell through to the
+        // "unresolved, hide everything" branch whenever a display connected or disconnected,
+        // since the missing/new key alone made the dictionaries unequal while the filter over
+        // `current`'s own keys found no actual value mismatch. Caught before landing, not on
+        // hardware — see 20260912-hide-through-space-switch SUMMARY's follow-up note.
+        let changedUUIDs = current.compactMap { uuid, spaceID -> String? in
+            guard let previous = lastSpaceIdentities[uuid], previous != spaceID else { return nil }
+            return uuid
+        }
+        guard !changedUUIDs.isEmpty else { return }
         let changedDisplayIDs = Set(changedUUIDs.compactMap(Self.displayID(forUUIDString:)))
-        lastSpaceIdentities = current
         logger.notice("""
             earlySpaceChange source=\(source, privacy: .public) \
             displays=\(changedDisplayIDs.isEmpty ? "unresolved" : changedDisplayIDs.map(String.init).joined(separator: ","), privacy: .public)
