@@ -106,7 +106,8 @@ struct NotchBarView: View {
             // fullscreen picture, since there is no camera housing here to justify the occupied
             // pixels. While `isFrontmostFullscreenHere` (the same signal driving the built-in's
             // own notch-locator glow, not the narrower `isAmbientSuppressed`) is true, the pill
-            // withdraws to a 4pt glowing `Capsule` marker instead of drawing content.
+            // withdraws to a narrow glowing `NotchShape` marker instead of drawing content — see
+            // `fullscreenSliver`'s own doc comment (Amendment #4) for the shape's geometry.
             //
             // 20260912 (sliver-stuck-and-popover-glow) — `&& !model.isOpen` added: the open
             // popover already covers this area, so the sliver has no job to do while it's up —
@@ -143,22 +144,49 @@ struct NotchBarView: View {
         }
     }
 
-    /// 2026-09-12 amendment: the fullscreen sliver — a pure hover affordance, never
-    /// content-driven. Width is pinned to `notchLocalFrame.width` (the idle damped-width formula,
-    /// unconditionally — never `SyntheticPillLayout.pillWidth`'s content floor, since the sliver
-    /// draws no readout content regardless of what is playing or running). Reuses the built-in's
-    /// own fullscreen-glow numbers verbatim (`glowLineOutset`'s stroke/shadow opacities), just
-    /// reassigned from an outline-only overlay to a filled `Capsule` — full rounding on all four
-    /// corners reads as a glow affordance rather than attached menu-bar chrome, unlike `NotchShape`'s
-    /// square-top/rounded-bottom treatment (meaningless at 4pt tall). Static, never pulsing — the
-    /// built-in's own fullscreen glow only fades, it never pulses either.
+    /// 2026-09-12 Amendment #4 (06-UI-SPEC.md "Fullscreen sliver on synthetic displays" — supersedes
+    /// two prior, both rejected live on the Dell): the fullscreen sliver — a pure hover affordance,
+    /// never content-driven. Width is pinned to `notchLocalFrame.width` (the idle damped-width
+    /// formula, unconditionally — never `SyntheticPillLayout.pillWidth`'s content floor, since the
+    /// sliver draws no readout content regardless of what is playing or running).
+    ///
+    /// **Shape history.** First shipped as a `Capsule()` (commit `14e848d`): full rounding on all
+    /// four corners, user's verdict — "the rounded edges to the left and right seem kind of
+    /// detached from the monitor; it's not really attached." Revised (Amendment #3) to
+    /// `NotchShape(topCornerRadius: 0, bottomCornerRadius: 2)` — sharp top corners flush with the
+    /// bezel — user's verdict on that too: "I don't want sharp corners for the sliver, I want that
+    /// bulge that kinda 'melts' into the external monitor border." Both terminate visibly at their
+    /// own ends (a rounded cap, a square shoulder) — the actual defect either way.
+    ///
+    /// **This shape.** `NotchShape` again, not a new shape type, with a small nonzero
+    /// `topCornerRadius` instead of `0`. `NotchShape.path(in:)` draws its top corners CONCAVE at any
+    /// nonzero `topCornerRadius` — a quadratic Bézier tangent to the flat top edge at one end and to
+    /// the vertical wall at the other — the exact mechanism `physicalBody`'s own
+    /// `topCornerRadius: 6` already uses to flare the built-in pill's ears into the camera housing
+    /// (see that view's doc comment for the same curve, independently verified there via an
+    /// offscreen `ImageRenderer` probe). `topCornerRadius: 1` / `bottomCornerRadius: 2` sum to
+    /// exactly `SyntheticPillLayout.fullscreenSliverHeight` (3), leaving no straight vertical wall
+    /// between the concave neck and the convex belly — one continuous curve, the "melts... like
+    /// something wants to break out" silhouette this amendment answers. Stroke/shadow opacities are
+    /// carried over unchanged from Amendment #3 (`accent.opacity(0.65)`/`0.5)`) — this revision
+    /// changes the shape and height (2pt → 3pt), not the glow strength. The shadow's `y: 3` offset
+    /// biases its blur downward rather than spreading evenly in all directions, so no lobe paints
+    /// upward into the (nonexistent) pixels above the physical screen edge.
+    ///
+    /// **Scope note (this task's own deviation, see PLAN.md):** the spec's optional 1pt top-bezel
+    /// bleed and the corresponding bar-window resize are NOT implemented here — both require edits
+    /// to `NotchPanelController.swift` (`barPanelFrame`'s window-top growth, and the matching
+    /// hover-rect offset in `collapsedNotchFrame`/`pillHoverFrame`), which is off-limits to this
+    /// task. Shipped with bleed = 0, which the spec itself authorizes and which needs no hover-rect
+    /// change (`collapsedNotchFrame` already resolves to `y = 0 ..< fullscreenSliverHeight`).
     private var fullscreenSliver: some View {
-        Capsule()
+        NotchShape(topCornerRadius: 1, bottomCornerRadius: 2)
             .fill(Color.black)
             .overlay(
-                Capsule().stroke(Tokens.Color.accent.opacity(0.45), lineWidth: 1)
+                NotchShape(topCornerRadius: 1, bottomCornerRadius: 2)
+                    .stroke(Tokens.Color.accent.opacity(0.65), lineWidth: 1)
             )
-            .shadow(color: Tokens.Color.accent.opacity(0.35), radius: 3)
+            .shadow(color: Tokens.Color.accent.opacity(0.5), radius: 6, x: 0, y: 3)
             .frame(width: notchLocalFrame.width, height: SyntheticPillLayout.fullscreenSliverHeight)
             .transition(.opacity)
     }
