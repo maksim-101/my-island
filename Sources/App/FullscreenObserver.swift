@@ -66,18 +66,43 @@ import MyIslandCore
 /// isFrontmostFullscreen`'s old behavior for non-browsers and to never-suppress for browsers —
 /// i.e. today's behavior, never a crash or a permanent hide.
 ///
-/// **260912 iterm2-fullscreen-detection widening:** the round-2 "genuine fullscreen" disambiguator
-/// (`isGenuineFullscreen`, now removed) rejected iTerm2's Cmd+Return fullscreen because it never
-/// creates a real macOS Space (`isOnFullscreenSpace` measured `false` for it, 6/6 occurrences) —
-/// structurally identical, by that check, to a merely maximized window. User's explicit decision:
-/// widen fullscreen detection to accept ANY frontmost window whose bounds fill a display's frame
-/// minus some top strip (the literal full bounds, the notch/safe-area height, or the plain
-/// menu-bar height), deliberately including merely-maximized windows — told explicitly this was
-/// the tradeoff and chose it anyway. `classify()` now runs the SkyLight Space check
+/// **260912 iterm2-fullscreen-detection widening (SUPERSEDED — see menubar-coverage-rule below):**
+/// the round-2 "genuine fullscreen" disambiguator (`isGenuineFullscreen`, now removed) rejected
+/// iTerm2's Cmd+Return fullscreen because it never creates a real macOS Space
+/// (`isOnFullscreenSpace` measured `false` for it, 6/6 occurrences) — structurally identical, by
+/// that check, to a merely maximized window. User's then-decision: widen fullscreen detection to
+/// accept ANY frontmost window whose bounds fill a display's frame minus some top strip (the
+/// literal full bounds, the notch/safe-area height, or the plain menu-bar height), deliberately
+/// including merely-maximized windows. `classify()` now runs the SkyLight Space check
 /// (`isOnFullscreenSpace`) FIRST, unconditionally — previously nested inside the bounds loop's
 /// notch-excluded arm, which was dead code on any notchless display (required `safeAreaTop > 0`).
 /// A confirmed genuine Space resolves fullscreen bounds-independently; everything else falls
-/// through to the widened, ungated bounds-fill check.
+/// through to the bounds-fill check below — that check's own candidate set is what
+/// menubar-coverage-rule narrows next.
+///
+/// **260912 menubar-coverage-rule (supersedes the widening above, does not touch the Space-check
+/// ordering it established):** live user testing of the widened rule surfaced the actual intent —
+/// "I am not actually in fullscreen-mode and thus still see the menu bar and available space." The
+/// widened rule matched any of three candidate top-strip insets (0 / safe-area / menu-bar height),
+/// which is why a merely-maximized or non-native-fullscreen window whose bounds stop at the menu
+/// bar (leaving it fully visible) still counted. The rule is now: engage only when the menu bar is
+/// actually obscured, i.e. only the literal full-display-frame candidate (`topInset: 0`) counts —
+/// `screenMatch(bounds:)` no longer tries the safe-area or menu-bar-height insets at all. Direct
+/// consequence, accepted deliberately: iTerm2's Cmd+Return fullscreen (bounds `0,33,1728x1084` on
+/// this hardware — starts 33pt below the screen top, i.e. below the menu bar) no longer matches and
+/// shows the normal pill again, reversing the widening's user-visible outcome for that one app. The
+/// remedy for a user who wants the sliver under iTerm2 is iTerm2's own native full-screen setting,
+/// which creates a real Space and is caught by the unaffected `via=space` path above. A real
+/// non-native fullscreen window that DOES cover the menu bar (VLC, mpv, some games/media players)
+/// still matches — that is the class this narrower rule is meant to keep.
+///
+/// **Menu-bar auto-hide.** The rule is really "does this window's content reach the display's own
+/// top edge," and a visible, non-auto-hidden menu bar is simply the normal way a window fails to
+/// reach it (macOS reserves that strip and ordinary windows can't be placed under it). With
+/// "Automatically hide and show the menu bar" enabled, the menu bar reserves no permanent screen
+/// height, so a maximized window's own reported bounds already read as filling the literal full
+/// screen frame — the same `topInset: 0` match fires correctly with zero new code. This is the rule
+/// behaving as intended under auto-hide, not an exception that needs a setting or a special case.
 // 260801-7h2-regressions round 3 (SUPPRESSION-STALENESS): this class was never marked
 // `@Observable`, unlike every sibling provider `NotchBarView` reads (`NowPlayingProvider`,
 // `TimerViewModel`, `NotchViewModel` are all `@MainActor @Observable`) — and `onChange` (below) is
@@ -400,13 +425,12 @@ final class FullscreenObserver {
 
             result.foundOwnedWindow = true
 
-            // SECONDARY, widened signal (260912, user decision): a window whose bounds fill a
-            // display's frame minus SOME top strip (the literal full bounds, the notch/safe-area
-            // height, or the plain menu-bar height) counts as fullscreen — unconditionally, no
-            // "genuine Space" gate. This deliberately also catches a merely maximized window
-            // (UAT 2026-07-31's original concern) — the user was told that tradeoff explicitly
-            // and chose it anyway (iTerm2's Cmd+Return fullscreen never creates a real Space, so
-            // the old gate rejected it outright).
+            // SECONDARY signal, narrowed 260912-menubar-coverage-rule: a window whose bounds fill
+            // a display's LITERAL FULL FRAME (menu bar included, topInset: 0 only) counts as
+            // fullscreen — no "genuine Space" gate, but no longer any menu-bar/safe-area-excluded
+            // candidate either. Engages only when the menu bar is actually obscured; a window that
+            // stops at the menu bar (still visible) does not match here, even if maximized. See the
+            // class doc's menubar-coverage-rule note for the iTerm2 consequence and the reasoning.
             if let match = screenMatch(bounds: bounds) {
                 result.boundsMatched = true
                 result.isFullscreen = true
@@ -419,14 +443,14 @@ final class FullscreenObserver {
         return result
     }
 
-    /// Whether `bounds` fills a screen's frame minus one of that screen's own candidate top
-    /// strips (0 = the literal full display, its safe-area/notch height, or its menu-bar height —
-    /// deduplicated, since on this hardware the built-in's notch height and menu-bar height
-    /// happen to coincide). Compared in Quartz's top-left-origin display coordinate space via
-    /// `CGDisplayBounds`, the SAME space `CGWindowListCopyWindowInfo` reports bounds in — never
-    /// `NSScreen.frame`, which is Cocoa's bottom-left-origin space and would silently misalign
-    /// this comparison. Returns the matched screen's `CGDirectDisplayID`, or `nil` if no screen's
-    /// candidates match.
+    /// Whether `bounds` fills a screen's LITERAL FULL FRAME — `topInset: 0` only, narrowed from
+    /// the previous three-candidate set (260912-menubar-coverage-rule: matching the visible frame
+    /// or the safe-area/menu-bar-height inset let a window that leaves the menu bar showing still
+    /// count as fullscreen, which is exactly the case the user does not consider fullscreen).
+    /// Compared in Quartz's top-left-origin display coordinate space via `CGDisplayBounds`, the
+    /// SAME space `CGWindowListCopyWindowInfo` reports bounds in — never `NSScreen.frame`, which is
+    /// Cocoa's bottom-left-origin space and would silently misalign this comparison. Returns the
+    /// matched screen's `CGDirectDisplayID`, or `nil` if no screen's frame matches.
     private static func screenMatch(bounds: CGRect) -> CGDirectDisplayID? {
         for screen in NSScreen.screens {
             guard let screenNumber = screen.deviceDescription[
@@ -435,12 +459,8 @@ final class FullscreenObserver {
             let displayID = CGDirectDisplayID(screenNumber.uint32Value)
             let displayBounds = CGDisplayBounds(displayID)
 
-            var topInsets: Set<CGFloat> = [0]
-            if screen.safeAreaInsets.top > 0 { topInsets.insert(screen.safeAreaInsets.top) }
-            if screen.menuBarHeight > 0 { topInsets.insert(screen.menuBarHeight) }
-
-            for inset in topInsets where NotchGeometry.fillsDisplay(
-                bounds: bounds, displayBounds: displayBounds, topInset: inset, tolerance: boundsTolerance
+            if NotchGeometry.fillsDisplay(
+                bounds: bounds, displayBounds: displayBounds, topInset: 0, tolerance: boundsTolerance
             ) {
                 return displayID
             }
