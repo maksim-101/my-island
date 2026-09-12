@@ -17,18 +17,21 @@ enum SyntheticPillLayout {
     static let centerViewportWidth: CGFloat = 160
     static let timerReadoutWidth: CGFloat = 54
     static let idleMarkSize: CGFloat = 4
-    /// 2026-09-12 Amendment #4 ("Fullscreen sliver on synthetic displays"): the drawn height of
+    /// 2026-09-12 Amendment #5 ("Fullscreen sliver on synthetic displays"): the drawn height of
     /// the sliver a synthetic display collapses to while
     /// `FullscreenObserver.isFrontmostFullscreen(on:)` is true — fixed across every synthetic
     /// display regardless of that screen's own menu-bar height (the sliver represents no
     /// menu-bar surface, so it needs no per-screen height like the normal pill does). Deliberately
-    /// a literal `3`, not a `Tokens.Spacing` case: the value is off the design grid on purpose
-    /// (revised down from Amendment #3's `2`/shipped `4`) and must satisfy
-    /// `topCornerRadius + bottomCornerRadius == fullscreenSliverHeight` for `NotchShape`'s two
-    /// corner curves (`1` concave top flare + `2` convex bottom belly) to meet with no straight
-    /// vertical wall between them — the "melts into the bezel" silhouette. Reusing a token here
-    /// would decouple this invariant from whichever shape constants happen to be in play.
-    static let fullscreenSliverHeight: CGFloat = 3
+    /// a literal `5`, not a `Tokens.Spacing` case: the value is off the design grid on purpose
+    /// and must satisfy `topCornerRadius + bottomCornerRadius == fullscreenSliverHeight` for
+    /// `NotchShape`'s two corner curves (`3` concave top flare + `2` convex bottom belly) to meet
+    /// with no straight vertical wall between them — the "melts into the bezel" silhouette.
+    /// Raised from Amendment #4's `3` (itself `1`/`2` top/bottom) because at that split the
+    /// concave flare was a single point — the belly consumed two-thirds of the budget and the
+    /// bulge the user asked for had no room to exist; Amendment #5 gives the flare the majority
+    /// share instead. Reusing a token here would decouple this invariant from whichever shape
+    /// constants happen to be in play.
+    static let fullscreenSliverHeight: CGFloat = 5
     static let edgePadding: CGFloat = Tokens.Spacing.md
     static let clusterGap: CGFloat = Tokens.Spacing.sm
     static let sectionGap: CGFloat = Tokens.Spacing.md

@@ -145,49 +145,50 @@ struct NotchBarView: View {
         }
     }
 
-    /// 2026-09-12 Amendment #4 (06-UI-SPEC.md "Fullscreen sliver on synthetic displays" — supersedes
-    /// two prior, both rejected live on the Dell): the fullscreen sliver — a pure hover affordance,
-    /// never content-driven. Width is pinned to `notchLocalFrame.width` (the idle damped-width
-    /// formula, unconditionally — never `SyntheticPillLayout.pillWidth`'s content floor, since the
-    /// sliver draws no readout content regardless of what is playing or running).
+    /// 2026-09-12 Amendment #5 (06-UI-SPEC.md "Fullscreen sliver on synthetic displays" —
+    /// supersedes three prior geometries, all seen live on the Dell): the fullscreen sliver — a
+    /// pure hover affordance, never content-driven. Width is pinned to `notchLocalFrame.width`
+    /// (the idle damped-width formula, unconditionally — never `SyntheticPillLayout.pillWidth`'s
+    /// content floor, since the sliver draws no readout content regardless of what is playing or
+    /// running).
     ///
-    /// **Shape history.** First shipped as a `Capsule()` (commit `14e848d`): full rounding on all
-    /// four corners, user's verdict — "the rounded edges to the left and right seem kind of
-    /// detached from the monitor; it's not really attached." Revised (Amendment #3) to
-    /// `NotchShape(topCornerRadius: 0, bottomCornerRadius: 2)` — sharp top corners flush with the
-    /// bezel — user's verdict on that too: "I don't want sharp corners for the sliver, I want that
-    /// bulge that kinda 'melts' into the external monitor border." Both terminate visibly at their
-    /// own ends (a rounded cap, a square shoulder) — the actual defect either way.
+    /// **Shape history.** `Capsule()` (commit `14e848d`) read as "detached" (rounded caps at both
+    /// ends). `NotchShape(topCornerRadius: 0, bottomCornerRadius: 2)` (Amendment #3) read as
+    /// "sharp corners," not the "melts into the border" bulge asked for. Amendment #4's
+    /// `NotchShape(topCornerRadius: 1, bottomCornerRadius: 2)` at 3pt height fixed the
+    /// termination problem in principle but, at that split, the concave top flare was a single
+    /// point — the belly consumed two-thirds of an already-minimal budget, so the user's
+    /// live verdict was "looks better" followed by four more asks: more height, a thinner
+    /// border, a softer glow, and more curvature at the ends.
     ///
-    /// **This shape.** `NotchShape` again, not a new shape type, with a small nonzero
-    /// `topCornerRadius` instead of `0`. `NotchShape.path(in:)` draws its top corners CONCAVE at any
-    /// nonzero `topCornerRadius` — a quadratic Bézier tangent to the flat top edge at one end and to
-    /// the vertical wall at the other — the exact mechanism `physicalBody`'s own
-    /// `topCornerRadius: 6` already uses to flare the built-in pill's ears into the camera housing
-    /// (see that view's doc comment for the same curve, independently verified there via an
-    /// offscreen `ImageRenderer` probe). `topCornerRadius: 1` / `bottomCornerRadius: 2` sum to
-    /// exactly `SyntheticPillLayout.fullscreenSliverHeight` (3), leaving no straight vertical wall
-    /// between the concave neck and the convex belly — one continuous curve, the "melts... like
-    /// something wants to break out" silhouette this amendment answers. Stroke/shadow opacities are
-    /// carried over unchanged from Amendment #3 (`accent.opacity(0.65)`/`0.5)`) — this revision
-    /// changes the shape and height (2pt → 3pt), not the glow strength. The shadow's `y: 3` offset
-    /// biases its blur downward rather than spreading evenly in all directions, so no lobe paints
-    /// upward into the (nonexistent) pixels above the physical screen edge.
+    /// **This shape (Amendment #5).** Still `NotchShape`, no new shape type.
+    /// `topCornerRadius: 3` / `bottomCornerRadius: 2` sum to exactly
+    /// `SyntheticPillLayout.fullscreenSliverHeight` (5) — same zero-straight-wall invariant as
+    /// before, now with the concave neck getting the majority share of the budget instead of the
+    /// belly, so the flare actually has room to read as a curve. `NotchShape.path(in:)` draws its
+    /// top corners CONCAVE at any nonzero `topCornerRadius` — the same mechanism `physicalBody`'s
+    /// own `topCornerRadius: 6` uses for the built-in pill's ear-into-camera-housing flare (see
+    /// that view's doc comment). Stroke thinned `1pt → 0.5pt` (opacity unchanged, `0.65`) per "make
+    /// the border less thick." Shadow softened per "reduce the glow... not really intrusive":
+    /// opacity `0.5 → 0.35`, radius `6pt → 4pt`, downward offset `y: 3 → y: 2` (still biased
+    /// downward, not omnidirectional, so no lobe paints upward into the nonexistent pixels above
+    /// the physical screen edge).
     ///
-    /// **Scope note (this task's own deviation, see PLAN.md):** the spec's optional 1pt top-bezel
-    /// bleed and the corresponding bar-window resize are NOT implemented here — both require edits
-    /// to `NotchPanelController.swift` (`barPanelFrame`'s window-top growth, and the matching
-    /// hover-rect offset in `collapsedNotchFrame`/`pillHoverFrame`), which is off-limits to this
-    /// task. Shipped with bleed = 0, which the spec itself authorizes and which needs no hover-rect
-    /// change (`collapsedNotchFrame` already resolves to `y = 0 ..< fullscreenSliverHeight`).
+    /// **Scope note (carried over from Amendment #4, still applies):** the spec's optional 1pt
+    /// top-bezel bleed and the corresponding bar-window resize remain unimplemented —
+    /// `fullscreenSliverBleed` stays `0` per the spec's own authorization (no visible seam
+    /// reported), and `fullscreenSliverGlowOutset` is spec-table bookkeeping, not a code
+    /// constant: the synthetic bar window's height is unconditionally `notchFrame.height`
+    /// (~24-30pt on real menu bars), which already exceeds this shape's 5pt + 6pt glow envelope
+    /// (11pt) with no resize needed.
     private var fullscreenSliver: some View {
-        NotchShape(topCornerRadius: 1, bottomCornerRadius: 2)
+        NotchShape(topCornerRadius: 3, bottomCornerRadius: 2)
             .fill(Color.black)
             .overlay(
-                NotchShape(topCornerRadius: 1, bottomCornerRadius: 2)
-                    .stroke(Tokens.Color.accent.opacity(0.65), lineWidth: 1)
+                NotchShape(topCornerRadius: 3, bottomCornerRadius: 2)
+                    .stroke(Tokens.Color.accent.opacity(0.65), lineWidth: 0.5)
             )
-            .shadow(color: Tokens.Color.accent.opacity(0.5), radius: 6, x: 0, y: 3)
+            .shadow(color: Tokens.Color.accent.opacity(0.35), radius: 4, x: 0, y: 2)
             .frame(width: notchLocalFrame.width, height: SyntheticPillLayout.fullscreenSliverHeight)
             .transition(.opacity)
     }
