@@ -285,7 +285,7 @@ final class NotchPanelController: NSObject {
         panel.isPhysical = isPhysical
         panel.screenFrame = screen.frame
 
-        let hostingView = NSHostingView(rootView: NotchContentView(model: model, notchSize: notchFrame.size, timer: timer, calendar: calendar, nowPlaying: nowPlaying, isPhysical: isPhysical))
+        let hostingView = NonKeyHostingView(rootView: NotchContentView(model: model, notchSize: notchFrame.size, timer: timer, calendar: calendar, nowPlaying: nowPlaying, isPhysical: isPhysical))
         // Decouple from the window's Auto Layout / constraint-update cycle:
         // `applyFrame` resizes the panel manually via `setFrame`, and letting
         // the hosting view participate in constraint-based sizing causes an
@@ -762,6 +762,19 @@ private final class HoverTrackingView: NSView {
 
     override func mouseEntered(with event: NSEvent) { onHoverChange?(true) }
     override func mouseExited(with event: NSEvent) { onHoverChange?(false) }
+}
+
+/// A plain `NSHostingView` doesn't expose per-control `needsPanelToBecomeKey`, so AppKit falls
+/// back to the generic "window not key -> check acceptsFirstMouse" path (default NO) for any
+/// SwiftUI button hosted in a non-key `.nonactivatingPanel`. That swallows the first click on
+/// every button in the expanded panel — it's spent making the panel key instead of firing the
+/// button — and only the second click, now that the panel is key, is delivered normally. This
+/// override tells AppKit the hosted content itself never needs the panel to become key, so
+/// `panel.becomesKeyOnlyIfNeeded` can do what its own name promises. `DurationField`'s real
+/// `NSTextField` is a separate `NSViewRepresentable`, outside this view's hit-test chain, so it
+/// keeps independently reporting `needsPanelToBecomeKey = true` and still accepts typed input.
+private final class NonKeyHostingView<Content: View>: NSHostingView<Content> {
+    override var needsPanelToBecomeKey: Bool { false }
 }
 
 /// Each screen's panel owns its own `NotchViewModel` (IN-02) — hovering or
