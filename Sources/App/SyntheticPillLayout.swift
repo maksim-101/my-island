@@ -103,14 +103,7 @@ enum SyntheticPillLayout {
     /// doesn't already have, and a scrolling marquee for it is an attention trap in peripheral
     /// vision; the calendar is an alert (`CalendarProvider.onThresholdCrossed`'s HUD bump at
     /// 1h/15m/at-start) now, not ambient centre-slot content.
-    ///
-    /// The `timer:` and `calendar:` parameters are retained but unused in this body:
-    /// `NotchPanelController.swift` also calls this function and is off-limits to a concurrent
-    /// executor's edits during this task, so the signature-hygiene removal is deferred to a
-    /// future edit of that file.
     static func centerText(
-        timer: TimerViewModel,
-        calendar: CalendarProvider,
         nowPlaying: NowPlayingProvider,
         earVisible: Bool
     ) -> String? {

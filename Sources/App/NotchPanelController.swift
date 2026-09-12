@@ -880,7 +880,7 @@ final class NotchPanelController: NSObject {
             return collapsedNotchFrame(for: panel)
         }
         let earVisible = nowPlayingProvider.displayEar && !fullscreenObserver.isAmbientSuppressed(on: panel.displayID)
-        let center = SyntheticPillLayout.centerText(timer: timer, calendar: calendarProvider, nowPlaying: nowPlayingProvider, earVisible: earVisible) != nil
+        let center = SyntheticPillLayout.centerText(nowPlaying: nowPlayingProvider, earVisible: earVisible) != nil
         let scale = NotchGeometry.readoutScale(pillHeight: panel.notchFrame.height)
         let width = SyntheticPillLayout.pillWidth(
             idleWidth: panel.notchFrame.width,
