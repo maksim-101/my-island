@@ -358,7 +358,7 @@ struct NotchBarView: View {
             Circle()
                 .inset(by: 4)
                 .trim(from: 0, to: timer.progressFraction)
-                .stroke(color.opacity(0.85), style: StrokeStyle(lineWidth: 8, lineCap: .butt))
+                .stroke(color.opacity(0.65), style: StrokeStyle(lineWidth: 8, lineCap: .butt))
                 .rotationEffect(.degrees(-90))
                 .animation(reduceMotion ? nil : .linear(duration: 1), value: timer.progressFraction)
             Circle()
