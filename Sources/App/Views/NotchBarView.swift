@@ -349,23 +349,20 @@ struct NotchBarView: View {
     /// are gone, so accessibility can't just "inherit" them for free the way the sighted layout does).
     private var timerRing: some View {
         ZStack {
-            // A 4pt doughnut band (radius 4→8) outlined by thin inner and outer edges, so its shape
-            // reads on black before any progress has filled it.
+            // A clock face whose wedge sweeps from 12 o'clock to 12 o'clock over the timer's
+            // duration, kept subdued so it stays glanceable without pulling focus in fullscreen.
+            // The wedge is a trimmed circle stroked as wide as its radius (inset 4, width 8).
             let color = Tokens.timerColor(for: timer.tokenState)
             Circle()
-                .inset(by: 2)
-                .stroke(color.opacity(0.2), lineWidth: 4)
+                .fill(color.opacity(0.18))
             Circle()
-                .inset(by: 2)
+                .inset(by: 4)
                 .trim(from: 0, to: timer.progressFraction)
-                .stroke(color, style: StrokeStyle(lineWidth: 4, lineCap: .butt))
+                .stroke(color.opacity(0.85), style: StrokeStyle(lineWidth: 8, lineCap: .butt))
                 .rotationEffect(.degrees(-90))
                 .animation(reduceMotion ? nil : .linear(duration: 1), value: timer.progressFraction)
             Circle()
-                .strokeBorder(color.opacity(0.6), lineWidth: 0.75)
-            Circle()
-                .strokeBorder(color.opacity(0.6), lineWidth: 0.75)
-                .frame(width: 8, height: 8)
+                .strokeBorder(color.opacity(0.35), lineWidth: 0.5)
         }
         .frame(width: Tokens.Spacing.lg, height: Tokens.Spacing.lg)
         .accessibilityElement(children: .ignore)
