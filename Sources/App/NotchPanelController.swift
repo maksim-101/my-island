@@ -554,27 +554,22 @@ final class NotchPanelController: NSObject {
     /// single continuous black `NotchShape` across the whole span (seamless — no
     /// join with the notch) with the running-timer readout on the right. The
     /// symmetric left strip keeps the extended notch balanced.
-    /// How far the extended pill reaches into each ear beyond the cutout —
-    /// ASYMMETRIC per the idle-wing mockup: the right ear is sized to the
-    /// longest realistic readout ("600:22" ≈ 75pt), the left ear only carries
-    /// the ~20pt artwork/sound-wave so it hugs tight. A symmetric 76pt
-    /// left ear left ~40pt of dead black beside the artwork (UAT: "wings too
-    /// wide").
-    ///
-    /// **260801-7h2-regressions round 4:** was 40 — left the artwork tile only 4pt of
-    /// clearance from the notch cutout (`40 - (Tokens.Spacing.lg leading pad + 20pt artwork)`),
-    /// which read as "scraping the border" once round 3's glow/staleness fixes made the pill
-    /// render reliably. Bumped to 48 (+8pt): widens the wing itself, and — since the artwork's
-    /// panel-local offset is unchanged while the panel's own global origin (`notchFrame.minX -
-    /// leftEar`) shifts left with it — also moves the artwork's absolute screen position further
-    /// left/away from the notch by the same 8pt, landing clearance at 12pt. Verified this cannot
-    /// reintroduce GLOW-GEOMETRY: the glow's absolute edge position is `notchFrame.minX -
-    /// glowLineOutset` / `notchFrame.maxX + glowLineOutset` — `leftEar` cancels out of that
-    /// formula entirely (panel origin moves left by `leftEar` while the notch's local offset
-    /// within the panel grows by the same `leftEar`), confirmed via a closed-form re-derivation
-    /// of NotchShape.path(in:)'s corner arithmetic at both leftEar=40 and leftEar=48.
-    private static let leftEar: CGFloat = 48
-    private static let rightEar: CGFloat = 76
+    /// How far the extended pill reaches into each ear beyond the cutout — SYMMETRIC 36pt as of
+    /// quick 260925-osd (2026-09-25). macOS 27 packs menu-bar status items flush against the notch
+    /// on both sides and parks overflow flush left of it; the previous asymmetric 48/76pt geometry
+    /// let the wider right wing cover the first status item right of the notch by 24.5pt. Both
+    /// wings are now as narrow as their content allows: the left wing centers its 20pt artwork
+    /// tile within the wing's own visible width (see `NotchBarView.wingCenterGap(contentWidth:)`),
+    /// the right wing centers a 16pt timer progress ring or an 18pt sound-wave the same way — it
+    /// is no longer sized to fit a "600:22"-style digit readout. The ear width cancels out of the
+    /// glow's absolute edge position (`notchFrame.minX - glowLineOutset` / `notchFrame.maxX +
+    /// glowLineOutset`) regardless of its value — panel origin moves left by `leftEar` while the
+    /// notch's local offset within the panel grows by the same `leftEar` — so this change cannot
+    /// reintroduce GLOW-GEOMETRY. (Prior sizing history — the "600:22 ≈ 75pt" right-ear rationale
+    /// and the round-4 40→48 left-ear bump — lives in git history, not repeated here now that both
+    /// ears carry only small, fixed-size content.)
+    private static let leftEar: CGFloat = 36
+    private static let rightEar: CGFloat = 36
 
     /// Global-coordinate frame of the extended pill (also the wing hover
     /// region), shared by `makeBarPanel` and the wing mouse-monitor.
@@ -872,7 +867,7 @@ final class NotchPanelController: NSObject {
     }
 
     /// The CURRENT drawn pill's global-coordinate rect — the wing-hover region on a synthetic
-    /// screen. Unlike the physical `barFrame` (a fixed rect for the asymmetric ear geometry), the
+    /// screen. Unlike the physical `barFrame` (a fixed rect for the symmetric 36pt ear geometry), the
     /// synthetic pill's own width changes with its content, so this is recomputed from live state
     /// on every hover check using the exact same `SyntheticPillLayout` math
     /// `NotchBarView.syntheticPill` draws from — the hover region always equals the drawn pill

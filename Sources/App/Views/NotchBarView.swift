@@ -39,7 +39,8 @@ import MyIslandCore
 ///
 /// **Phase 6 Plan 02 (2026-09-11, D-01..D-04) — the synthetic pill on a notchless screen.**
 /// `body` now branches on `mode.isPhysical`: the physical branch (`physicalBody`/`pill`, above)
-/// is untouched byte-for-byte — same ears, same asymmetric geometry, same fullscreen glow. The
+/// is untouched byte-for-byte — same ears, same asymmetric geometry (ears made symmetric 36pt by
+/// quick 260925-osd), same fullscreen glow. The
 /// synthetic branch (`syntheticPill`) is a genuinely different layout, not a re-parameterized
 /// `pill`: after wave 1 shipped the Dell's drawn pill with the physical ear layout (artwork far
 /// left, sound wave far right, empty center mimicking the camera housing), the user said
@@ -84,13 +85,31 @@ struct NotchBarView: View {
     /// beside and below the cutout rather than half inside the never-displayed camera housing.
     private static let glowLineOutset: CGFloat = 1.5
 
-    /// 260801-7h2-regressions round 5: the deliberate gap between each wing's content and the
-    /// notch cutout's own edge, now that both wings anchor toward the notch rather than toward
-    /// the pill's outer edges. Reuses round 4's already-verified artwork clearance (`Tokens
-    /// .Spacing.md`, 12pt) — the amount that took the artwork from "scraping the border" (4pt) to
-    /// comfortable (12pt) — so this fix cannot recreate that complaint by hugging tighter than
-    /// what was already confirmed to read as intentional spacing, not crowding.
-    fileprivate static let wingNotchGap: CGFloat = Tokens.Spacing.md
+    /// The concave top-corner radius `NotchShape` draws for the physical pill (the `NotchShape`
+    /// call inside `pill`, below) — named here, not left as a bare literal at that call site,
+    /// because the SAME value also defines each wing's actual drawn width: the concave flare pulls
+    /// the vertical wall in from the pill's own outer edge by exactly this amount, so a wing's
+    /// content only has `ear width - pillTopCornerRadius` of straight black to sit in front of.
+    fileprivate static let pillTopCornerRadius: CGFloat = 6
+
+    /// Each wing's own visible width beyond the notch cutout (quick 260925-osd, replacing round
+    /// 5's fixed `wingNotchGap`): the ear's full width (`NotchPanelController.leftEar`/`rightEar`,
+    /// both 36pt — UD-1's locked symmetric-ear decision) minus `pillTopCornerRadius`'s concave
+    /// inset. Derived from `notchLocalFrame.minX`, which equals `leftEar` by construction
+    /// (`NotchPanelController.barPanelFrame`'s `notchLocalFrame = CGRect(x: leftEar, y: 0, ...)`)
+    /// — since the two ears are locked equal, this single value stands in for both wings' widths;
+    /// if the ears are ever made asymmetric again, the right wing needs its own counterpart, since
+    /// this view has no other handle on the pill's total drawn width.
+    ///
+    /// `contentWidth`'s centering gap (`wingCenterGap`, below) replaces the old fixed 12pt/8pt
+    /// notch-hugging gap: with 76pt-wide right ears (round 5) a fixed gap read as intentional
+    /// spacing, but at 36pt it left the artwork only ~2pt from the pill's drawn outer edge
+    /// (visible edge, not the window edge — `NotchShape`'s concave top curve insets the two 6pt).
+    /// Centering each wing's own content within its own visible width instead keeps every wing's
+    /// margins even regardless of ear width or content width.
+    fileprivate static func wingCenterGap(notchEarWidth: CGFloat, contentWidth: CGFloat) -> CGFloat {
+        max(0, (notchEarWidth - pillTopCornerRadius - contentWidth) / 2)
+    }
 
     var body: some View {
         if mode.isPhysical {
@@ -265,23 +284,23 @@ struct NotchBarView: View {
             // shared condition; that would silently re-suppress the timer too and break Phase 4
             // D-01.
             if (timer.isRunning || (nowPlaying.displayEar && !fullscreen.isAmbientSuppressed(on: displayID))) && !model.isOpen {
-                NotchShape(topCornerRadius: 6, bottomCornerRadius: 14)
+                NotchShape(topCornerRadius: Self.pillTopCornerRadius, bottomCornerRadius: 14)
                     .fill(Color.black)
                     .overlay(alignment: .leading) {
                         // The timer readout always wins the right wing. Only when
                         // no timer is running and music is playing does the wing
                         // instead show the animated sound-wave equalizer.
                         //
-                        // 260801-7h2-regressions round 5: anchored via `.padding(.leading, ...)`
-                        // computed from `notchLocalFrame.maxX` (the notch cutout's own right edge),
-                        // not `.overlay(alignment: .trailing)` on the full pill — the latter anchors
-                        // to the PILL's own outer/right edge (the far side of the right ear), which
-                        // for short content (the sound-wave, ~18pt) left a lopsided ~42pt gap next
-                        // to the notch and only Spacing.lg (16pt) at the true outer edge. Padding by
-                        // an absolute magnitude places the content's leading edge at exactly that x
-                        // regardless of the pill's total width, so both the timer digits and the
-                        // sound-wave "hug" the notch with the same small, deliberate gap — the timer
-                        // readout inherits this for free rather than as a special case.
+                        // 260801-7h2-regressions round 5 / quick 260925-osd: anchored via
+                        // `.padding(.leading, ...)` computed from `notchLocalFrame.maxX` (the notch
+                        // cutout's own right edge), not `.overlay(alignment: .trailing)` on the full
+                        // pill — the latter anchors to the PILL's own outer/right edge (the far side
+                        // of the right ear), which is the wrong reference frame regardless of ear
+                        // width. Since 260925-osd the leading-edge offset is `wingCenterGap`, which
+                        // CENTERS the content within the wing's own visible width rather than
+                        // hugging the notch by a fixed amount — both the timer digits (temporary,
+                        // superseded by the progress ring) and the sound-wave read as centered in
+                        // their wing, matching the artwork wing's identical treatment on the left.
                         if timer.isRunning {
                             HStack(spacing: 4) {
                                 Circle()
@@ -292,10 +311,10 @@ struct NotchBarView: View {
                                     .foregroundStyle(Tokens.Color.text)
                                     .fixedSize()
                             }
-                            .padding(.leading, notchLocalFrame.maxX + Self.wingNotchGap)
+                            .padding(.leading, notchLocalFrame.maxX + Self.wingCenterGap(notchEarWidth: notchLocalFrame.minX, contentWidth: SyntheticPillLayout.waveWidth))
                         } else if nowPlaying.displayEar && !fullscreen.isAmbientSuppressed(on: displayID) {
                             SoundWaveView()
-                                .padding(.leading, notchLocalFrame.maxX + Self.wingNotchGap)
+                                .padding(.leading, notchLocalFrame.maxX + Self.wingCenterGap(notchEarWidth: notchLocalFrame.minX, contentWidth: SyntheticPillLayout.waveWidth))
                                 .opacity(nowPlaying.isPausedInGrace ? 0.55 : 1)
                         }
                     }
@@ -421,18 +440,26 @@ struct NotchBarView: View {
 }
 
 /// The left ear's content: a fixed 20x20 artwork square (or its no-artwork
-/// fallback), inset from the notch cutout's own left edge (`notchMinX`) by
-/// `NotchBarView.wingNotchGap` (12pt) — mirroring the timer/sound-wave wing's
-/// same near-notch gap on the opposite ear so the pill reads as balanced.
-/// Laid out within the symmetric 84pt `NotchPanelController.barEar` ear
-/// (D-03, unchanged) but no longer fills it with track-identity text.
+/// fallback), CENTERED within the left wing's own visible width (quick 260925-osd's
+/// `NotchBarView.wingCenterGap(notchEarWidth:contentWidth:)`) — mirroring the timer-ring/
+/// sound-wave wing's identical centering treatment on the opposite ear so the pill reads as
+/// balanced regardless of either wing's content width.
+/// Laid out within the 36pt left ear (`NotchPanelController.leftEar`, D-03, unchanged) but no
+/// longer fills it with track-identity text.
 ///
 /// **260801-7h2-regressions round 5:** was inset `Tokens.Spacing.lg` (16pt) from the pill's
 /// OUTER left edge (the wing's own far edge, away from the notch) — anchored to the wrong
 /// reference frame, which the user reported as looking lopsided next to the sound-wave/timer
 /// wing's identical outer-edge anchoring on the right. Re-anchored to the notch cutout's edge
-/// instead: `notchMinX - wingNotchGap - artworkSize` places the artwork's own trailing edge
-/// exactly `wingNotchGap` short of the notch, regardless of how wide the left ear itself is.
+/// instead, with a fixed gap off that edge.
+///
+/// **quick 260925-osd (2026-09-25):** the fixed gap became a centering computation once both
+/// ears narrowed to 36pt — a fixed gap that read as "comfortable" at a 76pt-wide opposite ear
+/// left the artwork only ~2pt from the pill's drawn (not window) outer edge at 36pt, since
+/// `NotchShape`'s concave top curve insets that edge 6pt further in than the raw window edge.
+/// `notchMinX - wingCenterGap(...) - artworkSize` places the artwork's trailing edge exactly
+/// far enough off the notch that its leading and trailing margins within the wing's own visible
+/// width match, regardless of ear width.
 ///
 /// **SUPERSEDED (2026-07-27, quick task 260727-sf0):** this ear originally
 /// also carried a scrolling "Title — Artist" text row alongside the artwork,
@@ -458,7 +485,7 @@ private struct NowPlayingEarView: View {
             size: Self.artworkSize,
             cornerRadius: Self.artworkCornerRadius
         )
-        .padding(.leading, notchMinX - NotchBarView.wingNotchGap - Self.artworkSize)
+        .padding(.leading, notchMinX - NotchBarView.wingCenterGap(notchEarWidth: notchMinX, contentWidth: Self.artworkSize) - Self.artworkSize)
         // UI-SPEC "Paused-in-grace visual distinction" (D-06/D-07): the artwork tile dims to 55%
         // opacity during the 30s post-stop grace window. No new icon, border or badge; the
         // existing content just dims, and there is no exit animation when the window expires (it

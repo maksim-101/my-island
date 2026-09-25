@@ -9,7 +9,7 @@ import MyIslandCore
 /// point value at scale 1; every call site multiplies by the live
 /// `NotchGeometry.readoutScale(pillHeight:)`. The physical notch's pill
 /// (`NotchBarView.pill`, `NotchPanelController.barFrame`) is untouched by
-/// this type — it keeps its own asymmetric 48/76pt ear geometry.
+/// this type — it keeps its own symmetric 36pt ear geometry.
 @MainActor
 enum SyntheticPillLayout {
     static let artworkSize: CGFloat = 20
