@@ -40,6 +40,16 @@ final class TimerViewModel {
     var isRunning: Bool { engine.isRunning }
     var isPaused: Bool { engine.isPaused }
 
+    /// Elapsed-fraction of the current run, clamped 0...1 — the single source both the expanded
+    /// panel's progress axis (`TimerPanelView.axisRow`) and the collapsed notch's right-wing
+    /// progress ring (`NotchBarView`, quick 260925-osd) read, so the two views can never disagree
+    /// about how far along the timer is. 0 when `startedDuration` is not yet set (before a timer
+    /// starts, or right after `reset()`).
+    var progressFraction: Double {
+        guard startedDuration > 0 else { return 0 }
+        return min(1, max(0, (startedDuration - remaining) / startedDuration))
+    }
+
     /// Maps the engine's `TimerMode` onto `Tokens.TimerState` so
     /// `Tokens.timerColor(for:)` drives both the collapsed dot and the
     /// expanded ring/chip from the SAME source (D-09).

@@ -154,7 +154,7 @@ struct TimerPanelView: View {
         HStack(spacing: Tokens.Spacing.sm) {
             GeometryReader { geo in
                 let width = geo.size.width
-                let fraction = progressFraction
+                let fraction = timer.progressFraction
                 ZStack(alignment: .leading) {
                     Capsule()
                         .fill(Tokens.Color.hairline)
@@ -205,11 +205,6 @@ struct TimerPanelView: View {
 
     private var elapsed: TimeInterval {
         max(0, timer.startedDuration - timer.remaining)
-    }
-
-    private var progressFraction: Double {
-        guard timer.startedDuration > 0 else { return 0 }
-        return min(1, max(0, elapsed / timer.startedDuration))
     }
 
     private var transportControls: some View {

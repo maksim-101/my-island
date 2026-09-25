@@ -82,8 +82,8 @@ as considered instrument, not decoration; information-dense but never loud.
 
 ### Timer state colors (locked)
 
-Color on a timer always **means** which timer/state is running, and the collapsed dot and the expanded
-ring/chip use the **same** color so the two views read as one:
+Color on a timer always **means** which timer/state is running, and the collapsed ring and the expanded
+axis/chip use the **same** color so the two views read as one:
 
 - **Countdown → indigo** (`accent`) — a plain countdown carries no focus/break semantics, so it uses the
   identity accent, not a warm hue.
@@ -116,7 +116,8 @@ never widened and never grown to fit a timer or now-playing. It has three zones:
 
 - **left half** — reserved for Now Playing (artwork/title),
 - **center** — the physical camera housing: opaque, **nothing is ever drawn over it**,
-- **right half** — the running timer (colored dot + remaining time).
+- **right half** — the running timer as a 16pt progress ring in the timer's state color; the exact
+  countdown lives in the expanded panel.
 
 Ambient content fills the pre-existing halves; it does not resize the notch. The **only** thing that may
 change the collapsed shape is the transient **HUD**, which grows the notch a little **downward** (below

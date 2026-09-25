@@ -5,7 +5,7 @@ import MyIslandCore
 
 /// The collapsed notch's "extended pill": a SINGLE continuous black shape that
 /// spans the notch cutout AND equal strips of the visible menu-bar ears on both
-/// sides, with the running-timer readout on the right and the Now Playing ear
+/// sides, with the running-timer progress ring on the right and the Now Playing ear
 /// (artwork tile only — see supersede note below) on the left.
 ///
 /// Why one shape (not separate wings): the collapsed strip over the camera
@@ -78,6 +78,10 @@ struct NotchBarView: View {
     private let pillDiagLogger = AppLog.make("SyntheticPillDiag")
     @State private var pillDiagWindowFrame: CGRect = .zero
     @State private var pillDiagPillBounds: CGRect = .zero
+
+    /// quick 260925-osd: drives the collapsed right wing's timer progress ring — same idiom
+    /// `SoundWaveView` already uses to drop its own per-bar sinusoid under Reduce Motion.
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     /// How far the glow's stroke extends past the notch's own edges — only left, right and
     /// bottom (never top, which is the physical screen edge/cutout with nothing to gain by
@@ -287,7 +291,7 @@ struct NotchBarView: View {
                 NotchShape(topCornerRadius: Self.pillTopCornerRadius, bottomCornerRadius: 14)
                     .fill(Color.black)
                     .overlay(alignment: .leading) {
-                        // The timer readout always wins the right wing. Only when
+                        // The timer progress ring always wins the right wing. Only when
                         // no timer is running and music is playing does the wing
                         // instead show the animated sound-wave equalizer.
                         //
@@ -298,20 +302,12 @@ struct NotchBarView: View {
                         // of the right ear), which is the wrong reference frame regardless of ear
                         // width. Since 260925-osd the leading-edge offset is `wingCenterGap`, which
                         // CENTERS the content within the wing's own visible width rather than
-                        // hugging the notch by a fixed amount — both the timer digits (temporary,
-                        // superseded by the progress ring) and the sound-wave read as centered in
-                        // their wing, matching the artwork wing's identical treatment on the left.
+                        // hugging the notch by a fixed amount — both the timer ring and the
+                        // sound-wave read as centered in their wing, matching the artwork wing's
+                        // identical treatment on the left.
                         if timer.isRunning {
-                            HStack(spacing: 4) {
-                                Circle()
-                                    .fill(Tokens.timerColor(for: timer.tokenState))
-                                    .frame(width: 6, height: 6)
-                                Text(formatted(timer.remaining))
-                                    .font(Tokens.Font.data)
-                                    .foregroundStyle(Tokens.Color.text)
-                                    .fixedSize()
-                            }
-                            .padding(.leading, notchLocalFrame.maxX + Self.wingCenterGap(notchEarWidth: notchLocalFrame.minX, contentWidth: SyntheticPillLayout.waveWidth))
+                            timerRing
+                                .padding(.leading, notchLocalFrame.maxX + Self.wingCenterGap(notchEarWidth: notchLocalFrame.minX, contentWidth: Tokens.Spacing.lg))
                         } else if nowPlaying.displayEar && !fullscreen.isAmbientSuppressed(on: displayID) {
                             SoundWaveView()
                                 .padding(.leading, notchLocalFrame.maxX + Self.wingCenterGap(notchEarWidth: notchLocalFrame.minX, contentWidth: SyntheticPillLayout.waveWidth))
@@ -326,6 +322,47 @@ struct NotchBarView: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    /// The physical right wing's running-timer indicator (quick 260925-osd, UI-SPEC Amendment #2's
+    /// "Centered timer with fill," applied here to the built-in's collapsed wing instead of its
+    /// originally-scoped synthetic-pill centre slot — per this task's user decision UD-3, since a
+    /// "dot + 25:00" digit readout (up to ~47pt at `Tokens.Font.data`) cannot fit the narrowed 36pt
+    /// wing). A static hairline base circle plus a trimmed arc in the timer's own state color, 16pt
+    /// (`Tokens.Spacing.lg`) across — both circles inset by 1 (half the 2pt stroke width) so the
+    /// drawn stroke stays inside the 16pt budget rather than bleeding 1pt past it on each side.
+    /// `timer.progressFraction` is the SAME property the expanded panel's progress axis reads
+    /// (`TimerViewModel.progressFraction`), so the two views can never disagree about how far along
+    /// the timer is. The arc starts at 12 o'clock (`.rotationEffect(-90°)`) and sweeps clockwise as
+    /// `trim(from: 0, to:)` grows. Paused timers need no special case: `isRunning` stays true while
+    /// paused and `remaining` freezes, so `progressFraction` — and therefore the arc — freezes too.
+    ///
+    /// Motion: the arc steps once per second from `TimerViewModel`'s existing 1s tick (no new
+    /// timer) under a linear 1s animation, dropped under Reduce Motion (same idiom `SoundWaveView`
+    /// already uses for its own per-bar sinusoid) — Amendment #2 doesn't specify a Reduce Motion
+    /// rule for this animation; this is a discretion choice, recorded in this quick task's SUMMARY.
+    ///
+    /// Accessibility: the replaced digit readout was VoiceOver-legible; the ring alone is not, so
+    /// this collapses to one accessibility element with an explicit label/value pair carrying the
+    /// same remaining-time information the digits used to (a discretion choice — Amendment #2 was
+    /// written for the synthetic pill, which still shows digits beside its ring; here the digits
+    /// are gone, so accessibility can't just "inherit" them for free the way the sighted layout does).
+    private var timerRing: some View {
+        ZStack {
+            Circle()
+                .inset(by: 1)
+                .stroke(Tokens.Color.hairline, lineWidth: 2)
+            Circle()
+                .inset(by: 1)
+                .trim(from: 0, to: timer.progressFraction)
+                .stroke(Tokens.timerColor(for: timer.tokenState), style: StrokeStyle(lineWidth: 2, lineCap: .round))
+                .rotationEffect(.degrees(-90))
+                .animation(reduceMotion ? nil : .linear(duration: 1), value: timer.progressFraction)
+        }
+        .frame(width: Tokens.Spacing.lg, height: Tokens.Spacing.lg)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("Timer")
+        .accessibilityValue("\(formatted(timer.remaining)) remaining")
     }
 
     /// The drawn pill on a notchless screen (D-01..D-04). Unlike `pill`, this
