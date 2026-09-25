@@ -86,10 +86,15 @@ final class NotchPanelController: NSObject {
     /// migration path (this key also seeds Phase 7's "Show volume HUD" toggle).
     static let showOnNotchlessDisplaysKey = "com.myisland.showOnNotchlessDisplays"
 
-    /// Default ON. A non-Bool value written by hand (or by a future migration bug) degrades to
+    /// WR-04 (06-REVIEW.md): the single source of truth for the toggle's default-on behavior —
+    /// both this controller's own fallback below AND `SettingsView`'s `@AppStorage` default read
+    /// from this constant, so the two can no longer silently desync.
+    static let showOnNotchlessDisplaysDefault = true
+
+    /// A non-Bool value written by hand (or by a future migration bug) degrades to
     /// the default rather than crashing or reading as off (T-06-08).
     private var showOnNotchlessDisplays: Bool {
-        UserDefaults.standard.object(forKey: Self.showOnNotchlessDisplaysKey) as? Bool ?? true
+        UserDefaults.standard.object(forKey: Self.showOnNotchlessDisplaysKey) as? Bool ?? Self.showOnNotchlessDisplaysDefault
     }
 
     override init() {
@@ -272,9 +277,21 @@ final class NotchPanelController: NSObject {
         var kept = 0
         for key in diff.kept {
             guard let set = panelSets[key], let (screen, mode) = desired[key] else { continue }
-            if set.panel.notchFrame != mode.anchorRect || set.panel.anchorMaxY != screen.frame.maxY {
+            if set.panel.notchFrame != mode.anchorRect || set.panel.anchorMaxY != screen.frame.maxY || set.panel.isPhysical != mode.isPhysical {
+                // WR-02 (06-REVIEW.md): a fresh `NotchViewModel` always starts collapsed — carry
+                // the torn-down set's open state forward through the SAME code path a hover/hotkey
+                // open uses (`toggle()`), rather than reaching into the new model's private dwell
+                // state directly, so frame/animation bookkeeping stays consistent with every other
+                // open trigger.
+                let wasOpen = set.model.isOpen
                 tearDown(set)
-                panelSets[key] = makePanelSet(for: screen, mode: mode, key: key)
+                let newSet = makePanelSet(for: screen, mode: mode, key: key)
+                panelSets[key] = newSet
+                if wasOpen {
+                    withAnimation(NotchLayout.morphAnimation) {
+                        newSet.model.toggle()
+                    }
+                }
                 rebuilt += 1
             } else {
                 reapplyFrames(to: set, screen: screen, mode: mode, key: key)

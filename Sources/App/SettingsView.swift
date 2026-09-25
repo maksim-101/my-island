@@ -6,7 +6,7 @@ struct SettingsView: View {
     let panels: NotchPanelController
 
     @State private var calendarGroups: [(sourceName: String, calendars: [(id: String, title: String)])] = []
-    @AppStorage(NotchPanelController.showOnNotchlessDisplaysKey) private var showOnNotchlessDisplays = true
+    @AppStorage(NotchPanelController.showOnNotchlessDisplaysKey) private var showOnNotchlessDisplays = NotchPanelController.showOnNotchlessDisplaysDefault
 
     var body: some View {
         Form {
