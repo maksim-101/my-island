@@ -349,16 +349,23 @@ struct NotchBarView: View {
     /// are gone, so accessibility can't just "inherit" them for free the way the sighted layout does).
     private var timerRing: some View {
         ZStack {
-            // The track is a tint of the timer colour because the hairline token vanished on black.
+            // A 4pt doughnut band (radius 4→8) outlined by thin inner and outer edges, so its shape
+            // reads on black before any progress has filled it.
+            let color = Tokens.timerColor(for: timer.tokenState)
             Circle()
-                .inset(by: 1.25)
-                .stroke(Tokens.timerColor(for: timer.tokenState).opacity(0.35), lineWidth: 2.5)
+                .inset(by: 2)
+                .stroke(color.opacity(0.2), lineWidth: 4)
             Circle()
-                .inset(by: 1.25)
+                .inset(by: 2)
                 .trim(from: 0, to: timer.progressFraction)
-                .stroke(Tokens.timerColor(for: timer.tokenState), style: StrokeStyle(lineWidth: 2.5, lineCap: .round))
+                .stroke(color, style: StrokeStyle(lineWidth: 4, lineCap: .butt))
                 .rotationEffect(.degrees(-90))
                 .animation(reduceMotion ? nil : .linear(duration: 1), value: timer.progressFraction)
+            Circle()
+                .strokeBorder(color.opacity(0.6), lineWidth: 0.75)
+            Circle()
+                .strokeBorder(color.opacity(0.6), lineWidth: 0.75)
+                .frame(width: 8, height: 8)
         }
         .frame(width: Tokens.Spacing.lg, height: Tokens.Spacing.lg)
         .accessibilityElement(children: .ignore)
