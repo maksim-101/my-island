@@ -323,7 +323,6 @@ final class CalendarProvider {
             .filter { !firedThresholds.contains($0) }
         guard let next = pending.first else { return }
 
-        let interval = max(0, next.timeIntervalSinceNow)
         let timer = Timer(fire: next, interval: 0, repeats: false) { [weak self] _ in
             Task { @MainActor in self?.fireThreshold(fireDate: next, event: event) }
         }
@@ -588,7 +587,7 @@ final class CalendarProvider {
 
     private func performRequest() {
         Task {
-            let granted = await service.requestAccess()
+            _ = await service.requestAccess()
             refreshAuthState()
             if authorizationState == .granted {
                 refreshNextEvent()
