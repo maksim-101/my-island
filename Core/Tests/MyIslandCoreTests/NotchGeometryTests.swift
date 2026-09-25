@@ -286,6 +286,24 @@ import CoreGraphics
     ))
 }
 
+@Test func isSlideStepAcceptsPlainHorizontalWindowMoveAsAcceptedFalsePositive() {
+    // 06-OPEN-THREADS.md thread 2 caveat 2 (accepted 2026-09-12): the detector has no way to tell
+    // a programmatic Space-switch slide apart from an ordinary same-window horizontal drag whose
+    // mouse-down state the window server didn't report as pressed (e.g. some Finder/iTerm2 window
+    // moves). A small, realistic window (not full-screen-sized) nudged 40pt sideways, same size,
+    // no vertical drift, no reported mouse button — exactly this case — reads as a slide step
+    // today. This test pins that accepted risk: if a future tightening of the discriminator makes
+    // this start returning false, that's a deliberate, visible change to this test, not a silent
+    // behavior drift.
+    let previous = CGRect(x: 200, y: 400, width: 800, height: 500)
+    let current = CGRect(x: 240, y: 400, width: 800, height: 500)
+    #expect(NotchGeometry.isSlideStep(
+        previousWindowNumber: 7, currentWindowNumber: 7,
+        previousBounds: previous, currentBounds: current,
+        mouseButtonsPressed: false
+    ))
+}
+
 @Test func isSlideStepRejectsSubThresholdJitter() {
     // Sub-pixel/rounding noise between ticks of an otherwise-stationary window must not fire.
     let previous = CGRect(x: 0, y: 0, width: 2560, height: 1080)
