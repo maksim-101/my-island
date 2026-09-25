@@ -349,13 +349,15 @@ struct NotchBarView: View {
     /// are gone, so accessibility can't just "inherit" them for free the way the sighted layout does).
     private var timerRing: some View {
         ZStack {
+            // Drains (remaining, not elapsed) so the ring is full — and visible — right after start;
+            // the track is a tint of the timer colour because the hairline token vanished on black.
             Circle()
-                .inset(by: 1)
-                .stroke(Tokens.Color.hairline, lineWidth: 2)
+                .inset(by: 1.5)
+                .stroke(Tokens.timerColor(for: timer.tokenState).opacity(0.3), lineWidth: 3)
             Circle()
-                .inset(by: 1)
-                .trim(from: 0, to: timer.progressFraction)
-                .stroke(Tokens.timerColor(for: timer.tokenState), style: StrokeStyle(lineWidth: 2, lineCap: .round))
+                .inset(by: 1.5)
+                .trim(from: 0, to: 1 - timer.progressFraction)
+                .stroke(Tokens.timerColor(for: timer.tokenState), style: StrokeStyle(lineWidth: 3, lineCap: .round))
                 .rotationEffect(.degrees(-90))
                 .animation(reduceMotion ? nil : .linear(duration: 1), value: timer.progressFraction)
         }
