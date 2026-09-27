@@ -550,7 +550,7 @@ final class NotchPanelController: NSObject {
         // The printed height distinguishes the launched-app menu-bar value from the 22pt
         // status-bar fallback.
         logger.notice("panel set key=\(key, privacy: .public) mode=\(mode.isPhysical ? "physical" : "synthetic", privacy: .public) anchor=\(NSStringFromRect(anchorRect), privacy: .public) menuBar=\(screen.menuBarHeight, privacy: .public)")
-        logClickProbeAfterDelay(key: key)
+        logClickProbeAfterDelay(key: key, panel: panel)
 
         return PanelSet(panel: panel, overlay: overlay, model: model, motion: motion)
     }
@@ -730,17 +730,77 @@ final class NotchPanelController: NSObject {
     /// `clickProbeKey` is set. Under the `toggle` click-through mechanism there is no alpha
     /// hit-test to probe — see `clickProbeKey`'s doc comment — so this always logs the `skipped`
     /// form; the real evidence is `NotchPanel.sendEvent(_:)`'s `outsideClick` detector logging zero
-    /// swallowed outside clicks over the same run.
-    private func logClickProbeAfterDelay(key: String) {
+    /// swallowed outside clicks over the same run. 07-08 Task 3: once the collapsed line is logged,
+    /// chains into `runOpenSurfaceProbe` for the band/droplet surfaces — same debug-flag gate.
+    private func logClickProbeAfterDelay(key: String, panel: NotchPanel) {
         guard UserDefaults.standard.bool(forKey: Self.clickProbeKey) else { return }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { [weak self] in
-            self?.logClickProbeNow(key: key)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { [weak self, weak panel] in
+            guard let self else { return }
+            self.logClickProbeNow(key: key)
+            guard let panel else { return }
+            Task { @MainActor [weak self, weak panel] in
+                guard let self, let panel else { return }
+                await self.runOpenSurfaceProbe(key: key, panel: panel)
+            }
         }
     }
 
     private func logClickProbeNow(key: String) {
         guard UserDefaults.standard.bool(forKey: Self.clickProbeKey) else { return }
         logger.notice("clickProbe skipped mode=toggle display=\(key, privacy: .public)")
+    }
+
+    /// 07-08 Task 3 (D-04 regression evidence, T-07-01): gated strictly behind `clickProbeKey` —
+    /// the "never auto-expand" prohibition (D-05/agreement §10) is judgment-verified, and this
+    /// must never gain a code path a normal launch can reach. Opens the band through the SAME
+    /// `model.toggle()` path the hotkey uses (never taking key focus — `becomesKeyOnlyIfNeeded`
+    /// already guards that), probes the band surface, shows the droplet for cell 0, probes that
+    /// surface, then closes.
+    private func runOpenSurfaceProbe(key: String, panel: NotchPanel) async {
+        guard UserDefaults.standard.bool(forKey: Self.clickProbeKey) else { return }
+        guard let model = panel.viewModel, let motion = panel.motion else { return }
+        model.toggle()
+        try? await Task.sleep(nanoseconds: 900_000_000)
+        // See `probeInProgress`'s own doc comment: a real mouse-moved event landing mid-measurement
+        // would otherwise race the probe's own `ignoresMouseEvents` writes.
+        panel.probeInProgress = true
+        await probeOpenSurface(name: "band", panel: panel, motion: motion, key: key)
+
+        showDroplet(0, on: panel, motion: motion)
+        try? await Task.sleep(nanoseconds: 700_000_000)
+        await probeOpenSurface(name: "droplet", panel: panel, motion: motion, key: key)
+        panel.probeInProgress = false
+
+        model.toggle()
+    }
+
+    /// The open-state click-through measurement itself (advisor-reviewed per 07-01's own toggle
+    /// mechanism finding: a synchronous set-then-query lies — `ignoresMouseEvents` measured
+    /// p50 3.55ms / p99 9.02ms to take effect, so each of the 48 points sets the flag, waits 20ms,
+    /// THEN queries `NSWindow.windowNumber(at:)` — the same honest per-point protocol
+    /// `FluidSpikeController`'s collapsed-state probe established in 07-01.
+    private func probeOpenSurface(name: String, panel: NotchPanel, motion: FluidMotion, key: String) async {
+        let cx = panel.frame.width / 2
+        let params = motion.params
+        let probes = FluidShapeGeometry.probePoints(cx: cx, q: params, count: 24, offset: 1)
+        var insideHit = 0
+        var outsidePass = 0
+        for pair in probes {
+            let insideGlobal = CGPoint(x: panel.frame.minX + pair.inside.x, y: panel.frame.maxY - pair.inside.y)
+            panel.ignoresMouseEvents = !FluidShapeGeometry.contains(pair.inside, cx: cx, q: params)
+            try? await Task.sleep(nanoseconds: 20_000_000)
+            if NSWindow.windowNumber(at: insideGlobal, belowWindowWithWindowNumber: 0) == panel.windowNumber {
+                insideHit += 1
+            }
+
+            let outsideGlobal = CGPoint(x: panel.frame.minX + pair.outside.x, y: panel.frame.maxY - pair.outside.y)
+            panel.ignoresMouseEvents = !FluidShapeGeometry.contains(pair.outside, cx: cx, q: params)
+            try? await Task.sleep(nanoseconds: 20_000_000)
+            if NSWindow.windowNumber(at: outsideGlobal, belowWindowWithWindowNumber: 0) != panel.windowNumber {
+                outsidePass += 1
+            }
+        }
+        logger.notice("clickProbe surface=\(name, privacy: .public) mode=toggle display=\(key, privacy: .public) insideHit=\(insideHit, privacy: .public)/\(probes.count, privacy: .public) outsidePass=\(outsidePass, privacy: .public)/\(probes.count, privacy: .public)")
     }
 
     private static func makePanel(notchFrame: NSRect, screen: NSScreen, isPhysical: Bool, model: NotchViewModel, motion: FluidMotion, timer: TimerViewModel, calendar: CalendarProvider, nowPlaying: NowPlayingProvider, fullscreen: FullscreenObserver, displayKey: String, hud: HUDViewModel, clipboard: ClipboardViewModel) -> NotchPanel {
@@ -1185,8 +1245,11 @@ final class NotchPanelController: NSObject {
                     }
                 }
                 // D-04 (07-01's toggle decision) extended to the open band: a click only catches
-                // when it lands inside the LIVE (still-animating) outline.
-                panel.ignoresMouseEvents = !FluidShapeGeometry.contains(pointer, cx: cx, q: motion.params)
+                // when it lands inside the LIVE (still-animating) outline. Skipped while
+                // `probeInProgress` — see that field's own doc comment (the race it fixes).
+                if !panel.probeInProgress {
+                    panel.ignoresMouseEvents = !FluidShapeGeometry.contains(pointer, cx: cx, q: motion.params)
+                }
                 continue
             }
             panel.pendingBandClose?.cancel()
@@ -1357,6 +1420,15 @@ private final class NotchPanel: NSPanel {
     /// 07-08 Task 2: the intent-dwell timer for `candidateCell` — cancelled on every candidate
     /// change; fires `showDroplet` only if the candidate is still current when it elapses.
     var pendingIntent: DispatchWorkItem?
+    /// 07-08 Task 3 (Rule 1 fix — measured, not assumed): `true` only while
+    /// `NotchPanelController.probeOpenSurface` is mid-measurement. Found live: a real global
+    /// `mouseMoved` event landing between the probe's own `ignoresMouseEvents` write and its 20ms
+    /// settle wait lets `handleMouseMoved`'s open-panel branch overwrite that same flag from the
+    /// ACTUAL pointer position before the probe queries `windowNumber(at:)` — one run measured
+    /// `insideHit=23/24`, a second (same code, same geometry) measured `24/24` clean, confirming
+    /// the miss was this race, not a geometry defect. `handleMouseMoved` skips its own
+    /// `ignoresMouseEvents` write for a panel while this is `true`.
+    var probeInProgress = false
     // Two independent hover sources unified into one dwell state (see
     // `applyHover`): the notch's `NSTrackingArea` and the outline dwell-target
     // detector (`FluidPointer.isDwellTarget`, driven by the mouse-moved monitors).
@@ -1388,10 +1460,13 @@ private final class NotchPanel: NSPanel {
     /// `FluidSpikePanel.sendEvent` (07-01): under BOTH click-through mechanisms this is the
     /// ground-truth check — if a `.leftMouseDown` reaches this window at all while it's outside the
     /// currently drawn outline, click-through has failed regardless of what `ignoresMouseEvents`
-    /// was set to. Only checked while collapsed (`viewModel?.isOpen != true`) — the expanded panel
-    /// is a plain rectangle with no outline concept until plan 08.
+    /// was set to. 07-08 Task 3 (Rule 2 — missing critical functionality, T-07-01's own
+    /// mitigation): no longer gated on `viewModel?.isOpen != true` — the band has its own outline
+    /// now (`motion.params` while open IS the band, `cx = frame.width / 2` is still correct since
+    /// the open window is centered on the same `cx`), so this detector covers a swallowed-outside
+    /// click on the open band for free, not just the collapsed pill.
     override func sendEvent(_ event: NSEvent) {
-        if event.type == .leftMouseDown, let motion, viewModel?.isOpen != true {
+        if event.type == .leftMouseDown, let motion {
             let globalPoint = NSEvent.mouseLocation
             let cx = frame.width / 2
             let localX = globalPoint.x - frame.minX
@@ -1410,5 +1485,5 @@ private final class NotchPanel: NSPanel {
     // defensive no-op even though the panel no longer becomes key.
     override func miniaturize(_ sender: Any?) { /* no-op: notch panel is not miniaturizable */ }
     override func performMiniaturize(_ sender: Any?) { /* no-op */ }
-    override func performClose(_ sender: Any?) { /* no-op: not user-closable; Quit is via the panel's power button */ }
+    override func performClose(_ sender: Any?) { /* no-op: not user-closable; Quit lives in the status item (PANEL-03) */ }
 }
