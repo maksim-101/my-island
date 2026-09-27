@@ -556,7 +556,18 @@ final class NotchPanelController: NSObject {
             // 07-05 Task 3 (sketch's own `openBand`): opening the band — by hover-dwell or the
             // global hotkey, either path lands here via `NotchViewModel` — ends any HUD/alert
             // drop immediately rather than letting it linger under the expanding band.
-            if isOpen { self.hud.dismissNow() }
+            if isOpen {
+                self.hud.dismissNow()
+                // WR-02 (07-review fix): `hud.onVisibilityChange`'s broadcast (wired in `init`)
+                // excludes THIS panel via its `where set.model.isOpen != true` filter, because
+                // `isOpen` has already flipped true by the time this closure runs
+                // (`NotchViewModel.toggle()`/`dwellElapsed()`/`hoverEnded()` all flip `isOpen`
+                // before invoking `onOpenChange`). Without this direct call, this panel's own
+                // drop channels (`.dropOffset`/`.dropHalfWidth`/`.dropAlpha`) are never
+                // retracted, so a stale, still-visually-live drop can reappear once the band
+                // closes again and `NotchContentView` re-mounts its linked-meeting `AlertDropView`.
+                self.endAlertDrop(on: panel, motion: motion)
+            }
             if isOpen {
                 self.openBand(on: panel, motion: motion)
             } else {
