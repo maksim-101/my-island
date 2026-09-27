@@ -166,35 +166,227 @@ public enum FluidShapeGeometry {
     /// index.html:234 `TOP.dell` / `TOP.dellfs`.
     public static let bandContentTopSynthetic: CGFloat = 12
 
+    /// Ported verbatim from index.html:264-271 `frameOf`. Same clamps, same order of operations.
     public static func frameOf(_ q: FluidParams, cx: CGFloat) -> FluidFrame {
-        FluidFrame(h: 0, run: 0, d: 0, sd: 0, v: 0, xs: 0, xe: 0, tp: 0, r: 0, x0: 0, x1: 0)
+        let h = q.half * q.sx
+        let run = max(min(q.run, h - 2), 0.5)
+        let d = max(q.d, 0.5)
+        let sd = min(max(q.sd, 0.5), d)
+        let v = max(0, min(1, (d - sd) / sd))
+        let xs = cx - h + run
+        let xe = cx + h - run
+        let tp0 = max(0, q.tp) * v
+        let r = max(0, min(q.r * v, (d - sd) * 0.8, (xe - xs) / 2 - tp0))
+        let tq = tp0 * max(0, min(1, (d - r - sd) / 60))
+        return FluidFrame(h: h, run: run, d: d, sd: sd, v: v, xs: xs, xe: xe, tp: tq, r: r, x0: xs + tq + r, x1: xe - tq - r)
     }
 
+    /// Ported verbatim from index.html:273-285 `floorY` — the smootherstep flank, belly and
+    /// drawdown terms for the detail droplet's depth, layered on top of the resting sag.
     public static func floorY(x: CGFloat, q: FluidParams, cx: CGFloat) -> CGFloat {
-        0
+        let f0 = frameOf(q, cx: cx)
+        let u = max(-1, min(1, (x - (cx + q.lean)) / max(1, (f0.x1 - f0.x0) / 2)))
+        let y = f0.d + (q.sag + q.belly) * (1 - u * u)
+        let dip = max(0, q.dip)
+        guard dip >= 0.01 else { return y }
+        let k = dip / dropletHeight
+        let sxv = x - (cx + q.mx)
+        let a = abs(sxv)
+        let m = max(0, q.m)
+        let s2 = max(1, q.s2 * (1 + (sxv < 0 ? 1 : -1) * q.asym))
+        func smootherstep(_ t: CGFloat) -> CGFloat { t * t * t * (t * (t * 6 - 15) + 10) }
+        let f: CGFloat = a <= m ? 1 : (a < m + s2 ? smootherstep(1 - (a - m) / s2) : 0)
+        let belly: CGFloat = a <= m
+            ? min(18 * k, dip * 0.25) * (1 - (a / max(1, m)) * (a / max(1, m))) * (1 - (a / max(1, m)) * (a / max(1, m)))
+            : 0
+        let draw = min(7 * k, dip * 0.12) * exp(-((sxv / (m + s2 + 70)) * (sxv / (m + s2 + 70))))
+        return y + dip * f + belly + draw
     }
 
+    /// Ported verbatim from index.html:286-302 `shape` — the same cubic control points, `k1`/`k2`
+    /// from `sym`, the pure-S branch (when `d == sd`), and 120 floor samples joined by lines.
     public static func outline(cx: CGFloat, q: FluidParams, closed: Bool) -> CGPath {
-        CGMutablePath()
+        let f = frameOf(q, cx: cx)
+        let h = f.h, run = f.run, d = f.d, sd = f.sd, v = f.v, xs = f.xs, xe = f.xe, tp = f.tp, r = f.r
+        let L = cx - h, R = cx + h
+        func lerp(_ a: CGFloat, _ b: CGFloat) -> CGFloat { a + (b - a) * v }
+        let cy = lerp(sd * 0.88, sd * 0.35)
+        let H = d - r - sd
+        let bl = xs + tp, br = xe - tp
+        let pureS = d - sd <= 0.5
+        let sl = pureS ? floorY(x: f.x0, q: q, cx: cx) : sd
+        let sr = pureS ? floorY(x: f.x1, q: q, cx: cx) : sd
+        let k1 = 0.52 - 0.12 * q.sym
+        let k2 = 0.76 - 0.14 * q.sym
+        let dl = run * (1 - k2)
+        let gl = (floorY(x: f.x0 + 0.5, q: q, cx: cx) - sl) / 0.5
+        let gr = (sr - floorY(x: f.x1 - 0.5, q: q, cx: cx)) / 0.5
+
+        let path = CGMutablePath()
+        path.move(to: CGPoint(x: L, y: 0))
+        path.addCurve(
+            to: CGPoint(x: xs, y: sl),
+            control1: CGPoint(x: L + run * k1, y: 0),
+            control2: CGPoint(x: lerp(L + run * k2, xs), y: pureS ? sl - gl * dl : cy)
+        )
+        if d - sd > 0.5 {
+            path.addCurve(
+                to: CGPoint(x: bl, y: d - r),
+                control1: CGPoint(x: xs, y: sd + H * 0.45),
+                control2: CGPoint(x: bl, y: d - r - H * 0.3)
+            )
+            path.addCurve(
+                to: CGPoint(x: bl + r, y: d),
+                control1: CGPoint(x: bl, y: d - r * 0.45),
+                control2: CGPoint(x: bl + r * 0.45, y: d)
+            )
+        }
+        let N = 120
+        for i in 0...N {
+            let x = f.x0 + (f.x1 - f.x0) * CGFloat(i) / CGFloat(N)
+            path.addLine(to: CGPoint(x: x, y: floorY(x: x, q: q, cx: cx)))
+        }
+        if d - sd > 0.5 {
+            path.addCurve(
+                to: CGPoint(x: br, y: d - r),
+                control1: CGPoint(x: br - r * 0.45, y: d),
+                control2: CGPoint(x: br, y: d - r * 0.45)
+            )
+            path.addCurve(
+                to: CGPoint(x: xe, y: sd),
+                control1: CGPoint(x: br, y: d - r - H * 0.3),
+                control2: CGPoint(x: xe, y: sd + H * 0.45)
+            )
+        } else {
+            path.addLine(to: CGPoint(x: xe, y: sr))
+        }
+        path.addCurve(
+            to: CGPoint(x: R, y: 0),
+            control1: CGPoint(x: lerp(R - run * k2, xe), y: pureS ? sr + gr * dl : cy),
+            control2: CGPoint(x: R - run * k1, y: 0)
+        )
+        if closed { path.closeSubpath() }
+        return path
     }
 
+    /// Ported verbatim from index.html:412-418 `pebble` — a separate drop with a soft, slightly
+    /// sagging top and a rounded belly, same winding as the outline.
     public static func pebble(w: CGFloat, y: CGFloat, h: CGFloat, ox: CGFloat = 0) -> CGPath {
-        CGMutablePath()
+        let r = min(h / 2, w)
+        let a = -w + ox
+        let b = w + ox
+        let path = CGMutablePath()
+        path.move(to: CGPoint(x: b - r, y: y))
+        path.addCurve(
+            to: CGPoint(x: a + r, y: y),
+            control1: CGPoint(x: w / 3 + ox, y: y + 2.5),
+            control2: CGPoint(x: -w / 3 + ox, y: y + 2.5)
+        )
+        path.addCurve(
+            to: CGPoint(x: a, y: y + r),
+            control1: CGPoint(x: a + r * 0.45, y: y),
+            control2: CGPoint(x: a, y: y + r * 0.55)
+        )
+        path.addCurve(
+            to: CGPoint(x: a + r, y: y + h),
+            control1: CGPoint(x: a, y: y + h - r * 0.55),
+            control2: CGPoint(x: a + r * 0.45, y: y + h)
+        )
+        path.addCurve(
+            to: CGPoint(x: b - r, y: y + h),
+            control1: CGPoint(x: -w / 3 + ox, y: y + h + 3),
+            control2: CGPoint(x: w / 3 + ox, y: y + h + 3)
+        )
+        path.addCurve(
+            to: CGPoint(x: b, y: y + h - r),
+            control1: CGPoint(x: b - r * 0.45, y: y + h),
+            control2: CGPoint(x: b, y: y + h - r * 0.55)
+        )
+        path.addCurve(
+            to: CGPoint(x: b - r, y: y),
+            control1: CGPoint(x: b, y: y + r * 0.55),
+            control2: CGPoint(x: b - r * 0.45, y: y)
+        )
+        path.closeSubpath()
+        return path
     }
 
+    /// Ported verbatim from index.html:420-424 `neck` — the liquid bridge between floor and drop;
+    /// its waist narrows as the drop falls.
     public static func neck(a: CGFloat, y0: CGFloat, y1: CGFloat, waist: CGFloat) -> CGPath {
-        CGMutablePath()
+        let my = (y0 + y1) / 2
+        let path = CGMutablePath()
+        path.move(to: CGPoint(x: -a, y: y0 - 4))
+        path.addLine(to: CGPoint(x: a, y: y0 - 4))
+        path.addCurve(
+            to: CGPoint(x: waist, y: my),
+            control1: CGPoint(x: a, y: y0 + 1),
+            control2: CGPoint(x: waist, y: my - 1.5)
+        )
+        path.addCurve(
+            to: CGPoint(x: a, y: y1 + 4),
+            control1: CGPoint(x: waist, y: my + 1.5),
+            control2: CGPoint(x: a, y: y1 - 1)
+        )
+        path.addLine(to: CGPoint(x: -a, y: y1 + 4))
+        path.addCurve(
+            to: CGPoint(x: -waist, y: my),
+            control1: CGPoint(x: -a, y: y1 - 1),
+            control2: CGPoint(x: -waist, y: my + 1.5)
+        )
+        path.addCurve(
+            to: CGPoint(x: -a, y: y0 - 4),
+            control1: CGPoint(x: -waist, y: my - 1.5),
+            control2: CGPoint(x: -a, y: y0 + 1)
+        )
+        path.closeSubpath()
+        return path
     }
 
+    /// Not named in the sketch (a DOM `getBoundingClientRect`/pointer-hit-test stood in for it
+    /// there); the closed outline's own winding fill, exactly what the WindowServer's alpha
+    /// hit-test approximates on a real panel.
     public static func contains(_ p: CGPoint, cx: CGFloat, q: FluidParams) -> Bool {
-        false
+        outline(cx: cx, q: q, closed: true).contains(p, using: .winding, transform: .identity)
     }
 
+    /// Not named in the sketch. Bisection on `contains` between `y = 0` (never tested directly —
+    /// on-boundary is undefined, so the search starts strictly above it) and
+    /// `d + sag + dip + 60` (always below the deepest possible drawn floor), 40 iterations.
     public static func boundaryY(atX x: CGFloat, cx: CGFloat, q: FluidParams) -> CGFloat {
-        0
+        let path = outline(cx: cx, q: q, closed: true)
+        var lo: CGFloat = 0
+        var hi: CGFloat = q.d + q.sag + q.dip + 60
+        for _ in 0..<40 {
+            let mid = (lo + hi) / 2
+            if path.contains(CGPoint(x: x, y: mid), using: .winding, transform: .identity) {
+                lo = mid
+            } else {
+                hi = mid
+            }
+        }
+        return (lo + hi) / 2
     }
 
+    /// Not named in the sketch. `count` x positions evenly spread over
+    /// `(cx - half + 1) ... (cx + half - 1)`, each pair straddling `boundaryY` by `offset`. Near
+    /// a shoulder tip `boundaryY` approaches 0, so a naive `boundaryY - offset` can go negative
+    /// (above the shape's own top edge, not "more inside") — clamp the inside probe to never go
+    /// above half the boundary's own height, keeping it a genuine interior point at every x.
     public static func probePoints(cx: CGFloat, q: FluidParams, count: Int, offset: CGFloat) -> [(inside: CGPoint, outside: CGPoint)] {
-        []
+        guard count > 0 else { return [] }
+        let lo = cx - q.half + 1
+        let hi = cx + q.half - 1
+        var results: [(inside: CGPoint, outside: CGPoint)] = []
+        results.reserveCapacity(count)
+        for i in 0..<count {
+            let t: CGFloat = count == 1 ? 0.5 : CGFloat(i) / CGFloat(count - 1)
+            let x = lo + (hi - lo) * t
+            let boundary = boundaryY(atX: x, cx: cx, q: q)
+            let insideY = max(boundary - offset, boundary / 2)
+            let outsideY = boundary + offset
+            results.append((inside: CGPoint(x: x, y: insideY), outside: CGPoint(x: x, y: outsideY)))
+        }
+        return results
     }
 }
