@@ -68,11 +68,11 @@ struct WingItemsView: View {
 
     private var rightSlot: Slot? {
         guard !isBulge else { return nil }
-        // The timer disjunct sits OUTSIDE `musicVisible`'s fullscreen suppression — a running
-        // timer still shows in every OTHER fullscreen state, same as the pre-fluid physical
-        // wing. Only the bulge itself (guarded above) replaces this clock-face with the outline
-        // timer line.
-        if timer.isRunning { return .timerFace }
+        // The timer disjunct sits OUTSIDE `musicVisible`'s fullscreen suppression — a running (or
+        // just-finished, 07-04 Task 2) timer still shows in every OTHER fullscreen state, same as
+        // the pre-fluid physical wing. Only the bulge itself (guarded above) replaces this
+        // clock-face with the outline timer line.
+        if timer.isRunning || timer.finishedAt != nil { return .timerFace }
         if musicVisible { return .wave }
         return nil
     }
@@ -165,9 +165,17 @@ private struct WingTimerClockFace: View {
     let timer: TimerViewModel
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
+    /// 07-04 Task 2: `tokenState` reads nil once a timer has ended (`engine.mode` is already
+    /// cleared) — while `finishedAt` is set, `finishedTokenState` (captured right before
+    /// completion) is the only source that still knows the finished colour, so the clock-face
+    /// stays lit "full, in the finished colour" instead of dropping to `textFaint`.
+    private var displayedTokenState: Tokens.TimerState? {
+        timer.finishedAt != nil ? timer.finishedTokenState : timer.tokenState
+    }
+
     var body: some View {
         ZStack {
-            let color = Tokens.timerColor(for: timer.tokenState)
+            let color = Tokens.timerColor(for: displayedTokenState)
             Circle()
                 .fill(color.opacity(0.18))
             Circle()

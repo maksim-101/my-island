@@ -482,7 +482,7 @@ final class NotchPanelController: NSObject {
         }
         panel.orderFrontRegardless()
 
-        let overlay = Self.makeOverlayPanel(notchFrame: anchorRect, anchorMaxY: anchorMaxY, isPhysical: mode.isPhysical, motion: motion, model: model)
+        let overlay = Self.makeOverlayPanel(notchFrame: anchorRect, anchorMaxY: anchorMaxY, isPhysical: mode.isPhysical, motion: motion, model: model, timer: timer, fullscreen: fullscreenObserver, displayID: screen.displayID)
         overlay.orderFrontRegardless()
 
         let hudPanel = Self.makeHudPanel(notchFrame: anchorRect, anchorMaxY: anchorMaxY, hud: hud)
@@ -698,7 +698,10 @@ final class NotchPanelController: NSObject {
     /// The click-through overlay window (replaces the old non-interactive "extended pill" bar):
     /// `ignoresMouseEvents = true` always — it draws rim/glow (`FluidOverlayView`) over the
     /// interactive panel's fill and never shadows that panel's own click-through toggling.
-    private static func makeOverlayPanel(notchFrame: NSRect, anchorMaxY: CGFloat, isPhysical: Bool, motion: FluidMotion, model: NotchViewModel) -> NSPanel {
+    /// `timer`/`fullscreen`/`displayID` (07-04 Task 2) let it draw the bulge's own outline timer
+    /// line and the finished-timer pulse — the same providers/observer threaded to every other
+    /// per-display view.
+    private static func makeOverlayPanel(notchFrame: NSRect, anchorMaxY: CGFloat, isPhysical: Bool, motion: FluidMotion, model: NotchViewModel, timer: TimerViewModel, fullscreen: FullscreenObserver, displayID: CGDirectDisplayID?) -> NSPanel {
         let q = collapsedParams(isPhysical: isPhysical, notchFrame: notchFrame)
         let frame = overlayPanelFrame(notchFrame: notchFrame, anchorMaxY: anchorMaxY, q: q)
 
@@ -706,7 +709,7 @@ final class NotchPanelController: NSObject {
 
         let container = NSView(frame: NSRect(origin: .zero, size: frame.size))
         container.autoresizesSubviews = true
-        let hosting = NSHostingView(rootView: FluidOverlayView(motion: motion, model: model, isPhysical: isPhysical))
+        let hosting = NSHostingView(rootView: FluidOverlayView(motion: motion, model: model, isPhysical: isPhysical, timer: timer, fullscreen: fullscreen, displayID: displayID))
         hosting.frame = NSRect(origin: .zero, size: frame.size)
         hosting.autoresizingMask = [.width, .height]
         container.addSubview(hosting)

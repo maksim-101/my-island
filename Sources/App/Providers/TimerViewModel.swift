@@ -26,11 +26,18 @@ final class TimerViewModel {
     /// D-11 itself.
     var onCompletion: (() -> Void)?
 
-    /// Toggled once per completion (D-11). `NotchContentView` observes this
-    /// to trigger a brief neutral/indigo flash overlay on the notch shape —
-    /// never amber, and never a system notification (that's the whole point
-    /// of D-11: no Notification Center TCC grant).
-    private(set) var flashPulse: Bool = false
+    /// Set once per completion (D-11, replaced 07-04 Task 2 — the old completion-toggle field drove
+    /// a flat accent flash; `FluidOverlayView` now reads this to draw the three-ring pulse instead).
+    /// `nil` whenever no timer has JUST finished — cleared automatically after `FluidPulse.duration`
+    /// by `scheduleFinishedClear()`, and immediately by any new start/reset. Never amber, and never
+    /// a system notification (that's the whole point of D-11: no Notification Center TCC grant).
+    private(set) var finishedAt: Date?
+    /// The `tokenState` that WAS running right before this completion — captured in `handleTick()`
+    /// before `engine.tick(now:)` clears `engine.mode` to nil, so the finished pulse still knows
+    /// which color (coral/mint/indigo) to draw even though `tokenState` itself reads nil once a
+    /// timer has ended.
+    private(set) var finishedTokenState: Tokens.TimerState?
+    private var finishedClearWork: DispatchWorkItem?
 
     var mode: TimerMode? { engine.mode }
     var cycle: Int { engine.cycle }
@@ -63,6 +70,7 @@ final class TimerViewModel {
     }
 
     func startCountdown(minutes: Double) {
+        clearFinished()
         let duration = minutes * 60
         startedDuration = duration
         engine.startCountdown(duration: duration, now: .now)
@@ -71,6 +79,7 @@ final class TimerViewModel {
     }
 
     func startPomodoro() {
+        clearFinished()
         let config = PomodoroConfig()
         startedDuration = config.focusDuration
         engine.startPomodoro(config: config, now: .now)
@@ -90,10 +99,33 @@ final class TimerViewModel {
     }
 
     func reset() {
+        clearFinished()
         engine.reset()
         remaining = 0
         startedDuration = 0
         stopTicking()
+    }
+
+    /// Any new start/reset clears a still-showing finished pulse immediately (07-04 Task 2) —
+    /// cancels the pending auto-clear work item so it can never fire late and null out state a
+    /// FRESH run has since repopulated.
+    private func clearFinished() {
+        finishedClearWork?.cancel()
+        finishedClearWork = nil
+        finishedAt = nil
+        finishedTokenState = nil
+    }
+
+    private func scheduleFinishedClear() {
+        finishedClearWork?.cancel()
+        let work = DispatchWorkItem { [weak self] in
+            guard let self else { return }
+            self.finishedAt = nil
+            self.finishedTokenState = nil
+            self.finishedClearWork = nil
+        }
+        finishedClearWork = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + FluidPulse.duration, execute: work)
     }
 
     private func startTicking() {
@@ -107,6 +139,11 @@ final class TimerViewModel {
 
     private func handleTick() {
         let now = Date.now
+        // Captured BEFORE `engine.tick(now:)` below — by the time `engine.mode == nil` is
+        // checked further down, `engine.tick` has already cleared it, so `tokenState` (computed
+        // from `engine.mode`) would read nil right when the completion branch needs to know which
+        // color WAS running (07-04 Task 2).
+        let completingTokenState = tokenState
         let transitioned = engine.tick(now: now)
         remaining = engine.remaining(now: now)
 
@@ -128,7 +165,9 @@ final class TimerViewModel {
             // influenced path) — guarded optional, skips silently if
             // unavailable (T-03-T1).
             NSSound(named: "Glass")?.play()
-            flashPulse.toggle()
+            finishedAt = now
+            finishedTokenState = completingTokenState
+            scheduleFinishedClear()
             onCompletion?()
         }
     }
