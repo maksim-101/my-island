@@ -167,9 +167,9 @@ final class NotchPanelController: NSObject {
         // `hud` arbiter and drop mechanism above, not a dedicated panel window.
         // calendarProvider's own init() already kicks off the initial
         // fetch/scheduling when authorization is already granted.
-        calendarProvider.onThresholdCrossed = { [weak self] text in
+        calendarProvider.onThresholdCrossed = { [weak self] event, lead in
             guard let self else { return }
-            self.hud.showMeeting(text: text)
+            self.hud.showMeeting(title: event.title, lead: lead, joinURL: event.joinURL)
         }
 
         // `onChange` fires whenever `FullscreenObserver` detects a fullscreen transition on any
@@ -499,12 +499,12 @@ final class NotchPanelController: NSObject {
         return PanelSet(panel: panel, overlay: overlay, model: model, motion: motion)
     }
 
-    /// 07-05 Task 1 (FLUID-02): the HUD/alert drop's rest half-width/height for a given panel —
-    /// until Task 2's `AlertDropLayout.hud` lands, the literal 80/70 × 22 the design agreement's
-    /// own HUD row states (07-DESIGN-AGREEMENT.md §6: 160pt MacBook / 140pt Dell wide, 22pt deep —
-    /// half-width is half of that).
+    /// 07-05 Task 2 (FLUID-02): the HUD/alert drop's rest half-width/height for a given panel —
+    /// `AlertDropLayout.hud` while `hud.meeting` is nil; the meeting variant's own title-measured
+    /// size (Task 3) once it is not.
     private func dropSize(for panel: NotchPanel) -> (halfWidth: CGFloat, height: CGFloat) {
-        (panel.isPhysical ? 80 : 70, 22)
+        let (halfWidth, height) = AlertDropLayout.hud(isPhysical: panel.isPhysical)
+        return (halfWidth, height)
     }
 
     /// Starts the HUD/alert drop's fall on one panel's own `FluidMotion` clock — ported from the

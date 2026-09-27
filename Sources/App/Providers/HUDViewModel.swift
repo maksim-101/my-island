@@ -5,9 +5,8 @@ enum HUDGlyph {
     case brightness
     case volume
     case volumeMuted
-    /// The transient meeting-countdown bump (CAL-01/D-02) — a text-content
-    /// glyph, not a level-bar one; see `HUDViewModel.text` and
-    /// `AlertDropView`'s text-branch.
+    /// The transient meeting-countdown bump (CAL-01/D-02) — a structured `MeetingAlert`, not a
+    /// level-bar glyph; see `HUDViewModel.meeting` and `AlertDropView`'s meeting-content branch.
     case meeting
 
     /// SF Symbol name for `Image(systemName:)`.
@@ -19,6 +18,16 @@ enum HUDGlyph {
         case .meeting: return "calendar"
         }
     }
+}
+
+/// 07-05 Task 2 (PANEL-07): the meeting alert's structured payload — title, a short lead
+/// ("60m"/"15m"/"now") and an optional join link — replacing the old pre-built "{title} in {N}m"
+/// sentence so `AlertDropView` can measure/lay out and size each piece independently (Task 3)
+/// instead of truncating one opaque string.
+struct MeetingAlert: Equatable {
+    let title: String
+    let lead: String
+    let joinURL: URL?
 }
 
 /// The single arbiter (Pitfall 4) that coalesces `VolumeProvider` and
@@ -40,10 +49,10 @@ final class HUDViewModel {
     private(set) var isShowingHUD: Bool = false
     private(set) var level: Double = 0
     private(set) var glyph: HUDGlyph = .volume
-    /// Non-nil only for the meeting bump (`showMeeting(text:)`) — nil for the
-    /// brightness/volume level-bar glyphs. `AlertDropView` branches its drop
-    /// content on this.
-    private(set) var text: String?
+    /// Non-nil only for the meeting bump (set by the meeting entry point below) — nil for the
+    /// brightness/volume level-bar glyphs. `AlertDropView`/`NotchPanelController` branch their drop
+    /// content and sizing on this.
+    private(set) var meeting: MeetingAlert?
 
     /// Fired synchronously whenever `isShowingHUD` flips — the controller
     /// uses this to start/end the HUD/alert drop's fall and rise on every
@@ -65,14 +74,14 @@ final class HUDViewModel {
     /// `NotchLayout.meetingBumpFadeDelay` dwell (a full sentence needs more
     /// read time than the ~1.5s brightness/volume nudge) instead of
     /// `hudFadeDelay`.
-    func showMeeting(text: String) {
-        show(glyph: .meeting, level: 0, text: text, fadeDelay: NotchLayout.meetingBumpFadeDelay)
+    func showMeeting(title: String, lead: String, joinURL: URL?) {
+        show(glyph: .meeting, level: 0, meeting: MeetingAlert(title: title, lead: lead, joinURL: joinURL), fadeDelay: NotchLayout.meetingBumpFadeDelay)
     }
 
-    private func show(glyph: HUDGlyph, level: Double, text: String? = nil, fadeDelay: TimeInterval = NotchLayout.hudFadeDelay) {
+    private func show(glyph: HUDGlyph, level: Double, meeting: MeetingAlert? = nil, fadeDelay: TimeInterval = NotchLayout.hudFadeDelay) {
         self.glyph = glyph
         self.level = level
-        self.text = text
+        self.meeting = meeting
 
         if !isShowingHUD {
             isShowingHUD = true

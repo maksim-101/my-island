@@ -195,11 +195,13 @@ final class CalendarProvider {
     /// re-querying EventKit (Pattern 4, Pitfall 7).
     private(set) var countdowns: [String: String] = [:]
 
-    /// Fired exactly once per 15m/5m/1m threshold per event (Pattern 3) with a
-    /// "{title} in {N}m" string — `NotchPanelController` wires this into
-    /// `hud.showMeeting(text:)`, the same idiom as `volumeProvider.onChange`/
-    /// `brightnessProvider.onChange`.
-    var onThresholdCrossed: ((String) -> Void)?
+    /// Fired exactly once per 1h/15m/at-start threshold per event (Pattern 3) with the event and a
+    /// short lead ("60m"/"15m"/"now") — `NotchPanelController` wires this into
+    /// `hud.showMeeting(title:lead:joinURL:)`, the same idiom as `volumeProvider.onChange`/
+    /// `brightnessProvider.onChange`. 07-05 Task 2: carries the event (title, joinURL) and the
+    /// lead as structured data instead of one pre-built sentence, so `AlertDropView` (Task 3) can
+    /// measure and lay out each piece independently.
+    var onThresholdCrossed: ((CalendarEventModel, String) -> Void)?
 
     private let service = CalendarService()
     private let logger = AppLog.make("CalendarProvider")
@@ -342,21 +344,18 @@ final class CalendarProvider {
         thresholdTimer = timer
     }
 
-    /// Records the fired date, invokes `onThresholdCrossed` with the "{title} in {N}m" text (or
-    /// "{title} now" at the at-start threshold — title truncation is HUDPillView's job via
-    /// `.lineLimit(1)`), then arms the next pending threshold for the same event. Guards against
-    /// a stale timer firing after `nextEvent` has already moved on to a different event.
+    /// Records the fired date, invokes `onThresholdCrossed` with the event and a short lead
+    /// ("60m"/"15m"/"now" — 07-05 Task 2: the App layer now builds the drop's own "{lead} ·
+    /// {title} · Join" content from these pieces, not a pre-built sentence here), then arms the
+    /// next pending threshold for the same event. Guards against a stale timer firing after
+    /// `nextEvent` has already moved on to a different event.
     private func fireThreshold(fireDate: Date, event: CalendarEventModel) {
         guard events.contains(where: { $0.id == event.id }) else {
             return
         }
         firedThresholds.insert(fireDate)
-        let unit = RelativeTimeFormat.string(remaining: event.startDate.timeIntervalSince(fireDate), rounding: .nearest)
-        // RelativeTimeFormat already returns "now" for the at-start (zero-remaining) threshold —
-        // "in now" reads wrong, so drop the "in" for that case (mirrors the same idiom at
-        // SyntheticPillLayout.swift's Now Playing/countdown text) rather than a new zero check.
-        let text = unit == "now" ? "\(event.title) now" : "\(event.title) in \(unit)"
-        onThresholdCrossed?(text)
+        let lead = RelativeTimeFormat.string(remaining: event.startDate.timeIntervalSince(fireDate), rounding: .nearest)
+        onThresholdCrossed?(event, lead)
         armNextThreshold(for: event)
     }
 
