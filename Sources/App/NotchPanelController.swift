@@ -1592,6 +1592,26 @@ final class NotchPanelController: NSObject {
                 Self.applyHover(panel: panel)
             }
 
+            // `notchHovering` is otherwise driven ONLY by `HoverTrackingView`'s AppKit
+            // `NSTrackingArea` enter/exit callbacks (see that type's own doc comment), which have
+            // a known AppKit failure mode: a pointer that exits fast through the physical SCREEN
+            // edge — exactly what "move up off a notch that sits at the very top of the display"
+            // is — can leave `mouseExited` never firing. That strands `notchHovering` at `true`
+            // forever, which no later close-time resync can distinguish from a pointer that is
+            // genuinely still there, because both look identical from the cached flag alone.
+            // Self-correct it here from the SAME live `NSEvent.mouseLocation` this method already
+            // reads on every real mouse-moved event anywhere on screen (the global monitor above),
+            // exactly mirroring how `outlineHovering` already self-corrects two lines up — a
+            // simple screen-space frame containment check against the panel's own current frame
+            // (both in the same bottom-left-origin global coordinate space, no conversion needed).
+            if !isOpen {
+                let insideContainer = panel.frame.contains(mouseGlobal)
+                if panel.notchHovering != insideContainer {
+                    panel.notchHovering = insideContainer
+                    Self.applyHover(panel: panel)
+                }
+            }
+
             if isOpen, let model = panel.viewModel {
                 // 07-08 (D-06 Wave 2): the AppKit tracking-area exit no longer closes the band —
                 // the open window is now much larger than the drawn band+droplet outline, so
