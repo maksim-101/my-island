@@ -48,7 +48,21 @@ final class FluidMotion: NSObject {
 
     private var displayLink: CADisplayLink?
     private var lastTimestamp: CFTimeInterval?
-    private weak var ownerScreen: NSScreen?
+    /// 2026-09-27 (regression found live): the stable CoreGraphics identifier of the screen this
+    /// clock belongs to — deliberately NOT a cached `NSScreen` reference (weak or strong).
+    /// `NSScreen` instances are documented to be unstable across ANY display/Space reconfiguration
+    /// (Apple's own guidance: re-fetch from `NSScreen.screens` after
+    /// `NSApplication.didChangeScreenParametersNotification` rather than holding one). A `weak`
+    /// reference here (the original WR-01 fix) went nil across exactly that class of event —
+    /// switching fullscreen apps/Spaces, even on another display — and `resume()`'s fallback to
+    /// `NSScreen.main` could then either resolve the wrong display or, in the narrow window before
+    /// it did, leave `displayLink` nil: every channel/spring set via `setChannel`/`set`/`goTo` in
+    /// that window had its TARGET updated but never STEPPED (`tick()` never ran), freezing
+    /// `channels[.timerProgress]` at a stale, usually-low value — exactly "the timer border isn't
+    /// fully shown, especially near the ends" the user reported, and "more prominent after
+    /// open/close" (the burst of other `goTo`/`set` calls that follow eventually got a working
+    /// `resume()` and caught every frozen spring up at once).
+    private var ownerDisplayID: CGDirectDisplayID?
 
     /// 07-08 (D-06 Wave 2): one-shot "the springs settled" notification, replacing the fixed
     /// `NotchLayout.collapseWindowDelay` timer for the band's close-then-shrink window sequencing.
@@ -215,7 +229,7 @@ final class FluidMotion: NSObject {
 
     func startClock(on screen: NSScreen) {
         guard displayLink == nil else { return }
-        ownerScreen = screen
+        ownerDisplayID = screen.displayID
         let link = screen.displayLink(target: self, selector: #selector(tick(_:)))
         link.add(to: .main, forMode: .common)
         displayLink = link
@@ -227,8 +241,14 @@ final class FluidMotion: NSObject {
         lastTimestamp = nil
     }
 
+    /// Re-resolves a live `NSScreen` from `NSScreen.screens` by the stored stable `displayID`
+    /// every time, rather than trusting any cached `NSScreen` reference — see `ownerDisplayID`'s
+    /// own doc comment for why. Falls back to `NSScreen.main` only when the owning display is
+    /// genuinely gone (disconnected), matching the pre-WR-01 behaviour for that case.
     private func resume() {
-        guard displayLink == nil, let screen = ownerScreen ?? NSScreen.main else { return }
+        guard displayLink == nil else { return }
+        let ownerScreen = ownerDisplayID.flatMap { id in NSScreen.screens.first { $0.displayID == id } }
+        guard let screen = ownerScreen ?? NSScreen.main else { return }
         startClock(on: screen)
     }
 
