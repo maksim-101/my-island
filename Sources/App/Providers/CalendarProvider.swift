@@ -133,19 +133,38 @@ actor CalendarService {
     }
 
     /// Adapts an `EKEvent` into the `Sendable` projection — NEVER returns the
-    /// live `EKEvent` itself (Pitfall 1). Calls `VideoLinkDetector.detect` at
-    /// this actor boundary so no EventKit type crosses into `CalendarProvider`.
+    /// live `EKEvent` itself (Pitfall 1). Calls `VideoLinkDetector.detect`/`.serviceName(for:)`
+    /// and reads `EKParticipant` here, at this actor boundary, so no EventKit type crosses into
+    /// `CalendarProvider` (07-10: `attendeeNames`/`serviceName` extend this same seam).
     private func mapToSendable(_ event: EKEvent) -> CalendarEventModel {
         let startDate = event.startDate ?? .now
         let joinURL = VideoLinkDetector.detect(url: event.url?.absoluteString, location: event.location, notes: event.notes)
+        let serviceName = joinURL.flatMap(VideoLinkDetector.serviceName(for:))
+        let attendeeNames = (event.attendees ?? [])
+            .filter { !$0.isCurrentUser }
+            .prefix(12)
+            .map(Self.displayName(for:))
         return CalendarEventModel(
             id: "\(event.eventIdentifier ?? "")_\(startDate.timeIntervalSince1970)",
             title: event.title ?? "",
             startDate: startDate,
             endDate: event.endDate ?? startDate,
             location: event.location,
-            joinURL: joinURL
+            joinURL: joinURL,
+            attendeeNames: Array(attendeeNames),
+            serviceName: serviceName
         )
+    }
+
+    /// `attendee.name` when EventKit populated it; otherwise the local part of the attendee's
+    /// `mailto:` URL (`EKParticipant.url` is non-optional and typically a `mailto:` link) — never
+    /// the raw email, which could be longer than a 22pt initials circle wants to render anyway
+    /// (the App layer derives initials from whichever string this returns).
+    private static func displayName(for attendee: EKParticipant) -> String {
+        if let name = attendee.name, !name.isEmpty { return name }
+        let raw = attendee.url.absoluteString
+        let withoutScheme = raw.hasPrefix("mailto:") ? String(raw.dropFirst("mailto:".count)) : raw
+        return String(withoutScheme.split(separator: "@").first ?? Substring(withoutScheme))
     }
 
     /// Adapts `EKParticipantStatus` onto the pure `CalendarEventFilter`
@@ -170,6 +189,12 @@ struct CalendarEventModel: Sendable, Identifiable, Equatable {
     let endDate: Date
     let location: String?
     let joinURL: URL?
+    /// Non-organizer/non-self attendees (07-10, PANEL-04 §9), at most 12 — `EKParticipant.name`
+    /// when EventKit has it, otherwise the local part of their `mailto:` address.
+    let attendeeNames: [String]
+    /// `VideoLinkDetector.serviceName(for:)` applied to `joinURL` — `nil` when there is no link or
+    /// its host isn't recognized; the droplet falls back to `location` in that case.
+    let serviceName: String?
 }
 
 @MainActor
