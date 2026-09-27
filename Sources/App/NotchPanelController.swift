@@ -112,6 +112,12 @@ final class NotchPanelController: NSObject {
     /// detector on `NotchPanel.sendEvent(_:)` logging zero swallowed outside clicks.
     static let clickProbeKey = "MyIslandClickProbe"
 
+    /// 07-13 (FEEL-05): debug-only UserDefaults flag, same convention as `clickProbeKey` above —
+    /// when set at launch, `runMotionSelfTest()` drives a repeatable 20s open/droplet/close loop on
+    /// the main display's own panel set so xctrace's Animation Hitches template has a scripted
+    /// interaction to record against, and logs `selfTest done` when it finishes.
+    static let motionSelfTestKey = "MyIslandMotionSelfTest"
+
     /// 07-02 Task 3 (WR-04 paired-constant convention): which content the left wing shows when a
     /// timer runs WITH music (the only slot the assumption-delta decision promoted to a setting —
     /// music alone always shows artwork, a timer alone shows no left content at all). Read live via
@@ -271,6 +277,13 @@ final class NotchPanelController: NSObject {
         }
 
         rebuildPanels()
+
+        // 07-13 (FEEL-05): the scripted self-test only ever runs when a human/script opted in via
+        // `motionSelfTestKey` at launch — never on a normal run. `rebuildPanels()` above must have
+        // already built the main display's own `PanelSet` for this to find anything to drive.
+        if UserDefaults.standard.bool(forKey: Self.motionSelfTestKey) {
+            runMotionSelfTest()
+        }
 
         // T-02-03 (02-SECURITY.md): a non-global replacement was evaluated first and rejected —
         // three checkable facts about this file rule it out. (a) The wing/bar panel window is
@@ -1177,6 +1190,37 @@ final class NotchPanelController: NSObject {
         panel.viewModel?.toggle()
     }
 
+    /// 07-13 (FEEL-04): the app's own latency signposter — static (not per-instance) because
+    /// `handleHoverChange`'s own `makePanel`-owned closure has no controller `self` to read an
+    /// instance property from. `beginHotkeyLatency`/`beginDwellLatency`/`beginActionLatency` each
+    /// begin ONE named interval and end it (plus log `latency kind=<hotkey|dwell|action>
+    /// ms=<value>` at `.notice`) from `FluidMotion.onNextFrame` — "first frame" is exactly what
+    /// that callback already means.
+    private static let latencySignposter = OSSignposter(subsystem: AppIdentity.bundleID, category: "Latency")
+    private static let latencyLogger = AppLog.make("NotchPanelController")
+
+    private static func beginHotkeyLatency(motion: FluidMotion) {
+        beginLatency(name: "hotkeyToFrame", kind: "hotkey", motion: motion)
+    }
+
+    private static func beginDwellLatency(motion: FluidMotion) {
+        beginLatency(name: "dwellToFrame", kind: "dwell", motion: motion)
+    }
+
+    private static func beginActionLatency(motion: FluidMotion) {
+        beginLatency(name: "actionToFrame", kind: "action", motion: motion)
+    }
+
+    private static func beginLatency(name: StaticString, kind: String, motion: FluidMotion) {
+        let state = latencySignposter.beginInterval(name)
+        let start = DispatchTime.now()
+        motion.onNextFrame {
+            latencySignposter.endInterval(name, state)
+            let ms = Double(DispatchTime.now().uptimeNanoseconds &- start.uptimeNanoseconds) / 1_000_000
+            latencyLogger.notice("latency kind=\(kind, privacy: .public) ms=\(ms, privacy: .public)")
+        }
+    }
+
     /// PANEL-09 (07-12): the ⌥Space entry point — the ONLY path that takes keyboard focus (see
     /// `NotchPanel.canBecomeKey`'s own doc comment). Resolves the panel under the pointer exactly
     /// like `toggle()` above; on open, remembers the frontmost app so Esc/a second ⌥Space can give
@@ -1187,6 +1231,11 @@ final class NotchPanelController: NSObject {
     func toggleFromHotkey() {
         guard let panel = panels.first(where: { $0.screenFrame.contains(NSEvent.mouseLocation) }) else { return }
         guard let model = panel.viewModel else { return }
+        // 07-13 (FEEL-04): begun before either branch below — a hotkey press opening OR closing
+        // the band both count as "hotkey press → first reacting frame."
+        if let motion = panel.motion {
+            Self.beginHotkeyLatency(motion: motion)
+        }
         if model.isOpen {
             closeBandAndRestoreFocus(on: panel)
             return
@@ -1202,6 +1251,68 @@ final class NotchPanelController: NSObject {
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.26) { [weak self, weak panel] in
             guard let self, let panel, let motion = panel.motion, panel.viewModel?.isOpen == true else { return }
             self.showDroplet(0, on: panel, motion: motion)
+        }
+    }
+
+    /// 07-13 (FEEL-05): `motionSelfTestKey`'s scripted run — the panel set for `NSScreen.main`
+    /// only, never every display, and never real key focus (unlike `toggleFromHotkey`). Reuses the
+    /// SAME dwell (`Self.applyHover`) and action (`performPrimaryAction`) call sites a real
+    /// hover/click would use rather than a bespoke path, so the run also exercises `dwellToFrame`/
+    /// `actionToFrame` (FEEL-04), not just the open/droplet/close motion this exists for (FEEL-05).
+    /// The one action exercised is always `.clipboard` — `ClipboardViewModel.select` re-copies
+    /// whatever is ALREADY the top pasteboard entry (a safe, idempotent no-op; see that method's
+    /// own doc comment), unlike every other module's primary action (driving real playback,
+    /// starting a real Pomodoro, opening a real meeting URL, or jumping the user's own window
+    /// focus to an iTerm2 pane) — none of which an unattended scripted run may ever trigger.
+    private func runMotionSelfTest() {
+        guard let mainScreen = NSScreen.main, let set = panelSets[mainScreen.displayKey] else {
+            logger.notice("selfTest done")
+            return
+        }
+        selfTestStep(panel: set.panel, motion: set.motion, deadline: Date().addingTimeInterval(20))
+    }
+
+    /// One open→droplets→close cycle of the self-test loop, re-scheduling itself until `deadline`.
+    private func selfTestStep(panel: NotchPanel, motion: FluidMotion, deadline: Date) {
+        guard Date() < deadline else {
+            logger.notice("selfTest done")
+            return
+        }
+        let modules = enabledModules
+        guard !modules.isEmpty else {
+            logger.notice("selfTest done")
+            return
+        }
+
+        // Open: the same dwell path a real hover uses (`hoverBegan` → `NotchLayout.hoverDwellDelay`
+        // → `dwellElapsed`, where `dwellToFrame` begins) — reset so this cycle's `hoverBegan` fires
+        // again even though the previous cycle already applied `hovering: true` once.
+        panel.lastHoverApplied = false
+        panel.notchHovering = true
+        Self.applyHover(panel: panel)
+
+        for (i, module) in modules.enumerated() {
+            let delay = NotchLayout.hoverDwellDelay + 0.6 * Double(i + 1)
+            DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self, weak panel] in
+                guard let self, let panel, panel.viewModel?.isOpen == true else { return }
+                self.showDroplet(i, on: panel, motion: motion)
+                if module == .clipboard {
+                    self.performPrimaryAction(for: .clipboard, on: panel)
+                }
+            }
+        }
+
+        let closeDelay = NotchLayout.hoverDwellDelay + 0.6 * Double(modules.count + 1)
+        DispatchQueue.main.asyncAfter(deadline: .now() + closeDelay) { [weak self, weak panel] in
+            guard let self, let panel else { return }
+            panel.notchHovering = false
+            panel.lastHoverApplied = false
+            if panel.viewModel?.isOpen == true {
+                panel.viewModel?.toggle()
+            }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
+                self.selfTestStep(panel: panel, motion: motion, deadline: deadline)
+            }
         }
     }
 
@@ -1326,6 +1437,12 @@ final class NotchPanelController: NSObject {
     /// glyph-visibility check in `BandView.actionGlyph(for:)` exactly, so a keyboard Return on a
     /// module with no applicable action is a safe no-op instead of a crash.
     fileprivate func performPrimaryAction(for module: BandModule, on panel: NotchPanel) {
+        // 07-13 (FEEL-04): begun unconditionally — even a module whose own guard below no-ops
+        // (nothing playing, no clipboard entry, ...) still measures "action → first reacting
+        // frame," and every REAL action always reaches this line first regardless of module.
+        if let motion = panel.motion {
+            Self.beginActionLatency(motion: motion)
+        }
         switch module {
         case .nowPlaying:
             guard nowPlayingProvider.currentModel != nil else { return }
@@ -1382,7 +1499,13 @@ final class NotchPanelController: NSObject {
         if hovering {
             model.hoverBegan()
             let work = DispatchWorkItem { [weak panel] in
-                panel?.viewModel?.dwellElapsed()
+                guard let panel else { return }
+                // 07-13 (FEEL-04): begun exactly where the dwell elapses — the instant this
+                // DispatchWorkItem actually fires, not when it was merely scheduled above.
+                if let motion = panel.motion {
+                    beginDwellLatency(motion: motion)
+                }
+                panel.viewModel?.dwellElapsed()
             }
             panel.pendingDwellOpen = work
             DispatchQueue.main.asyncAfter(deadline: .now() + NotchLayout.hoverDwellDelay, execute: work)
