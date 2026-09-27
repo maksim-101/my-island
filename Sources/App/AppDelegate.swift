@@ -13,10 +13,15 @@ extension Notification.Name {
 final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private var notchPanelController: NotchPanelController?
     private var fluidSpikeController: FluidSpikeController?
+    private var statusItemController: StatusItemController?
     private var settingsWindow: NSWindow?
     private let logger = AppLog.make("AppDelegate")
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        // PANEL-03: constructed first, before the spike branch, so Quit is reachable in every
+        // launch mode.
+        statusItemController = StatusItemController()
+
         // D-03 spike harness: when the launch default is set, run ONLY the harness — the
         // production notch, hotkey and Settings wiring are skipped for this launch so nothing
         // else draws over the harness's own panels. scripts/clickthrough-probe.sh and every task

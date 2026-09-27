@@ -1,12 +1,12 @@
 import SwiftUI
 import AppKit
 
-/// The expanded notch panel, Cockpit-3 layout (popup-cockpit3-FINAL.html): a
-/// header (title + gear/power chrome, top-right), a 3-tile strip that selects
-/// the active stage, a content-sized STAGE showing exactly one module
-/// (Timer/Calendar/Now Playing), and a Clipboard that grows to fill the
-/// remaining vertical space. Styled entirely from `Tokens` — never a hardcoded
-/// color/spacing/type value.
+/// The expanded notch panel, Cockpit-3 layout (popup-cockpit3-FINAL.html): a 3-tile strip that
+/// selects the active stage, a content-sized STAGE showing exactly one module
+/// (Timer/Calendar/Now Playing), and a Clipboard that grows to fill the remaining vertical space.
+/// The header row (title, gear, power) is gone — Settings and Quit now live in the menu-bar
+/// status item (`StatusItemController`, PANEL-03). Styled entirely from `Tokens` — never a
+/// hardcoded color/spacing/type value.
 @MainActor
 struct ExpandedPanelView: View {
     let timer: TimerViewModel
@@ -29,8 +29,6 @@ struct ExpandedPanelView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: Tokens.Spacing.sm) {
-            header
-
             CockpitTileStripView(stage: $stage, timer: timer, calendar: calendar, nowPlaying: nowPlaying)
 
             stageContainer
@@ -43,21 +41,6 @@ struct ExpandedPanelView: View {
         }
         .padding(Tokens.Spacing.md)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-    }
-
-    private var header: some View {
-        HStack {
-            Text("my-island")
-                .font(Tokens.Font.title)
-                .foregroundStyle(Tokens.Color.text)
-
-            Spacer()
-
-            HStack(spacing: Tokens.Spacing.md) {
-                settingsButton
-                quitButton
-            }
-        }
     }
 
     /// The inset stage panel: a slightly-darker-than-tiles ground with a
@@ -83,29 +66,5 @@ struct ExpandedPanelView: View {
                 .stroke(Tokens.Color.hairline, lineWidth: 1)
         }
         .fixedSize(horizontal: false, vertical: true)
-    }
-
-    private var settingsButton: some View {
-        Button {
-            NotificationCenter.default.post(name: .openMyIslandSettings, object: nil)
-        } label: {
-            Image(systemName: "gearshape")
-                .font(Tokens.Font.data)
-                .foregroundStyle(Tokens.Color.textMuted)
-        }
-        .buttonStyle(.plain)
-        .help("Settings…")
-    }
-
-    private var quitButton: some View {
-        Button {
-            NSApp.terminate(nil)
-        } label: {
-            Image(systemName: "power")
-                .font(Tokens.Font.bodyMD)
-                .foregroundStyle(Tokens.Color.textFaint)
-        }
-        .buttonStyle(.plain)
-        .help("Quit my-island")
     }
 }
