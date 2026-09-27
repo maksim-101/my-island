@@ -6,15 +6,17 @@ import MyIslandCore
 @MainActor
 final class NotchPanelController: NSObject {
     // One entry per connected screen, keyed by `NSScreen.displayKey` (Phase 6
-    // SHELL-07): the interactive notch panel, the non-interactive extended-pill
-    // bar (readouts, see NotchBarView), and the detached Ambient HUD pill
-    // (HUDPillView). Replaces the old parallel `panels`/`barPanels`/`hudPanels`
-    // arrays keyed only by rebuild order.
+    // SHELL-07): the interactive notch panel (fill only), the click-through
+    // overlay (rim/glow/pulse/HUD-adjacent drawing — replaces the old
+    // non-interactive extended-pill bar, D-06 Wave 1), the detached Ambient
+    // HUD pill (HUDPillView), the per-display `NotchViewModel`, and the one
+    // `FluidMotion` clock driving both the panel's and overlay's geometry.
     private struct PanelSet {
         let panel: NotchPanel
-        let bar: NSPanel
+        let overlay: NSPanel
         let hud: NSPanel
         let model: NotchViewModel
+        let motion: FluidMotion
     }
     private var panelSets: [String: PanelSet] = [:]
     /// 20260912 (hide-through-space-switch, bumped 20260912-hide-during-space-slide): armed on
@@ -91,6 +93,14 @@ final class NotchPanelController: NSObject {
     /// from this constant, so the two can no longer silently desync.
     static let showOnNotchlessDisplaysDefault = true
 
+    /// Debug-only UserDefaults flag (never a Settings toggle — mirrors `MyIslandVerboseLogging`'s
+    /// convention): when set, `makePanelSet` and every completed collapse log a `clickProbe` line
+    /// so `scripts/clickthrough-probe.sh` can confirm D-04 holds on production surfaces. Under the
+    /// `toggle` click-through mechanism (07-01's decision) there is nothing to alpha-probe — the
+    /// probe line records `skipped mode=toggle`, and the real D-04 evidence is the `outsideClick`
+    /// detector on `NotchPanel.sendEvent(_:)` logging zero swallowed outside clicks.
+    static let clickProbeKey = "MyIslandClickProbe"
+
     /// A non-Bool value written by hand (or by a future migration bug) degrades to
     /// the default rather than crashing or reading as off (T-06-08).
     private var showOnNotchlessDisplays: Bool {
@@ -132,34 +142,21 @@ final class NotchPanelController: NSObject {
             self.hud.showMeeting(text: text)
         }
 
-        // 2026-09-12 amendment ("Fullscreen sliver on synthetic displays"): `onChange` was
-        // declared on `FullscreenObserver` but never wired by this controller (see that class's
-        // own doc comment on the 260801-7h2-regressions round-3 fix). SwiftUI's own re-render of
-        // `NotchBarView`'s content already reacts to `isFrontmostFullscreen` changing (that's the
-        // `@Observable` fix), but the INTERACTIVE `NotchPanel`'s own AppKit window frame is a
-        // separate thing entirely — nothing resizes it just because fullscreen state flipped while
-        // the panel stayed collapsed the whole time (no open/close event to otherwise trigger
-        // `applyFrame`). Without this, the panel keeps its stale pre-transition collapsed size
-        // until the next hover-driven `applyFrame` call, which could be long after the sliver
-        // itself has visually appeared or disappeared. `pendingCollapse == nil` skips a panel
-        // mid-collapse-animation — that work item already calls `resolvedFrame` (now sliver-aware)
-        // at its own fire time. Setting `hoverRect = nil` even when it's already nil forces
-        // `HoverTrackingView.updateTrackingAreas()` to run (Swift's `didSet` always fires on
-        // assignment), refreshing the `.inVisibleRect` tracking area to the just-resized bounds —
-        // mirrors the ordering `applyFrame`'s own collapse-completion step already uses.
+        // `onChange` fires whenever `FullscreenObserver` detects a fullscreen transition on any
+        // display. 07-02 (D-06 Wave 1) retired the fullscreen-sliver frame shrink this hook used to
+        // drive, along with the extended-pill bar window that rendered it (D-05) — the fluid
+        // collapsed pill's own frame no longer varies with fullscreen state at all, so there is
+        // nothing left to resize here beyond the ordinary `resolvedFrame` reapply every other
+        // geometry change already does. The hook stays wired (a fullscreen transition can still
+        // coincide with other pending frame work, and a synthetic panel's `pendingCollapse == nil`
+        // guard still applies) and keeps logging the raw per-display detection signal for
+        // on-hardware correlation, under a name that no longer implies a visual sliver exists.
         fullscreenObserver.onChange = { [weak self] in
             guard let self else { return }
             for (key, set) in self.panelSets {
                 guard !set.panel.isPhysical else { continue }
-                let sliverActive = self.fullscreenObserver.isFrontmostFullscreen(on: set.panel.displayID)
-                // 20260912-menubar-coverage-rule (Task 2): panelH/barH added — the frame-vs-view
-                // correlation the Space-switch-flash re-diagnosis needs. This session confirmed by
-                // direct reading that neither window's content draws anything (interactive panel,
-                // collapsed+closed on synthetic mode) or resizes its AppKit frame (bar window,
-                // fixed-size in synthetic mode) in a way that could itself cause a visible
-                // mismatch — this line is the positive, on-hardware confirmation of that reading,
-                // not a hedge against it being wrong.
-                self.logger.notice("sliverState key=\(key, privacy: .public) active=\(sliverActive, privacy: .public) hoverRect=\(NSStringFromRect(self.pillHoverFrame(for: set.panel)), privacy: .public) panelH=\(set.panel.frame.height, privacy: .public) barH=\(set.bar.frame.height, privacy: .public)")
+                let active = self.fullscreenObserver.isFrontmostFullscreen(on: set.panel.displayID)
+                self.logger.notice("fullscreenState key=\(key, privacy: .public) active=\(active, privacy: .public)")
                 guard set.model.isOpen != true, set.panel.pendingCollapse == nil else { continue }
                 set.panel.setFrame(self.resolvedFrame(for: set.panel), display: true)
                 (set.panel.contentView as? HoverTrackingView)?.hoverRect = nil
@@ -333,10 +330,11 @@ final class NotchPanelController: NSObject {
             set.panel.setFrame(panelTarget, display: true)
         }
 
-        let barTarget = Self.barPanelFrame(notchFrame: set.panel.notchFrame, anchorMaxY: set.panel.anchorMaxY, mode: mode).frame
-        if set.bar.frame != barTarget {
-            logger.notice("kept-reapplied key=\(key, privacy: .public) window=bar before=\(NSStringFromRect(set.bar.frame), privacy: .public) after=\(NSStringFromRect(barTarget), privacy: .public)")
-            set.bar.setFrame(barTarget, display: true)
+        let overlayQ = collapsedParams(for: set.panel)
+        let overlayTarget = Self.overlayPanelFrame(notchFrame: set.panel.notchFrame, anchorMaxY: set.panel.anchorMaxY, q: overlayQ)
+        if set.overlay.frame != overlayTarget {
+            logger.notice("kept-reapplied key=\(key, privacy: .public) window=overlay before=\(NSStringFromRect(set.overlay.frame), privacy: .public) after=\(NSStringFromRect(overlayTarget), privacy: .public)")
+            set.overlay.setFrame(overlayTarget, display: true)
         }
 
         let hudTarget = Self.hudPanelFrame(notchFrame: set.panel.notchFrame, anchorMaxY: set.panel.anchorMaxY)
@@ -378,7 +376,7 @@ final class NotchPanelController: NSObject {
         spaceSwitchHideTimeout?.cancel()
         for set in targets {
             set.panel.alphaValue = 0
-            set.bar.alphaValue = 0
+            set.overlay.alphaValue = 0
             set.hud.alphaValue = 0
         }
         logger.notice("islandHide count=\(targets.count, privacy: .public)")
@@ -409,7 +407,7 @@ final class NotchPanelController: NSObject {
         spaceSwitchHideTimeout = nil
         for set in panelSets.values {
             set.panel.alphaValue = 1
-            set.bar.alphaValue = 1
+            set.overlay.alphaValue = 1
             set.hud.alphaValue = 1
         }
         logger.notice("islandRestore reason=\(reason, privacy: .public)")
@@ -426,8 +424,9 @@ final class NotchPanelController: NSObject {
         set.panel.pendingCollapse?.cancel()
         set.panel.pendingDwellOpen?.cancel()
         set.panel.pendingHoverClose?.cancel()
+        set.motion.stopClock()
         set.panel.close()
-        set.bar.close()
+        set.overlay.close()
         set.hud.close()
     }
 
@@ -435,45 +434,60 @@ final class NotchPanelController: NSObject {
     /// the reconcile's `added` and `rebuilt` paths (Task 2) share identical construction.
     private func makePanelSet(for screen: NSScreen, mode: NotchGeometry.Mode, key: String) -> PanelSet {
         let anchorRect = mode.anchorRect
+        let anchorMaxY = screen.frame.maxY
 
         let model = NotchViewModel()
-        let panel = Self.makePanel(notchFrame: anchorRect, screen: screen, isPhysical: mode.isPhysical, model: model, timer: timer, calendar: calendarProvider, nowPlaying: nowPlayingProvider)
+        let restParams = Self.collapsedParams(isPhysical: mode.isPhysical, notchFrame: anchorRect)
+        let motion = FluidMotion(rest: restParams)
+        motion.startClock(on: screen)
+
+        let panel = Self.makePanel(notchFrame: anchorRect, screen: screen, isPhysical: mode.isPhysical, model: model, motion: motion, timer: timer, calendar: calendarProvider, nowPlaying: nowPlayingProvider, displayKey: key)
         panel.displayID = screen.displayID
         model.onOpenChange = { [weak self, weak panel] isOpen in
             guard let self, let panel else { return }
             self.applyFrame(to: panel, isOpen: isOpen)
         }
-        // 2026-09-12 amendment ("Fullscreen sliver on synthetic displays"): a synthetic display
-        // reconnecting (or the app relaunching) while its fullscreen Space is already active must
-        // not create the interactive panel at its full 30pt-ish collapsed size — `resolvedFrame`
-        // is sliver-aware from this point on, so this one-time correction just applies it before
-        // the panel is ever shown.
-        if !mode.isPhysical, fullscreenObserver.isFrontmostFullscreen(on: screen.displayID) {
-            panel.setFrame(resolvedFrame(for: panel), display: true)
-        }
         panel.orderFrontRegardless()
 
-        let bar = Self.makeBarPanel(notchFrame: anchorRect, anchorMaxY: screen.frame.maxY, timer: timer, model: model, nowPlaying: nowPlayingProvider, fullscreen: fullscreenObserver, calendar: calendarProvider, mode: mode, displayID: screen.displayID)
-        bar.orderFrontRegardless()
+        let overlay = Self.makeOverlayPanel(notchFrame: anchorRect, anchorMaxY: anchorMaxY, isPhysical: mode.isPhysical, motion: motion, model: model)
+        overlay.orderFrontRegardless()
 
-        let hudPanel = Self.makeHudPanel(notchFrame: anchorRect, anchorMaxY: screen.frame.maxY, hud: hud)
+        let hudPanel = Self.makeHudPanel(notchFrame: anchorRect, anchorMaxY: anchorMaxY, hud: hud)
         hudPanel.orderFrontRegardless()
 
         // The printed height distinguishes the launched-app menu-bar value from the 22pt
         // status-bar fallback.
         logger.notice("panel set key=\(key, privacy: .public) mode=\(mode.isPhysical ? "physical" : "synthetic", privacy: .public) anchor=\(NSStringFromRect(anchorRect), privacy: .public) menuBar=\(screen.menuBarHeight, privacy: .public)")
+        logClickProbeAfterDelay(key: key)
 
-        return PanelSet(panel: panel, bar: bar, hud: hudPanel, model: model)
+        return PanelSet(panel: panel, overlay: overlay, hud: hudPanel, model: model, motion: motion)
     }
 
-    private static func makePanel(notchFrame: NSRect, screen: NSScreen, isPhysical: Bool, model: NotchViewModel, timer: TimerViewModel, calendar: CalendarProvider, nowPlaying: NowPlayingProvider) -> NotchPanel {
+    /// D-04 regression evidence for `scripts/clickthrough-probe.sh` (Task 1/2): only active when
+    /// `clickProbeKey` is set. Under the `toggle` click-through mechanism there is no alpha
+    /// hit-test to probe — see `clickProbeKey`'s doc comment — so this always logs the `skipped`
+    /// form; the real evidence is `NotchPanel.sendEvent(_:)`'s `outsideClick` detector logging zero
+    /// swallowed outside clicks over the same run.
+    private func logClickProbeAfterDelay(key: String) {
+        guard UserDefaults.standard.bool(forKey: Self.clickProbeKey) else { return }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { [weak self] in
+            self?.logClickProbeNow(key: key)
+        }
+    }
+
+    private func logClickProbeNow(key: String) {
+        guard UserDefaults.standard.bool(forKey: Self.clickProbeKey) else { return }
+        logger.notice("clickProbe skipped mode=toggle display=\(key, privacy: .public)")
+    }
+
+    private static func makePanel(notchFrame: NSRect, screen: NSScreen, isPhysical: Bool, model: NotchViewModel, motion: FluidMotion, timer: TimerViewModel, calendar: CalendarProvider, nowPlaying: NowPlayingProvider, displayKey: String) -> NotchPanel {
         let anchorMaxY = screen.frame.maxY
-        let collapsedFrame = Self.collapsedFrame(notchFrame: notchFrame, anchorMaxY: anchorMaxY)
+        let collapsedFrame = Self.collapsedSurfaceFrame(isPhysical: isPhysical, notchFrame: notchFrame, anchorMaxY: anchorMaxY)
         let styleMask: NSWindow.StyleMask = [.borderless, .nonactivatingPanel, .utilityWindow]
 
-        // The panel window is created at the COLLAPSED (notch) size, not the
+        // The panel window is created at the COLLAPSED (fluid pill) size, not the
         // expanded size — this is the core fix for the dead click-zone: when
-        // collapsed there is no window area below the notch, so nothing there
+        // collapsed there is no window area below the pill, so nothing there
         // can be blocked. `applyFrame(to:isOpen:)` resizes it as the model
         // opens/closes.
         let panel = NotchPanel(contentRect: collapsedFrame, styleMask: styleMask, backing: .buffered, defer: false)
@@ -482,8 +496,10 @@ final class NotchPanelController: NSObject {
         panel.anchorMaxY = anchorMaxY
         panel.isPhysical = isPhysical
         panel.screenFrame = screen.frame
+        panel.motion = motion
+        panel.displayKey = displayKey
 
-        let hostingView = NonKeyHostingView(rootView: NotchContentView(model: model, notchSize: notchFrame.size, timer: timer, calendar: calendar, nowPlaying: nowPlaying, isPhysical: isPhysical))
+        let hostingView = NonKeyHostingView(rootView: NotchContentView(model: model, motion: motion, timer: timer, calendar: calendar, nowPlaying: nowPlaying, isPhysical: isPhysical))
         // Decouple from the window's Auto Layout / constraint-update cycle:
         // `applyFrame` resizes the panel manually via `setFrame`, and letting
         // the hosting view participate in constraint-based sizing causes an
@@ -566,37 +582,82 @@ final class NotchPanelController: NSObject {
         return panel
     }
 
-    /// The non-interactive "extended pill" window: spans the notch cutout plus
-    /// an equal ear strip on each side, and hosts `NotchBarView`, which draws a
-    /// single continuous black `NotchShape` across the whole span (seamless — no
-    /// join with the notch) with the running-timer readout on the right. The
-    /// symmetric left strip keeps the extended notch balanced.
-    /// How far the extended pill reaches into each ear beyond the cutout — SYMMETRIC 36pt as of
-    /// quick 260925-osd (2026-09-25). macOS 27 packs menu-bar status items flush against the notch
-    /// on both sides and parks overflow flush left of it; the previous asymmetric 48/76pt geometry
-    /// let the wider right wing cover the first status item right of the notch by 24.5pt. Both
-    /// wings are now as narrow as their content allows: the left wing centers its 20pt artwork
-    /// tile within the wing's own visible width (see `NotchBarView.wingCenterGap(contentWidth:)`),
-    /// the right wing centers a 16pt timer progress ring or an 18pt sound-wave the same way — it
-    /// is no longer sized to fit a "600:22"-style digit readout. The ear width cancels out of the
-    /// glow's absolute edge position (`notchFrame.minX - glowLineOutset` / `notchFrame.maxX +
-    /// glowLineOutset`) regardless of its value — panel origin moves left by `leftEar` while the
-    /// notch's local offset within the panel grows by the same `leftEar` — so this change cannot
-    /// reintroduce GLOW-GEOMETRY. (Prior sizing history — the "600:22 ≈ 75pt" right-ear rationale
-    /// and the round-4 40→48 left-ear bump — lives in git history, not repeated here now that both
-    /// ears carry only small, fixed-size content.)
-    private static let leftEar: CGFloat = 36
-    private static let rightEar: CGFloat = 36
+    /// D-06 Wave 1 (07-02): the fluid pill's own rest parameters for a given display — the single
+    /// source `makePanel`'s initial window size, `resolvedFrame(for:)`'s collapsed target,
+    /// `makeOverlayPanel`'s sizing, and `handleMouseMoved`'s dwell/sticky-pull math all read, so
+    /// none of them can disagree about how big the collapsed pill currently is. Physical gets the
+    /// locked `.macBookPill` (257×36, 07-DESIGN-AGREEMENT.md §1); synthetic derives a pill sized to
+    /// the anchor's own damped-width/menu-bar-height rect.
+    private static func collapsedParams(isPhysical: Bool, notchFrame: NSRect) -> FluidParams {
+        isPhysical ? .macBookPill : .desktopPill(width: notchFrame.width, height: notchFrame.height)
+    }
 
-    /// Global-coordinate frame of the extended pill (also the wing hover
-    /// region), shared by `makeBarPanel` and the wing mouse-monitor.
-    private static func barFrame(notchFrame: NSRect, anchorMaxY: CGFloat) -> NSRect {
-        NSRect(
-            x: notchFrame.minX - leftEar,
-            y: anchorMaxY - notchFrame.height,
-            width: notchFrame.width + leftEar + rightEar,
-            height: notchFrame.height
+    private func collapsedParams(for panel: NotchPanel) -> FluidParams {
+        Self.collapsedParams(isPhysical: panel.isPhysical, notchFrame: panel.notchFrame)
+    }
+
+    /// The interactive panel's collapsed window frame: the fluid outline's own bounding box
+    /// (`2·half` wide — the curve's endpoints sit exactly at `cx ∓ half`), centered on the anchor,
+    /// top flush with the screen, `d + sag + 6` tall — the extra 6pt is room for the sticky belly's
+    /// live pull so a hover just past the drawn floor still passes clicks through the transparent
+    /// margin rather than hitting dead window past the shape.
+    private static func collapsedSurfaceFrame(isPhysical: Bool, notchFrame: NSRect, anchorMaxY: CGFloat) -> NSRect {
+        let q = collapsedParams(isPhysical: isPhysical, notchFrame: notchFrame)
+        let width = q.half * 2
+        let height = q.d + q.sag + 6
+        return NSRect(
+            x: notchFrame.midX - width / 2,
+            y: anchorMaxY - height,
+            width: width,
+            height: height
         )
+    }
+
+    private func collapsedSurfaceFrame(for panel: NotchPanel) -> NSRect {
+        Self.collapsedSurfaceFrame(isPhysical: panel.isPhysical, notchFrame: panel.notchFrame, anchorMaxY: panel.anchorMaxY)
+    }
+
+    /// The click-through overlay's frame (Task 1): wider/taller than the interactive panel by a
+    /// fixed margin so the rim stroke and glow blur (both drawn outside the fill's own edge) never
+    /// clip — `ceil(max(2·half·1.12, 160) + 24)` wide, `ceil(d + sag + 48)` tall, centered on the
+    /// same anchor and top-flush, so both windows agree on the shape's global center (`cx`) even
+    /// though their own local widths differ.
+    private static func overlayPanelFrame(notchFrame: NSRect, anchorMaxY: CGFloat, q: FluidParams) -> NSRect {
+        let width = ceil(max(2 * q.half * 1.12, 160) + 24)
+        let height = ceil(q.d + q.sag + 48)
+        return NSRect(
+            x: notchFrame.midX - width / 2,
+            y: anchorMaxY - height,
+            width: width,
+            height: height
+        )
+    }
+
+    /// The click-through overlay window (replaces the old non-interactive "extended pill" bar):
+    /// `ignoresMouseEvents = true` always — it draws rim/glow (`FluidOverlayView`) over the
+    /// interactive panel's fill and never shadows that panel's own click-through toggling.
+    private static func makeOverlayPanel(notchFrame: NSRect, anchorMaxY: CGFloat, isPhysical: Bool, motion: FluidMotion, model: NotchViewModel) -> NSPanel {
+        let q = collapsedParams(isPhysical: isPhysical, notchFrame: notchFrame)
+        let frame = overlayPanelFrame(notchFrame: notchFrame, anchorMaxY: anchorMaxY, q: q)
+
+        let panel = NSPanel(contentRect: frame, styleMask: [.borderless, .nonactivatingPanel, .utilityWindow], backing: .buffered, defer: false)
+
+        let container = NSView(frame: NSRect(origin: .zero, size: frame.size))
+        container.autoresizesSubviews = true
+        let hosting = NSHostingView(rootView: FluidOverlayView(motion: motion, model: model))
+        hosting.frame = NSRect(origin: .zero, size: frame.size)
+        hosting.autoresizingMask = [.width, .height]
+        container.addSubview(hosting)
+        panel.contentView = container
+
+        panel.level = NSWindow.Level(rawValue: NSWindow.Level.mainMenu.rawValue + 3)
+        panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary, .ignoresCycle]
+        panel.isOpaque = false
+        panel.backgroundColor = .clear
+        panel.hasShadow = false
+        panel.ignoresMouseEvents = true
+        panel.isReleasedWhenClosed = false
+        return panel
     }
 
     /// The Ambient HUD pill window — floats centered just below the notch, sized
@@ -640,91 +701,6 @@ final class NotchPanelController: NSObject {
         return panel
     }
 
-    /// How far the bar panel (and its glow-outset content view) extends BELOW the notch cutout's
-    /// bottom edge (T-7h2 Task 3). The physical notch is a camera cutout — pixels drawn inside it
-    /// are never displayed — so a hairline stroked on or inside the cutout outline would be
-    /// half-invisible or fully invisible; the glow needs a few points of real, rendered panel
-    /// below the notch to actually show. `barFrame(notchFrame:anchorMaxY:)` itself is unchanged —
-    /// `handleMouseMoved` computes the wing hover region from that function independently of the
-    /// panel frame, so the hover geometry must not move — only `makeBarPanel`'s own window/content
-    /// frame grows by this amount, downward only (top edge, flush with the physical notch top,
-    /// stays fixed).
-    private static let glowOutset: CGFloat = 3
-
-    /// 260912 kept-set-reposition fix: extracted from `makeBarPanel` so construction and the
-    /// reconcile's `kept`-branch reapply step share one source of truth for this window's frame.
-    /// Purely a function of the anchor geometry and mode — never live content — so it's safe to
-    /// recompute on every reconcile, not just at construction.
-    private static func barPanelFrame(notchFrame: NSRect, anchorMaxY: CGFloat, mode: NotchGeometry.Mode) -> (frame: NSRect, notchLocalFrame: CGRect) {
-        if mode.isPhysical {
-            let bar = barFrame(notchFrame: notchFrame, anchorMaxY: anchorMaxY)
-            let frame = NSRect(
-                x: bar.minX,
-                y: bar.minY - glowOutset,
-                width: bar.width,
-                height: bar.height + glowOutset
-            )
-            // The notch's position within the (now taller) bar view, in SwiftUI's top-down
-            // coordinate space: the pill content and the glow's un-outset top edge both anchor to
-            // this rect's origin (y: 0 — the physical notch top, unchanged by the outward growth
-            // below it).
-            let notchLocalFrame = CGRect(x: leftEar, y: 0, width: notchFrame.width, height: notchFrame.height)
-            return (frame, notchLocalFrame)
-        } else {
-            // Phase 6 Plan 02 (SHELL-08/D-01): the bar window is sized to the WIDEST the drawn
-            // pill can ever get (every readout shown at once) so it never has to resize as
-            // content comes and goes — only the pill `NotchBarView.syntheticPill` draws inside it
-            // changes width. No glow outset — there is no cutout to locate on a drawn pill.
-            let scale = NotchGeometry.readoutScale(pillHeight: notchFrame.height)
-            let width = SyntheticPillLayout.maxPillWidth(idleWidth: notchFrame.width, scale: scale)
-            let frame = NSRect(
-                x: notchFrame.midX - width / 2,
-                y: anchorMaxY - notchFrame.height,
-                width: width,
-                height: notchFrame.height
-            )
-            // Centers the anchor's own local frame within the (wider) window, so
-            // `notchLocalFrame.midX` always equals the window's own horizontal center — exactly
-            // where `NotchBarView.syntheticPill` centers its drawn, content-driven-width pill.
-            let notchLocalFrame = CGRect(x: (width - notchFrame.width) / 2, y: 0, width: notchFrame.width, height: notchFrame.height)
-            return (frame, notchLocalFrame)
-        }
-    }
-
-    private static func makeBarPanel(notchFrame: NSRect, anchorMaxY: CGFloat, timer: TimerViewModel, model: NotchViewModel, nowPlaying: NowPlayingProvider, fullscreen: FullscreenObserver, calendar: CalendarProvider, mode: NotchGeometry.Mode, displayID: CGDirectDisplayID?) -> NSPanel {
-        let (frame, notchLocalFrame) = barPanelFrame(notchFrame: notchFrame, anchorMaxY: anchorMaxY, mode: mode)
-
-        let panel = NSPanel(contentRect: frame, styleMask: [.borderless, .nonactivatingPanel, .utilityWindow], backing: .buffered, defer: false)
-
-        let container = NSView(frame: NSRect(origin: .zero, size: frame.size))
-        container.autoresizesSubviews = true
-        let hosting = NSHostingView(rootView: NotchBarView(timer: timer, model: model, nowPlaying: nowPlaying, fullscreen: fullscreen, notchLocalFrame: notchLocalFrame, calendar: calendar, mode: mode, displayID: displayID))
-        hosting.frame = NSRect(origin: .zero, size: frame.size)
-        hosting.autoresizingMask = [.width, .height]
-        container.addSubview(hosting)
-        panel.contentView = container
-
-        panel.level = NSWindow.Level(rawValue: NSWindow.Level.mainMenu.rawValue + 3)
-        panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary, .ignoresCycle]
-        panel.isOpaque = false
-        panel.backgroundColor = .clear
-        panel.hasShadow = false
-        panel.ignoresMouseEvents = true   // readout only — never intercept clicks
-        panel.isReleasedWhenClosed = false
-        return panel
-    }
-
-    /// The window frame while collapsed — exactly the physical notch, top
-    /// edge flush with the screen's top edge, horizontally centered on it.
-    private static func collapsedFrame(notchFrame: NSRect, anchorMaxY: CGFloat) -> NSRect {
-        NSRect(
-            x: notchFrame.midX - notchFrame.width / 2,
-            y: anchorMaxY - notchFrame.height,
-            width: notchFrame.width,
-            height: notchFrame.height
-        )
-    }
-
     /// The window frame while expanded — grows downward from the notch,
     /// staying horizontally centered on it.
     private static func expandedFrame(notchFrame: NSRect, anchorMaxY: CGFloat) -> NSRect {
@@ -738,36 +714,14 @@ final class NotchPanelController: NSObject {
         )
     }
 
-    /// 2026-09-12 amendment ("Fullscreen sliver on synthetic displays"): `panel.notchFrame` itself
-    /// is a fixed per-screen anchor (SHELL-06/07) and must stay that way — the reconcile's
-    /// `notchFrame != anchorRect` rebuild check in `rebuildPanels()` depends on it never changing
-    /// out from under a live panel. This returns the EFFECTIVE collapsed geometry a caller should
-    /// actually use instead: unchanged on a physical panel or whenever the synthetic display isn't
-    /// in the fullscreen sliver state, otherwise the same x/width with height overridden to
-    /// `SyntheticPillLayout.fullscreenSliverHeight` (top-flush anchor preserved, since
-    /// `notchFrame.maxY == anchorMaxY` always). The single source both `resolvedFrame(for:)` (the
-    /// interactive panel's real, if invisible, window bounds) and the hover-geometry functions
-    /// below consult, so they can never disagree about how tall the collapsed target currently is.
-    private func collapsedNotchFrame(for panel: NotchPanel) -> NSRect {
-        guard !panel.isPhysical, fullscreenObserver.isFrontmostFullscreen(on: panel.displayID) else {
-            return panel.notchFrame
-        }
-        return NSRect(
-            x: panel.notchFrame.minX,
-            y: panel.notchFrame.maxY - SyntheticPillLayout.fullscreenSliverHeight,
-            width: panel.notchFrame.width,
-            height: SyntheticPillLayout.fullscreenSliverHeight
-        )
-    }
-
     /// The one place that decides whether a given panel's window is at its
-    /// collapsed (notch) or expanded size. The Ambient HUD no longer factors in
+    /// collapsed (fluid pill) or expanded size. The Ambient HUD no longer factors in
     /// here — it's a detached pill in its own window.
     private func resolvedFrame(for panel: NotchPanel) -> NSRect {
         if panel.viewModel?.isOpen == true {
             return Self.expandedFrame(notchFrame: panel.notchFrame, anchorMaxY: panel.anchorMaxY)
         }
-        return Self.collapsedFrame(notchFrame: collapsedNotchFrame(for: panel), anchorMaxY: panel.anchorMaxY)
+        return collapsedSurfaceFrame(for: panel)
     }
 
     /// Drives the AppKit window frame in step with the model's open/close
@@ -803,7 +757,7 @@ final class NotchPanelController: NSObject {
             // `mouseEntered` at any point during the 0.45s collapse animation.
             container?.hoverRect = NotchGeometry.collapsedHoverRect(
                 containerSize: panel.frame.size,
-                notchSize: collapsedNotchFrame(for: panel).size
+                notchSize: collapsedSurfaceFrame(for: panel).size
             )
             var work: DispatchWorkItem!
             work = DispatchWorkItem { [weak self, weak panel] in
@@ -826,6 +780,7 @@ final class NotchPanelController: NSObject {
                 // The collapsed window now IS the pill — `.inVisibleRect`
                 // tracking is correct again, and cheaper.
                 (panel.contentView as? HoverTrackingView)?.hoverRect = nil
+                self.logClickProbeNow(key: panel.displayKey)
             }
             panel.pendingCollapse = work
             DispatchQueue.main.asyncAfter(deadline: .now() + NotchLayout.collapseWindowDelay, execute: work)
@@ -883,81 +838,51 @@ final class NotchPanelController: NSObject {
         }
     }
 
-    /// The CURRENT drawn pill's global-coordinate rect — the wing-hover region on a synthetic
-    /// screen. Unlike the physical `barFrame` (a fixed rect for the symmetric 36pt ear geometry), the
-    /// synthetic pill's own width changes with its content, so this is recomputed from live state
-    /// on every hover check using the exact same `SyntheticPillLayout` math
-    /// `NotchBarView.syntheticPill` draws from — the hover region always equals the drawn pill
-    /// (SHELL-08). Physical panels fall back to the unchanged `barFrame`.
-    private func pillHoverFrame(for panel: NotchPanel) -> NSRect {
-        guard !panel.isPhysical else {
-            return Self.barFrame(notchFrame: panel.notchFrame, anchorMaxY: panel.anchorMaxY)
-        }
-        // 2026-09-12 amendment ("Fullscreen sliver on synthetic displays"): while the sliver is
-        // showing, the drawn pill never routes through the content-driven width formula below —
-        // it draws no readout content regardless of what's playing or running — so this must
-        // short-circuit here. Left unchanged, a running timer or playing track during fullscreen
-        // would compute a wing rect WIDER than the sliver actually drawn, and — combined with the
-        // stale 30pt-tall `panel.notchFrame` a caller might otherwise use — reopen exactly the
-        // "hover strip over real fullscreen picture" failure this feature exists to close.
-        if fullscreenObserver.isFrontmostFullscreen(on: panel.displayID) {
-            return collapsedNotchFrame(for: panel)
-        }
-        let earVisible = nowPlayingProvider.displayEar && !fullscreenObserver.isAmbientSuppressed(on: panel.displayID)
-        let center = SyntheticPillLayout.centerText(nowPlaying: nowPlayingProvider, earVisible: earVisible) != nil
-        let scale = NotchGeometry.readoutScale(pillHeight: panel.notchFrame.height)
-        let width = SyntheticPillLayout.pillWidth(
-            idleWidth: panel.notchFrame.width,
-            scale: scale,
-            showsArtwork: earVisible,
-            showsWave: earVisible,
-            showsCenter: center,
-            showsTimer: timer.isRunning
-        )
-        return NSRect(
-            x: panel.notchFrame.midX - width / 2,
-            y: panel.anchorMaxY - panel.notchFrame.height,
-            width: width,
-            height: panel.notchFrame.height
-        )
-    }
-
-    /// Updates each panel's `wingHovering` from the current mouse position: the
-    /// mouse is "over a wing" when the pill is visible — a timer is running OR
-    /// the Now Playing ear has content (D-05 disjunction), for a physical panel;
-    /// always, for a synthetic one (D-03) — and the cursor is inside the pill's
-    /// current frame but outside the notch's own tracking region (which the
-    /// `NSTrackingArea` already owns). Only fires the dwell logic on an actual
-    /// change, so this is cheap on every move.
+    /// D-04/FEEL-02 (07-02, Task 1): drives the collapsed pill's sticky pull/lean/glow and the
+    /// toggle click-through mechanism (07-01's decision) from the live pointer, and — via
+    /// `FluidPointer.isDwellTarget` — the dwell-to-open `outlineHovering` source (renamed from
+    /// `wingHovering`: the dwell target is now the whole drawn outline, not a separate "wing"
+    /// region). Pointer coordinates are converted once per panel into that display's own top-down
+    /// space (`y = anchorMaxY − mouse.y`, `cx = notchFrame.midX`) — the same convention
+    /// `FluidShapeGeometry`'s outline math and `FluidPointer` both use.
     private func handleMouseMoved() {
-        let mouse = NSEvent.mouseLocation
+        let mouseGlobal = NSEvent.mouseLocation
         for panel in panels {
-            let inBar: Bool
-            if panel.isPhysical {
-                // Mirrors NotchBarView's pill gate exactly (T-7h2 Task 2): the timer
-                // disjunct sits OUTSIDE the fullscreen suppression, so the wing
-                // hover region never disappears out from under a running timer.
-                inBar = (timer.isRunning || (nowPlayingProvider.displayEar && !fullscreenObserver.isAmbientSuppressed(on: panel.displayID)))
-                    && Self.barFrame(notchFrame: panel.notchFrame, anchorMaxY: panel.anchorMaxY).contains(mouse)
-            } else {
-                // D-03: the synthetic pill is always visible — no timer/ear gate, just "is the
-                // cursor over whatever the pill currently draws."
-                inBar = pillHoverFrame(for: panel).contains(mouse)
-            }
-            let inNotch = Self.collapsedFrame(notchFrame: panel.notchFrame, anchorMaxY: panel.anchorMaxY).contains(mouse)
-            let wing = inBar && !inNotch
-            if panel.wingHovering != wing {
-                panel.wingHovering = wing
+            guard let motion = panel.motion else { continue }
+            let pointer = CGPoint(x: mouseGlobal.x, y: panel.anchorMaxY - mouseGlobal.y)
+            let cx = panel.notchFrame.midX
+            let q = collapsedParams(for: panel)
+            let isOpen = panel.viewModel?.isOpen == true
+
+            let hovering = !isOpen && FluidPointer.isDwellTarget(pointer: pointer, cx: cx, q: q)
+            if panel.outlineHovering != hovering {
+                panel.outlineHovering = hovering
                 Self.applyHover(panel: panel)
             }
+
+            if isOpen {
+                // Open panels stay catching until plan 08 gives the band an outline.
+                panel.ignoresMouseEvents = false
+                continue
+            }
+
+            let pull = FluidPointer.stickyPull(pointer: pointer, cx: cx, q: q, damped: false)
+            motion.set(.belly, to: pull.pull, preset: .sticky)
+            motion.set(.lean, to: pull.lean, preset: .sticky)
+            motion.setChannel(.glow, to: 0.2 + pull.pull * 0.04, response: FluidMotionPreset.sticky.response, damping: FluidMotionPreset.sticky.damping)
+
+            // D-04 toggle mechanism (07-01): a collapsed panel only catches clicks that land
+            // inside its own drawn outline — everything else passes through to whatever is
+            // behind it (menu bar, desktop, other apps).
+            panel.ignoresMouseEvents = !FluidShapeGeometry.contains(pointer, cx: cx, q: motion.params)
         }
     }
 
-    /// Collapses the notch-tracking-area and wing-monitor hover sources into a
-    /// single dwell state, so moving the cursor between the notch and a wing
-    /// never reads as a leave (which would flicker the panel closed).
+    /// Collapses the notch-tracking-area and outline-dwell hover sources into a
+    /// single dwell state, so moving the cursor between the two never reads as
+    /// a leave (which would flicker the panel closed).
     private static func applyHover(panel: NotchPanel) {
-        let hovering = panel.notchHovering || panel.wingHovering
+        let hovering = panel.notchHovering || panel.outlineHovering
         guard hovering != panel.lastHoverApplied else { return }
         panel.lastHoverApplied = hovering
         handleHoverChange(panel: panel, hovering: hovering)
@@ -1047,13 +972,23 @@ private final class NotchPanel: NSPanel {
     /// `rebuildPanels()` from `screen.displayID`. Feeds `FullscreenObserver`'s per-display queries
     /// and `canBecomeKey`'s pointer-display gate below.
     var displayID: CGDirectDisplayID?
+    /// The `FluidMotion` clock this panel's own `PanelSet` owns (07-02 Task 1) — read by
+    /// `sendEvent(_:)` for the outsideClick detector's live outline geometry. Strong: nothing else
+    /// in `FluidMotion` references `NotchPanel`, so there is no retain cycle, and the panel needs
+    /// this reference to outlive any single `handleMouseMoved` call.
+    var motion: FluidMotion?
+    /// `NSScreen.displayKey` this panel was built for (07-02 Task 1) — logged by both the
+    /// `outsideClick` detector below and the `clickProbe` diagnostic in
+    /// `NotchPanelController.logClickProbeNow(key:)`.
+    var displayKey: String = ""
     var pendingCollapse: DispatchWorkItem?
     var pendingDwellOpen: DispatchWorkItem?
     var pendingHoverClose: DispatchWorkItem?
     // Two independent hover sources unified into one dwell state (see
-    // `applyHover`): the notch's `NSTrackingArea` and the wing mouse-monitor.
+    // `applyHover`): the notch's `NSTrackingArea` and the outline dwell-target
+    // detector (`FluidPointer.isDwellTarget`, driven by the mouse-moved monitors).
     var notchHovering = false
-    var wingHovering = false
+    var outlineHovering = false
     var lastHoverApplied = false
 
     // Purely non-activating (Dicticus pattern): the hotkey recorder now lives
@@ -1073,6 +1008,28 @@ private final class NotchPanel: NSPanel {
     // anywhere in this file.
     override var canBecomeKey: Bool { screenFrame.contains(NSEvent.mouseLocation) }
     override var canBecomeMain: Bool { false }
+
+    private static let outsideClickLogger = AppLog.make("NotchPanelController")
+
+    /// D-04 production regression evidence (07-02 Task 1), ported from the spike's
+    /// `FluidSpikePanel.sendEvent` (07-01): under BOTH click-through mechanisms this is the
+    /// ground-truth check — if a `.leftMouseDown` reaches this window at all while it's outside the
+    /// currently drawn outline, click-through has failed regardless of what `ignoresMouseEvents`
+    /// was set to. Only checked while collapsed (`viewModel?.isOpen != true`) — the expanded panel
+    /// is a plain rectangle with no outline concept until plan 08.
+    override func sendEvent(_ event: NSEvent) {
+        if event.type == .leftMouseDown, let motion, viewModel?.isOpen != true {
+            let globalPoint = NSEvent.mouseLocation
+            let cx = frame.width / 2
+            let localX = globalPoint.x - frame.minX
+            let localY = frame.maxY - globalPoint.y
+            let inside = FluidShapeGeometry.contains(CGPoint(x: localX, y: localY), cx: cx, q: motion.params)
+            if !inside {
+                Self.outsideClickLogger.notice("outsideClick display=\(self.displayKey, privacy: .public) x=\(localX, privacy: .public) y=\(localY, privacy: .public)")
+            }
+        }
+        super.sendEvent(event)
+    }
 
     // The notch overlay is a fixed, level-27 ambient window — it must never be
     // miniaturized or closed by the standard Window menu commands (⌘M / ⌘W),
