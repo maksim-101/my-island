@@ -1,5 +1,6 @@
 import SwiftUI
 import KeyboardShortcuts
+import MyIslandCore
 
 struct SettingsView: View {
     let calendar: CalendarProvider
@@ -9,6 +10,14 @@ struct SettingsView: View {
     @AppStorage(NotchPanelController.showOnNotchlessDisplaysKey) private var showOnNotchlessDisplays = NotchPanelController.showOnNotchlessDisplaysDefault
     @AppStorage(NotchPanelController.wingLeftContentKey) private var wingLeftContent = NotchPanelController.wingLeftContentDefault
     @AppStorage(NotchPanelController.surfaceMaterialKey) private var surfaceMaterial = NotchPanelController.surfaceMaterialDefault
+    /// MOD-01 (07-11): the persisted enabled-module list — comma-joined `BandModule.rawValue`s,
+    /// the same physical `String` representation `NotchPanelController.enabledModulesFromDefaults()`
+    /// parses (SwiftUI's `AppStorage` has no native `Array<String>` support).
+    @AppStorage(NotchPanelController.enabledModulesKey) private var enabledModulesRaw = NotchPanelController.enabledModulesDefault.joined(separator: ",")
+
+    private var enabledModules: [BandModule] {
+        BandModules.enabled(from: enabledModulesRaw.split(separator: ",").map(String.init))
+    }
 
     var body: some View {
         Form {
@@ -36,6 +45,28 @@ struct SettingsView: View {
                     Text("Liquid Glass").tag("glass")
                 }
                 Text("The MacBook pill stays black so it merges with the camera.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            // 07-11 (MOD-01, agreement §8): one switch per band module in fixed order — no
+            // reordering in Phase 7. The stored raw-value list is the band's only module source
+            // (NotchPanelController.enabledModules/NotchContentView's own copy) as of this plan;
+            // Claude already persists here but stays out of the drawn band until plan 14 removes
+            // modulesAwaitingDataSource.
+            Section("Modules") {
+                ForEach(BandModule.allCases, id: \.self) { module in
+                    let enabled = enabledModules
+                    Toggle(module.displayName, isOn: Binding(
+                        get: { enabled.contains(module) },
+                        set: { _ in
+                            let updated = BandModules.toggling(module, in: enabled)
+                            enabledModulesRaw = updated.map(\.rawValue).joined(separator: ",")
+                        }
+                    ))
+                    .disabled(!BandModules.canDisable(module, in: enabled))
+                }
+                Text("The band needs at least one module. Reordering is not available.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -72,12 +103,15 @@ struct SettingsView: View {
             }
         }
         .formStyle(.grouped)
-        .frame(width: 420, height: 460)
+        .frame(width: 420, height: 640)
         .task {
             calendarGroups = await calendar.availableCalendarsGroupedBySource()
         }
         .onChange(of: showOnNotchlessDisplays) {
             panels.rebuildPanels()
+        }
+        .onChange(of: enabledModulesRaw) {
+            panels.modulesChanged()
         }
     }
 }
