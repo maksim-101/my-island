@@ -12,10 +12,20 @@ extension Notification.Name {
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private var notchPanelController: NotchPanelController?
+    private var fluidSpikeController: FluidSpikeController?
     private var settingsWindow: NSWindow?
     private let logger = AppLog.make("AppDelegate")
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        // D-03 spike harness: when the launch default is set, run ONLY the harness — the
+        // production notch, hotkey and Settings wiring are skipped for this launch so nothing
+        // else draws over the harness's own panels. scripts/clickthrough-probe.sh and every task
+        // verify step delete this default and relaunch before finishing.
+        guard !UserDefaults.standard.bool(forKey: FluidSpikeController.enabledKey) else {
+            fluidSpikeController = FluidSpikeController()
+            return
+        }
+
         notchPanelController = NotchPanelController()
 
         KeyboardShortcuts.onKeyDown(for: .toggleNotchPanel) { [weak self] in
