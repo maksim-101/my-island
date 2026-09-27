@@ -23,6 +23,12 @@ struct WingItemsView: View {
     let displayID: CGDirectDisplayID?
     let isPhysical: Bool
     let isOpen: Bool
+    /// 07-04 Task 1 (FLUID-01, agreement §5): whether this display's collapsed surface is
+    /// currently the fullscreen bulge — while true, neither slot ever shows, overriding the
+    /// timer disjunct's own "shows in every fullscreen state" rule below. Only the bulge's own
+    /// outline timer line (`FluidOverlayView`, Task 2) and, from plan 05, the meeting alert draw
+    /// on the bulge.
+    let isBulge: Bool
 
     /// 07-02 Task 3: read live so flipping the Settings picker updates the wing immediately with
     /// no panel rebuild. An unknown stored value (T-06-08) degrades to `.artwork` in `leftSlot`
@@ -51,6 +57,7 @@ struct WingItemsView: View {
     }
 
     private var leftSlot: Slot? {
+        guard !isBulge else { return nil }
         guard musicVisible else { return nil }
         // The Settings choice only ever matters when the timer ALSO runs — with no timer, music
         // alone is always artwork (agreement §2), so this branch is the setting's one visible
@@ -60,8 +67,11 @@ struct WingItemsView: View {
     }
 
     private var rightSlot: Slot? {
+        guard !isBulge else { return nil }
         // The timer disjunct sits OUTSIDE `musicVisible`'s fullscreen suppression — a running
-        // timer still shows in every fullscreen state, same as the pre-fluid physical wing.
+        // timer still shows in every OTHER fullscreen state, same as the pre-fluid physical
+        // wing. Only the bulge itself (guarded above) replaces this clock-face with the outline
+        // timer line.
         if timer.isRunning { return .timerFace }
         if musicVisible { return .wave }
         return nil

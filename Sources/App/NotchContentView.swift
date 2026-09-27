@@ -62,7 +62,6 @@ struct NotchContentView: View {
     // into, so its expanded mask has square top corners.
     let isPhysical: Bool
 
-    @State private var flashOpacity: Double = 0
     /// 07-02 Task 3 (D-07, 07-01's `material_decision: option`): read live so switching in
     /// Settings needs no panel rebuild. The MacBook's collapsed pill stays black in every option
     /// (`fillView` below) — this only ever changes a synthetic display's collapsed surface.
@@ -78,6 +77,15 @@ struct NotchContentView: View {
 
     private var expandedSize: CGSize {
         CGSize(width: NotchLayout.expandedWidth, height: NotchLayout.expandedHeight)
+    }
+
+    /// 07-04 Task 1 (FLUID-01, agreement §1/§5): whether this display's collapsed surface is
+    /// currently the fullscreen bulge — mirrors `NotchPanelController`'s own
+    /// `isFullscreenBulge(for:)` gate exactly (a synthetic display whose frontmost window is
+    /// fullscreen). Gates `WingItemsView` to empty: the bulge shows no artwork, wave or
+    /// clock-face, only the outline timer line `FluidOverlayView` draws.
+    private var isBulge: Bool {
+        !isPhysical && fullscreen.isFrontmostFullscreen(on: displayID)
     }
 
     /// D-07 (07-02 Task 3): black everywhere by default, and always on the MacBook regardless of
@@ -124,18 +132,11 @@ struct NotchContentView: View {
                 fillView
                     .frame(width: shapeSize.width, height: shapeSize.height)
 
-                // A brief neutral/indigo flash on timer completion (D-11) — NEVER
-                // amber (that's reserved for the Claude "needs you" attention
-                // signal) and never a system notification.
-                FluidOutlineShape(params: motion.params)
-                    .fill(Tokens.Color.accent)
-                    .frame(width: shapeSize.width, height: shapeSize.height)
-                    .opacity(flashOpacity)
-                    .allowsHitTesting(false)
-
                 // 07-02 Task 2 (D-02/agreement §2): the 16pt wing items, drawn over the fill in
-                // the SAME frame so their own local center lines up with the pill's `cx`.
-                WingItemsView(timer: timer, nowPlaying: nowPlaying, fullscreen: fullscreen, displayID: displayID, isPhysical: isPhysical, isOpen: model.isOpen)
+                // the SAME frame so their own local center lines up with the pill's `cx`. Empty
+                // while the fullscreen bulge is showing (07-04 Task 1) — only the outline timer
+                // line and, from plan 05, the meeting alert, ever draw on the bulge.
+                WingItemsView(timer: timer, nowPlaying: nowPlaying, fullscreen: fullscreen, displayID: displayID, isPhysical: isPhysical, isOpen: model.isOpen, isBulge: isBulge)
                     .frame(width: shapeSize.width, height: shapeSize.height)
             }
 
@@ -168,12 +169,6 @@ struct NotchContentView: View {
                 )
         }
         .frame(width: expandedSize.width, height: expandedSize.height, alignment: .top)
-        .onChange(of: timer.flashPulse) {
-            flashOpacity = 1
-            withAnimation(.easeOut(duration: 0.5)) {
-                flashOpacity = 0
-            }
-        }
         // Hover is intentionally NOT detected here via SwiftUI `.onHover`.
         // `NotchPanelController`'s `HoverTrackingView` (an AppKit
         // `NSTrackingArea` on the window's container view) drives

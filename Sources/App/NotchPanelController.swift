@@ -173,6 +173,12 @@ final class NotchPanelController: NSObject {
                 let active = self.fullscreenObserver.isFrontmostFullscreen(on: set.panel.displayID)
                 self.logger.notice("fullscreenState key=\(key, privacy: .public) active=\(active, privacy: .public)")
                 guard set.model.isOpen != true, set.panel.pendingCollapse == nil else { continue }
+                // 07-04 Task 1 (FLUID-01, agreement §1): the pill becomes the fullscreen bulge (or
+                // back) in one snap, never a spring — the 20260912 no-morph decision for Space
+                // switches stands. `jump(to:)` resolves the new rest params itself via
+                // `collapsedParams(for:)`, which re-reads the fullscreen state this hook just
+                // observed, so the two can never disagree about which shape is now current.
+                set.motion.jump(to: self.collapsedParams(for: set.panel))
                 set.panel.setFrame(self.resolvedFrame(for: set.panel), display: true)
                 (set.panel.contentView as? HoverTrackingView)?.hoverRect = nil
             }
@@ -452,12 +458,24 @@ final class NotchPanelController: NSObject {
         let anchorMaxY = screen.frame.maxY
 
         let model = NotchViewModel()
-        let restParams = Self.collapsedParams(isPhysical: mode.isPhysical, notchFrame: anchorRect)
+        // 07-04 Task 1: a synthetic display that ARRIVES already fullscreen (e.g. the Dell
+        // reconnects while its one window is already in native fullscreen) starts the clock at
+        // the bulge's own rest params, not the desktop pill's — `fullscreenObserver.onChange`
+        // only fires on a LATER transition, so this is the one path that hook can never cover.
+        let startsAsBulge = !mode.isPhysical && fullscreenObserver.isFrontmostFullscreen(on: screen.displayID)
+        let restParams = startsAsBulge ? .fullscreenBulge(width: anchorRect.width) : Self.collapsedParams(isPhysical: mode.isPhysical, notchFrame: anchorRect)
         let motion = FluidMotion(rest: restParams)
         motion.startClock(on: screen)
 
         let panel = Self.makePanel(notchFrame: anchorRect, screen: screen, isPhysical: mode.isPhysical, model: model, motion: motion, timer: timer, calendar: calendarProvider, nowPlaying: nowPlayingProvider, fullscreen: fullscreenObserver, displayKey: key)
         panel.displayID = screen.displayID
+        // `makePanel`'s own window sizing is the static, non-fullscreen-aware
+        // `collapsedSurfaceFrame(isPhysical:notchFrame:anchorMaxY:)` (it has no panel/displayID to
+        // query yet) — reapply now that `displayID` is set, so a fresh bulge starts at its own
+        // (shallower) window frame rather than the desktop pill's.
+        if startsAsBulge {
+            panel.setFrame(resolvedFrame(for: panel), display: true)
+        }
         model.onOpenChange = { [weak self, weak panel] isOpen in
             guard let self, let panel else { return }
             self.applyFrame(to: panel, isOpen: isOpen)
@@ -607,8 +625,24 @@ final class NotchPanelController: NSObject {
         isPhysical ? .macBookPill : .desktopPill(width: notchFrame.width, height: notchFrame.height)
     }
 
+    /// 07-04 Task 1 (FLUID-01, agreement §1/§5): a collapsed synthetic panel whose own display is
+    /// the frontmost-fullscreen one shows the bulge instead of the desktop pill — the retired
+    /// sliver's replacement. Physical panels never branch here (`isFullscreenBulge` always false
+    /// for them), matching this file's own `!set.panel.isPhysical` convention everywhere else
+    /// fullscreen state is read.
     private func collapsedParams(for panel: NotchPanel) -> FluidParams {
-        Self.collapsedParams(isPhysical: panel.isPhysical, notchFrame: panel.notchFrame)
+        if isFullscreenBulge(for: panel) {
+            return .fullscreenBulge(width: panel.notchFrame.width)
+        }
+        return Self.collapsedParams(isPhysical: panel.isPhysical, notchFrame: panel.notchFrame)
+    }
+
+    /// True only for a collapsed (never open — plan 08's band owns the expanded fullscreen state)
+    /// synthetic panel on the display `fullscreenObserver.isFrontmostFullscreen(on:)` currently
+    /// reports as fullscreen — the plain app-fullscreen signal the retired sliver used (menu bar
+    /// actually obscured, 20260912 decision).
+    private func isFullscreenBulge(for panel: NotchPanel) -> Bool {
+        !panel.isPhysical && panel.viewModel?.isOpen != true && fullscreenObserver.isFrontmostFullscreen(on: panel.displayID)
     }
 
     /// The interactive panel's collapsed window frame: the fluid outline's own bounding box
@@ -628,8 +662,21 @@ final class NotchPanelController: NSObject {
         )
     }
 
+    /// 07-04 Task 1: routed through the instance `collapsedParams(for:)` above (not the static
+    /// isPhysical/notchFrame-only variant `makePanel`'s initial window sizing still uses) so a
+    /// panel currently showing the bulge gets the bulge's own — shallower — window height, "the
+    /// bulge's bounding box plus the 6pt sticky room" exactly as `collapsedSurfaceFrame`'s own doc
+    /// comment already promised for the pill case.
     private func collapsedSurfaceFrame(for panel: NotchPanel) -> NSRect {
-        Self.collapsedSurfaceFrame(isPhysical: panel.isPhysical, notchFrame: panel.notchFrame, anchorMaxY: panel.anchorMaxY)
+        let q = collapsedParams(for: panel)
+        let width = q.half * 2
+        let height = q.d + q.sag + 6
+        return NSRect(
+            x: panel.notchFrame.midX - width / 2,
+            y: panel.anchorMaxY - height,
+            width: width,
+            height: height
+        )
     }
 
     /// The click-through overlay's frame (Task 1): wider/taller than the interactive panel by a
