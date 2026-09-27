@@ -262,7 +262,8 @@ struct NotchContentView: View {
                         timer: timer,
                         nowPlaying: nowPlaying,
                         calendar: calendar,
-                        clipboard: clipboard
+                        clipboard: clipboard,
+                        claudeSessions: claudeSessions.sessions
                     )
                     .opacity(dropAlpha)
                 }

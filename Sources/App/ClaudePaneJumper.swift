@@ -67,7 +67,8 @@ enum ClaudePaneJumper {
             return proc_name(pid, UnsafeMutableRawPointer(base), UInt32(bufferSize))
         }
         guard length > 0 else { return nil }
-        return String(cString: buffer)
+        let bytes = buffer[..<Int(length)].map { UInt8(bitPattern: $0) }
+        return String(decoding: bytes, as: UTF8.self)
     }
 
     /// Runs a subprocess and returns its stdout as a string only on a clean exit — used for

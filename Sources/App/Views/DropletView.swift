@@ -25,6 +25,9 @@ struct DropletView: View {
     let nowPlaying: NowPlayingProvider
     let calendar: CalendarProvider
     let clipboard: ClipboardViewModel
+    /// 07-14 (CLAUDE-01/02/03): the read-only, already-sorted session list — `ClaudePanelView`'s
+    /// own data source, replacing plan 08's `EmptyView()` placeholder.
+    let claudeSessions: [ClaudeSession]
 
     private static let contentHeight: CGFloat = 180
 
@@ -46,10 +49,7 @@ struct DropletView: View {
         case .nowPlaying: NowPlayingPanelView(nowPlaying: nowPlaying)
         case .nextMeeting: CalendarPanelView(calendar: calendar)
         case .clipboard: ClipboardPanelView(clipboard: clipboard)
-        // Interim (07-15 gap closure note stays 07-08-scoped): unreachable while
-        // `NotchPanelController.modulesAwaitingDataSource` keeps `.claude` out of the enabled set
-        // — plan 14 adds `ClaudePanelView` and removes that set.
-        case .claude: EmptyView()
+        case .claude: ClaudePanelView(sessions: claudeSessions)
         }
     }
 }
