@@ -35,6 +35,10 @@ restore_normal_app() {
 
 echo "==> Arming spike harness (material=${MATERIAL}, hold=cycle)"
 quit_app
+# Timestamp captured AFTER quiescing the previous run and BEFORE relaunch, so log queries below
+# use --start instead of a rolling --last window — a prior run's material=X lines must never
+# satisfy this run's material=Y completeness/pass check (they cannot, once time-scoped this way).
+START_TS="$(date '+%Y-%m-%d %H:%M:%S')"
 defaults write "$BUNDLE_ID" MyIslandVerboseLogging -bool YES
 defaults write "$BUNDLE_ID" MyIslandFluidSpike -bool YES
 defaults write "$BUNDLE_ID" MyIslandFluidSpikeHold -string cycle
@@ -48,8 +52,8 @@ MAX_ITER=$((LOG_WAIT_SECONDS / LOG_POLL_INTERVAL))
 while [ "$n" -lt "$MAX_ITER" ]; do
   FOUND=0
   for state in "${STATES[@]}"; do
-    if /usr/bin/log show --predicate "subsystem == \"${BUNDLE_ID}\" AND category == \"FluidSpike\"" --last 2m --style compact 2>/dev/null \
-      | grep -q "clickProbe state=${state} "; then
+    if /usr/bin/log show --predicate "subsystem == \"${BUNDLE_ID}\" AND category == \"FluidSpike\"" --start "$START_TS" --style compact 2>/dev/null \
+      | grep "material=${MATERIAL} " | grep -q "clickProbe state=${state} "; then
       FOUND=$((FOUND + 1))
     fi
   done
@@ -60,7 +64,7 @@ while [ "$n" -lt "$MAX_ITER" ]; do
   n=$((n + 1))
 done
 
-LINES="$(/usr/bin/log show --predicate "subsystem == \"${BUNDLE_ID}\" AND category == \"FluidSpike\"" --last 2m --style compact 2>/dev/null | grep "clickProbe" || true)"
+LINES="$(/usr/bin/log show --predicate "subsystem == \"${BUNDLE_ID}\" AND category == \"FluidSpike\"" --start "$START_TS" --style compact 2>/dev/null | grep "clickProbe" | grep "material=${MATERIAL} " || true)"
 echo "$LINES"
 
 PROBED_COUNT=0
