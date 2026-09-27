@@ -209,6 +209,17 @@ struct NotchContentView: View {
         max(0, 1 - (motion.channels[.bandAlpha] ?? 0) * 3)
     }
 
+    /// 07-13 (FEEL-07 §10): while Reduce Motion is on, `motion.channels` are themselves step
+    /// functions (`FluidMotion`'s own `goTo`/`set`/`setChannel` jump instead of springing) — SAFE
+    /// to let SwiftUI animate THIS read of them, unlike the normal fluid path (RESEARCH.md Pitfall
+    /// 2 forbids animating a live spring read, but there is no live spring left to fight once
+    /// Reduce Motion has taken over). `nil` (no animation) the rest of the time, so the collapsed
+    /// pill and open band's own SwiftUI opacity crossfades over the wings/band/droplet layers below
+    /// stay entirely driven by the spring clock as always.
+    private var reduceMotionCrossFade: Animation? {
+        motion.reduceMotion ? .easeInOut(duration: FluidMotion.reduceMotionCrossFadeDuration) : nil
+    }
+
     /// 07-04 Task 1 (FLUID-01, agreement §1/§5): whether this display's collapsed surface is
     /// currently the fullscreen bulge — mirrors `NotchPanelController`'s own
     /// `isFullscreenBulge(for:)` gate exactly (a synthetic display whose frontmost window is
@@ -254,6 +265,7 @@ struct NotchContentView: View {
             WingItemsView(timer: timer, nowPlaying: nowPlaying, fullscreen: fullscreen, displayID: displayID, isPhysical: isPhysical, isOpen: false, isBulge: isBulge)
                 .frame(width: openSize.width, height: openSize.height)
                 .opacity(wingFade)
+                .animation(reduceMotionCrossFade, value: wingFade)
 
             // 07-05 Task 3 (T-07-01): only a LINKED meeting drop ever lands here, and only while
             // collapsed — `NotchPanelController.onOpenChange` already calls `hud.dismissNow()` the
@@ -290,6 +302,7 @@ struct NotchContentView: View {
                 .frame(width: bandLayout.cellsWidth, height: 50)
                 .position(x: bandLayout.cellsX + bandLayout.cellsWidth / 2, y: contentTop - 6 * (1 - bandAlpha) + 25)
                 .opacity(bandAlpha)
+                .animation(reduceMotionCrossFade, value: bandAlpha)
 
                 if let hot = model.hotModule, let dropletFrame = model.dropletFrame, hot < enabledModules.count {
                     DropletView(
@@ -305,6 +318,7 @@ struct NotchContentView: View {
                         dropletFocus: dropletFocus
                     )
                     .opacity(dropAlpha)
+                    .animation(reduceMotionCrossFade, value: dropAlpha)
                 }
             }
             .allowsHitTesting(model.isOpen)

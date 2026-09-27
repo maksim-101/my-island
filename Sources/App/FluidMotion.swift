@@ -18,6 +18,23 @@ final class FluidMotion: NSObject {
     private(set) var params: FluidParams
     private(set) var channels: [FluidChannel: CGFloat] = [:]
 
+    /// 07-13 (FEEL-07 §10, DESIGN.md "Motion & feedback"): read at init and kept live via the
+    /// matching NSWorkspace accessibility-display-options change notification (registered in
+    /// `init` below) — while `true`, `goTo`/`set`/`setChannel` jump straight to their targets
+    /// instead of springing (each call site below), so switching System Settings' Reduce Motion on
+    /// or off takes effect without a relaunch. Views read this to cross-fade content instead of
+    /// following the (now step-function) spring channels (`NotchContentView`/`FluidOverlayView`).
+    private(set) var reduceMotion: Bool = FluidMotion.currentReduceMotion()
+    nonisolated(unsafe) private var reduceMotionObserver: NSObjectProtocol?
+
+    /// The 0.2s cross-fade every Reduce Motion view transition uses (agreement §10) — one source so
+    /// `NotchContentView`/`FluidOverlayView` can never disagree about the duration.
+    static let reduceMotionCrossFadeDuration: TimeInterval = 0.2
+
+    private static func currentReduceMotion() -> Bool {
+        NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+    }
+
     /// 07-05: the HUD/alert drop's attachment hysteresis (detached at `.dropOffset` >= 7,
     /// reattached below -2), ported from the sketch's `st.detached` (index.html:550). Kept HERE —
     /// not on the transient `AlertDropView` struct — so it survives that view being torn down and
@@ -54,6 +71,21 @@ final class FluidMotion: NSObject {
             channelSprings[channel] = FluidSpring(0)
             channels[channel] = 0
         }
+        reduceMotionObserver = NSWorkspace.shared.notificationCenter.addObserver(
+            forName: NSWorkspace.accessibilityDisplayOptionsDidChangeNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor in
+                self?.reduceMotion = FluidMotion.currentReduceMotion()
+            }
+        }
+    }
+
+    deinit {
+        if let reduceMotionObserver {
+            NSWorkspace.shared.notificationCenter.removeObserver(reduceMotionObserver)
+        }
     }
 
     // MARK: - Public API (ported from index.html:308-372 `goTo`/`setHot`/etc, generalized)
@@ -61,6 +93,18 @@ final class FluidMotion: NSObject {
     /// Ported from index.html:308-315 `goTo` — skips dip/m/s2/mx (the droplet-only keys), applies
     /// `lag` to `run`/`sd` only.
     func goTo(_ target: FluidParams, preset: FluidMotionPreset, lag: CGFloat = 0, stagger: [FluidParamKey: CGFloat] = [:]) {
+        // 07-13 (FEEL-07 §10): Reduce Motion jumps every key straight to its target, per-key
+        // (never the droplet-only keys `goTo` always skips) — the SAME loop shape as the normal
+        // spring path below, just `jump` instead of `to`, and no lag/stagger (nothing to stagger
+        // once nothing springs).
+        if reduceMotion {
+            for key in FluidParamKey.allCases {
+                if key == .dip || key == .m || key == .s2 || key == .mx { continue }
+                springs[key]?.jump(target[key])
+            }
+            syncParams()
+            return
+        }
         for key in FluidParamKey.allCases {
             if key == .dip || key == .m || key == .s2 || key == .mx { continue }
             let scale = stagger[key] ?? 1
@@ -78,6 +122,11 @@ final class FluidMotion: NSObject {
     }
 
     func set(_ key: FluidParamKey, to value: CGFloat, preset: FluidMotionPreset, scale: CGFloat = 1) {
+        if reduceMotion {
+            springs[key]?.jump(value)
+            syncParams()
+            return
+        }
         springs[key]?.to(value, preset: preset, scale: scale)
         resume()
     }
@@ -101,6 +150,10 @@ final class FluidMotion: NSObject {
     }
 
     func setChannel(_ channel: FluidChannel, to value: CGFloat, response: CGFloat, damping: CGFloat) {
+        if reduceMotion {
+            jumpChannel(channel, to: value)
+            return
+        }
         channelSprings[channel]?.to(value, preset: FluidMotionPreset(response: response, damping: damping))
         resume()
     }
@@ -144,6 +197,19 @@ final class FluidMotion: NSObject {
         settledBackstop = nil
     }
 
+    /// 07-13 (FEEL-04): a one-shot callback fired on the very next `CADisplayLink` tick after it is
+    /// registered — `NotchPanelController`'s latency signposts (`hotkeyToFrame`/`dwellToFrame`/
+    /// `actionToFrame`) end their interval from here, since "first frame" is exactly what this
+    /// clock's own tick already means. Calls `resume()` so a callback still fires even when nothing
+    /// else is currently animating (e.g. every value already settled, or Reduce Motion just jumped
+    /// straight to rest).
+    func onNextFrame(_ callback: @escaping () -> Void) {
+        nextFrameCallbacks.append(callback)
+        resume()
+    }
+
+    private var nextFrameCallbacks: [() -> Void] = []
+
     // MARK: - Clock
 
     func startClock(on screen: NSScreen) {
@@ -178,6 +244,12 @@ final class FluidMotion: NSObject {
         }
         syncParams()
         recordInterval(frameDuration: link.duration, elapsed: now - last)
+
+        if !nextFrameCallbacks.isEmpty {
+            let callbacks = nextFrameCallbacks
+            nextFrameCallbacks.removeAll()
+            for callback in callbacks { callback() }
+        }
 
         if allSettled {
             stopClock()

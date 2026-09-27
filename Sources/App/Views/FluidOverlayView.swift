@@ -53,25 +53,32 @@ struct FluidOverlayView: View {
         timer.finishedAt != nil ? timer.finishedTokenState : timer.tokenState
     }
 
+    /// The closed outline filled and blurred, with the outline's own (unblurred) interior punched
+    /// out so only the halo bleeding past the fill's edge is visible — used for the ambient rim
+    /// glow (below) and, 07-13, the finished-timer's Reduce Motion tint and its normal glow-beat
+    /// layer (both share the identical mask, only the color/opacity differ).
+    @ViewBuilder
+    private func glowMask(color: Color, opacity: CGFloat) -> some View {
+        FluidOutlineShape(params: motion.params, closed: true)
+            .fill(color)
+            .blur(radius: 5)
+            .opacity(opacity)
+            .overlay {
+                FluidOutlineShape(params: motion.params, closed: true)
+                    .fill(.black)
+                    .blendMode(.destinationOut)
+            }
+            .compositingGroup()
+    }
+
     var body: some View {
         if !model.isOpen {
             let glow = max(0, motion.channels[.glow] ?? 0.2)
             ZStack {
-                // The glow: the closed outline filled and blurred, with the outline's own
-                // (unblurred) interior punched out so only the halo bleeding past the fill's edge
-                // is visible — the fill itself already reads as solid black from the interactive
-                // panel underneath. Dropped entirely for glass (D-07, Task 3).
+                // Dropped entirely for glass (D-07, Task 3) — the fill itself already reads as
+                // solid black from the interactive panel underneath.
                 if !isGlass {
-                    FluidOutlineShape(params: motion.params, closed: true)
-                        .fill(Tokens.Color.accent)
-                        .blur(radius: 5)
-                        .opacity(glow)
-                        .overlay {
-                            FluidOutlineShape(params: motion.params, closed: true)
-                                .fill(.black)
-                                .blendMode(.destinationOut)
-                        }
-                        .compositingGroup()
+                    glowMask(color: Tokens.Color.accent, opacity: glow)
                 }
 
                 // The rim: a thin open-path stroke along the same outline — kept for every material.
@@ -102,32 +109,34 @@ struct FluidOverlayView: View {
                 // only exists while `finishedAt` is set, so this costs nothing the other 99% of
                 // the time an island sits collapsed and idle.
                 if let finishedAt = timer.finishedAt {
-                    TimelineView(.animation) { context in
-                        let elapsed = context.date.timeIntervalSince(finishedAt)
-                        let pulseColor = Tokens.timerColor(for: timer.finishedTokenState)
-                        ZStack {
-                            FluidOutlineShape(params: motion.params, closed: true)
-                                .fill(pulseColor)
-                                .blur(radius: 5)
-                                .opacity(FluidPulse.glowBeat(elapsed: elapsed))
-                                .overlay {
-                                    FluidOutlineShape(params: motion.params, closed: true)
-                                        .fill(.black)
-                                        .blendMode(.destinationOut)
-                                }
-                                .compositingGroup()
+                    let pulseColor = Tokens.timerColor(for: timer.finishedTokenState)
+                    if motion.reduceMotion {
+                        // 07-13 (FEEL-07 §10): no rings under Reduce Motion — just the glow tinting
+                        // in the timer's own colour, a 0.2s fade in for the pulse window
+                        // (`TimerViewModel.scheduleFinishedClear`'s own `FluidPulse.duration`) and
+                        // back out once `finishedAt` clears (this `if let` leaving the tree).
+                        glowMask(color: pulseColor, opacity: 0.5)
+                            .transition(.opacity)
+                            .animation(.easeInOut(duration: FluidMotion.reduceMotionCrossFadeDuration), value: timer.finishedAt)
+                            .allowsHitTesting(false)
+                    } else {
+                        TimelineView(.animation) { context in
+                            let elapsed = context.date.timeIntervalSince(finishedAt)
+                            ZStack {
+                                glowMask(color: pulseColor, opacity: FluidPulse.glowBeat(elapsed: elapsed))
 
-                            ForEach(0..<3, id: \.self) { n in
-                                if let ring = FluidPulse.ring(n: n, elapsed: elapsed, depth: motion.params.d) {
-                                    FluidOutlineShape(params: motion.params, closed: true)
-                                        .stroke(pulseColor, lineWidth: ring.lineWidth)
-                                        .opacity(ring.opacity)
-                                        .scaleEffect(x: ring.sx, y: ring.sy, anchor: .top)
+                                ForEach(0..<3, id: \.self) { n in
+                                    if let ring = FluidPulse.ring(n: n, elapsed: elapsed, depth: motion.params.d) {
+                                        FluidOutlineShape(params: motion.params, closed: true)
+                                            .stroke(pulseColor, lineWidth: ring.lineWidth)
+                                            .opacity(ring.opacity)
+                                            .scaleEffect(x: ring.sx, y: ring.sy, anchor: .top)
+                                    }
                                 }
                             }
                         }
+                        .allowsHitTesting(false)
                     }
-                    .allowsHitTesting(false)
                 }
 
                 // 07-05 (T-07-01): the HUD level drop and a LINK-LESS meeting drop both stay

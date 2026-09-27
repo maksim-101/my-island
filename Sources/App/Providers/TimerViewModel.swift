@@ -192,6 +192,11 @@ final class TimerViewModel {
             // influenced path) — guarded optional, skips silently if
             // unavailable (T-03-T1).
             NSSound(named: "Glass")?.play()
+            // 07-13 (FEEL-06): the one haptic call in the app — a threshold crossing (the timer
+            // reaching zero), never an ordinary click. Felt only with a finger resting on the
+            // trackpad, and only if macOS's own trackpad-haptics setting allows it — the system
+            // framework below already honors that preference on its own, no local gate needed.
+            NSHapticFeedbackManager.defaultPerformer.perform(.levelChange, performanceTime: .now)
             finishedAt = now
             finishedTokenState = completingTokenState
             scheduleFinishedClear()
