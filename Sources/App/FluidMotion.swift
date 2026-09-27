@@ -48,6 +48,7 @@ final class FluidMotion: NSObject {
 
     private var displayLink: CADisplayLink?
     private var lastTimestamp: CFTimeInterval?
+    private weak var ownerScreen: NSScreen?
 
     /// 07-08 (D-06 Wave 2): one-shot "the springs settled" notification, replacing the fixed
     /// `NotchLayout.collapseWindowDelay` timer for the band's close-then-shrink window sequencing.
@@ -214,6 +215,7 @@ final class FluidMotion: NSObject {
 
     func startClock(on screen: NSScreen) {
         guard displayLink == nil else { return }
+        ownerScreen = screen
         let link = screen.displayLink(target: self, selector: #selector(tick(_:)))
         link.add(to: .main, forMode: .common)
         displayLink = link
@@ -226,7 +228,7 @@ final class FluidMotion: NSObject {
     }
 
     private func resume() {
-        guard displayLink == nil, let screen = NSScreen.main else { return }
+        guard displayLink == nil, let screen = ownerScreen ?? NSScreen.main else { return }
         startClock(on: screen)
     }
 
