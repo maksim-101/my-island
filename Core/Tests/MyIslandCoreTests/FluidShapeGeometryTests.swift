@@ -9,21 +9,40 @@ import CoreGraphics
 // against the sketch's own frameOf/floorY/shape/pebble/neck arithmetic.
 
 @Test func macBookPillSpansExactly257() {
-    let path = FluidShapeGeometry.outline(cx: 0, q: .macBookPill, closed: true)
+    let q = FluidParams.macBookPill(menuBarHeight: 33, notchHeight: 32)
+    let path = FluidShapeGeometry.outline(cx: 0, q: q, closed: true)
     let box = path.boundingBox
     #expect(abs(box.minX - (-128.5)) < 0.01)
     #expect(abs(box.maxX - 128.5) < 0.01)
 
-    let frame = FluidShapeGeometry.frameOf(.macBookPill, cx: 0)
+    let frame = FluidShapeGeometry.frameOf(q, cx: 0)
     #expect(abs(frame.x0 - (-110.5)) < 0.01)
 }
 
-@Test func macBookPillFloorAndSag() {
-    let frame = FluidShapeGeometry.frameOf(.macBookPill, cx: 0)
-    let atShoulderEnd = FluidShapeGeometry.floorY(x: frame.x0, q: .macBookPill, cx: 0)
-    let atCentre = FluidShapeGeometry.floorY(x: 0, q: .macBookPill, cx: 0)
-    #expect(abs(atShoulderEnd - 36) < 0.01)
-    #expect(abs(atCentre - 39) < 0.01)
+// 07-15 gap closure (D-06 row 1): depth now follows the display's measured menu-bar height —
+// the same rule `desktopPill` already used — instead of a fixed 36pt. 33/32 are this Mac's
+// measured menu-bar height and notch height (uat-evidence/gap-15/01-baseline-probe.txt).
+@Test func macBookPillDepthFollowsMenuBar() {
+    let q = FluidParams.macBookPill(menuBarHeight: 33, notchHeight: 32)
+    #expect(abs(q.half - 128.5) < 0.01)
+    #expect(abs(q.run - 18) < 0.01)
+    #expect(abs(q.sag - 3) < 0.01)
+    #expect(abs(q.d - 33) < 0.01)
+    #expect(abs(q.sd - 33) < 0.01)
+
+    let frame = FluidShapeGeometry.frameOf(q, cx: 0)
+    let atShoulderEnd = FluidShapeGeometry.floorY(x: frame.x0, q: q, cx: 0)
+    let atCentre = FluidShapeGeometry.floorY(x: 0, q: q, cx: 0)
+    #expect(abs(atShoulderEnd - 33) < 0.01)
+    #expect(abs(atCentre - 36) < 0.01)
+}
+
+// FLUID-01: depth is floored at the notch height so a zero menu-bar read (Pitfall 3) or an
+// auto-hidden menu bar can never uncover the camera housing.
+@Test func macBookPillNeverShallowerThanHousing() {
+    #expect(abs(FluidParams.macBookPill(menuBarHeight: 0, notchHeight: 32).d - 32) < 0.01)
+    #expect(abs(FluidParams.macBookPill(menuBarHeight: 30, notchHeight: 32).d - 32) < 0.01)
+    #expect(abs(FluidParams.macBookPill(menuBarHeight: 37, notchHeight: 32).d - 37) < 0.01)
 }
 
 @Test func desktopPillFromAnchor() {
@@ -81,27 +100,57 @@ import CoreGraphics
 }
 
 @Test func cameraHousingCovered() {
-    let q = FluidParams.macBookPill
-    #expect(FluidShapeGeometry.contains(CGPoint(x: 0, y: 31.5), cx: 0, q: q))
-    #expect(FluidShapeGeometry.contains(CGPoint(x: 92.5, y: 31.5), cx: 0, q: q))
-    #expect(FluidShapeGeometry.contains(CGPoint(x: -92.5, y: 31.5), cx: 0, q: q))
-    #expect(FluidShapeGeometry.contains(CGPoint(x: 92.5, y: 0.5), cx: 0, q: q))
-    #expect(FluidShapeGeometry.contains(CGPoint(x: -92.5, y: 0.5), cx: 0, q: q))
+    let points: [CGPoint] = [
+        CGPoint(x: 0, y: 31.5), CGPoint(x: 92.5, y: 31.5), CGPoint(x: -92.5, y: 31.5),
+        CGPoint(x: 92.5, y: 0.5), CGPoint(x: -92.5, y: 0.5),
+    ]
+    // Measured menu-bar depth.
+    let q = FluidParams.macBookPill(menuBarHeight: 33, notchHeight: 32)
+    for p in points {
+        #expect(FluidShapeGeometry.contains(p, cx: 0, q: q), "\(p) at measured depth")
+    }
+    // Floor case: a zero-read/auto-hidden menu bar must never uncover the housing (FLUID-01).
+    let qFloor = FluidParams.macBookPill(menuBarHeight: 0, notchHeight: 32)
+    for p in points {
+        #expect(FluidShapeGeometry.contains(p, cx: 0, q: qFloor), "\(p) at floored depth")
+    }
 }
 
+// 07-DESIGN-AGREEMENT.md §2 amended 2026-09-27 (07-15): at the measured 33pt depth the black
+// below the wing items is at least 6.7pt (was 9.7pt at the retired fixed 36pt depth).
 @Test func wingItemsClearOutline() {
-    let q = FluidParams.macBookPill
+    let q = FluidParams.macBookPill(menuBarHeight: 33, notchHeight: 32)
     for x: CGFloat in [95.5, 111.5] {
         for signedX in [x, -x] {
             let boundary = FluidShapeGeometry.boundaryY(atX: signedX, cx: 0, q: q)
-            #expect(boundary - 26 >= 9.5, "x=\(signedX) boundary=\(boundary)")
+            #expect(boundary - 26 >= 6.5, "x=\(signedX) boundary=\(boundary)")
         }
     }
 }
 
+// 07-15 gap closure (T-07-26, characterization not a gate): the chevron's relMinX (127, measured
+// via MenuBarAgent's AX tree, uat-evidence/gap-15/01-baseline-probe.txt 2026-09-27) is not
+// portable across x — recompute the depth bound from `boundaryY` at the measured x rather than
+// asserting a literal. The pill's shoulder tip enters the chevron's frame only in its very top
+// (well under half a point at this reading); the glyph band (y ≥ 11) stays clear.
+@Test func shoulderTipInChevronFrame() {
+    let q = FluidParams.macBookPill(menuBarHeight: 33, notchHeight: 32)
+    let relMinX: CGFloat = 127
+    var maxBoundary: CGFloat = 0
+    var x = relMinX
+    while x <= 128.5 {
+        maxBoundary = max(maxBoundary, FluidShapeGeometry.boundaryY(atX: x, cx: 0, q: q))
+        x += 0.1
+    }
+    let roundedBound = (maxBoundary * 10).rounded(.up) / 10
+    #expect(maxBoundary <= roundedBound + 0.001)
+    #expect(roundedBound <= 0.6, "chevron entry depth grew unexpectedly: \(roundedBound)")
+    #expect(!FluidShapeGeometry.contains(CGPoint(x: relMinX - 2, y: 11), cx: 0, q: q))
+}
+
 @Test func oneFamilyEndpoints() {
     let shapes: [FluidParams] = [
-        .macBookPill,
+        .macBookPill(menuBarHeight: 33, notchHeight: 32),
         .desktopPill(width: 197, height: 30),
         .fullscreenBulge(width: 197),
         .band(moduleCount: 5, contentTop: 38),
@@ -115,7 +164,7 @@ import CoreGraphics
 }
 
 @Test func probePointsStraddleOutline() {
-    for q in [FluidParams.macBookPill, FluidParams.band(moduleCount: 5, contentTop: 38)] {
+    for q in [FluidParams.macBookPill(menuBarHeight: 33, notchHeight: 32), FluidParams.band(moduleCount: 5, contentTop: 38)] {
         let probes = FluidShapeGeometry.probePoints(cx: 0, q: q, count: 24, offset: 1)
         #expect(probes.count == 24)
         for probe in probes {
