@@ -310,7 +310,7 @@ final class NotchPanelController: NSObject {
         var kept = 0
         for key in diff.kept {
             guard let set = panelSets[key], let (screen, mode) = desired[key] else { continue }
-            if set.panel.notchFrame != mode.anchorRect || set.panel.anchorMaxY != screen.frame.maxY || set.panel.isPhysical != mode.isPhysical {
+            if set.panel.notchFrame != mode.anchorRect || set.panel.anchorMaxY != screen.frame.maxY || set.panel.isPhysical != mode.isPhysical || set.panel.menuBarHeight != screen.menuBarHeight {
                 // WR-02 (06-REVIEW.md): a fresh `NotchViewModel` always starts collapsed — carry
                 // the torn-down set's open state forward through the SAME code path a hover/hotkey
                 // open uses (`toggle()`), rather than reaching into the new model's private dwell
@@ -469,7 +469,7 @@ final class NotchPanelController: NSObject {
         // the bulge's own rest params, not the desktop pill's — `fullscreenObserver.onChange`
         // only fires on a LATER transition, so this is the one path that hook can never cover.
         let startsAsBulge = !mode.isPhysical && fullscreenObserver.isFrontmostFullscreen(on: screen.displayID)
-        let restParams = startsAsBulge ? .fullscreenBulge(width: anchorRect.width) : Self.collapsedParams(isPhysical: mode.isPhysical, notchFrame: anchorRect)
+        let restParams = startsAsBulge ? .fullscreenBulge(width: anchorRect.width) : Self.collapsedParams(isPhysical: mode.isPhysical, notchFrame: anchorRect, menuBarHeight: screen.menuBarHeight)
         let motion = FluidMotion(rest: restParams)
         motion.startClock(on: screen)
 
@@ -492,7 +492,7 @@ final class NotchPanelController: NSObject {
         }
         panel.orderFrontRegardless()
 
-        let overlay = Self.makeOverlayPanel(notchFrame: anchorRect, anchorMaxY: anchorMaxY, isPhysical: mode.isPhysical, motion: motion, model: model, timer: timer, fullscreen: fullscreenObserver, displayID: screen.displayID, hud: hud)
+        let overlay = Self.makeOverlayPanel(notchFrame: anchorRect, anchorMaxY: anchorMaxY, isPhysical: mode.isPhysical, menuBarHeight: screen.menuBarHeight, motion: motion, model: model, timer: timer, fullscreen: fullscreenObserver, displayID: screen.displayID, hud: hud)
         overlay.orderFrontRegardless()
 
         // The printed height distinguishes the launched-app menu-bar value from the 22pt
@@ -596,7 +596,7 @@ final class NotchPanelController: NSObject {
 
     private static func makePanel(notchFrame: NSRect, screen: NSScreen, isPhysical: Bool, model: NotchViewModel, motion: FluidMotion, timer: TimerViewModel, calendar: CalendarProvider, nowPlaying: NowPlayingProvider, fullscreen: FullscreenObserver, displayKey: String, hud: HUDViewModel) -> NotchPanel {
         let anchorMaxY = screen.frame.maxY
-        let collapsedFrame = Self.collapsedSurfaceFrame(isPhysical: isPhysical, notchFrame: notchFrame, anchorMaxY: anchorMaxY)
+        let collapsedFrame = Self.collapsedSurfaceFrame(isPhysical: isPhysical, notchFrame: notchFrame, anchorMaxY: anchorMaxY, menuBarHeight: screen.menuBarHeight)
         let styleMask: NSWindow.StyleMask = [.borderless, .nonactivatingPanel, .utilityWindow]
 
         // The panel window is created at the COLLAPSED (fluid pill) size, not the
@@ -609,6 +609,10 @@ final class NotchPanelController: NSObject {
         panel.notchFrame = notchFrame
         panel.anchorMaxY = anchorMaxY
         panel.isPhysical = isPhysical
+        // 07-15 gap closure (D-06 row 1): the display's own measured menu-bar height, read once
+        // here — `collapsedParams(for:)` derives the MacBook pill's depth from it instead of a
+        // fixed constant. A later change is caught by `rebuildPanels()`'s kept-vs-rebuilt check.
+        panel.menuBarHeight = screen.menuBarHeight
         panel.screenFrame = screen.frame
         panel.motion = motion
         panel.displayKey = displayKey
@@ -699,11 +703,13 @@ final class NotchPanelController: NSObject {
     /// D-06 Wave 1 (07-02): the fluid pill's own rest parameters for a given display — the single
     /// source `makePanel`'s initial window size, `resolvedFrame(for:)`'s collapsed target,
     /// `makeOverlayPanel`'s sizing, and `handleMouseMoved`'s dwell/sticky-pull math all read, so
-    /// none of them can disagree about how big the collapsed pill currently is. Physical gets the
-    /// locked `.macBookPill` (257×36, 07-DESIGN-AGREEMENT.md §1); synthetic derives a pill sized to
-    /// the anchor's own damped-width/menu-bar-height rect.
-    private static func collapsedParams(isPhysical: Bool, notchFrame: NSRect) -> FluidParams {
-        isPhysical ? .macBookPill : .desktopPill(width: notchFrame.width, height: notchFrame.height)
+    /// none of them can disagree about how big the collapsed pill currently is. Physical derives
+    /// `.macBookPill(menuBarHeight:notchHeight:)` from the display's own measured menu-bar height (257pt wide, 18pt shoulders,
+    /// 3pt sag, 07-DESIGN-AGREEMENT.md §1 amended 2026-09-27 — 07-15 gap closure); synthetic
+    /// derives a pill sized to the anchor's own damped-width/menu-bar-height rect exactly as
+    /// before.
+    private static func collapsedParams(isPhysical: Bool, notchFrame: NSRect, menuBarHeight: CGFloat) -> FluidParams {
+        isPhysical ? .macBookPill(menuBarHeight: menuBarHeight, notchHeight: notchFrame.height) : .desktopPill(width: notchFrame.width, height: notchFrame.height)
     }
 
     /// 07-04 Task 1 (FLUID-01, agreement §1/§5): a collapsed synthetic panel whose own display is
@@ -715,7 +721,7 @@ final class NotchPanelController: NSObject {
         if isFullscreenBulge(for: panel) {
             return .fullscreenBulge(width: panel.notchFrame.width)
         }
-        return Self.collapsedParams(isPhysical: panel.isPhysical, notchFrame: panel.notchFrame)
+        return Self.collapsedParams(isPhysical: panel.isPhysical, notchFrame: panel.notchFrame, menuBarHeight: panel.menuBarHeight)
     }
 
     /// True only for a collapsed (never open — plan 08's band owns the expanded fullscreen state)
@@ -731,8 +737,8 @@ final class NotchPanelController: NSObject {
     /// top flush with the screen, `d + sag + 6` tall — the extra 6pt is room for the sticky belly's
     /// live pull so a hover just past the drawn floor still passes clicks through the transparent
     /// margin rather than hitting dead window past the shape.
-    private static func collapsedSurfaceFrame(isPhysical: Bool, notchFrame: NSRect, anchorMaxY: CGFloat) -> NSRect {
-        let q = collapsedParams(isPhysical: isPhysical, notchFrame: notchFrame)
+    private static func collapsedSurfaceFrame(isPhysical: Bool, notchFrame: NSRect, anchorMaxY: CGFloat, menuBarHeight: CGFloat) -> NSRect {
+        let q = collapsedParams(isPhysical: isPhysical, notchFrame: notchFrame, menuBarHeight: menuBarHeight)
         let width = q.half * 2
         let height = q.d + q.sag + 6
         return NSRect(
@@ -783,8 +789,8 @@ final class NotchPanelController: NSObject {
     /// line and the finished-timer pulse — the same providers/observer threaded to every other
     /// per-display view. `hud` (07-05 Task 1) lets it draw the HUD/alert drop — replaces the old
     /// separate, always-detached `hud` panel window entirely.
-    private static func makeOverlayPanel(notchFrame: NSRect, anchorMaxY: CGFloat, isPhysical: Bool, motion: FluidMotion, model: NotchViewModel, timer: TimerViewModel, fullscreen: FullscreenObserver, displayID: CGDirectDisplayID?, hud: HUDViewModel) -> NSPanel {
-        let q = collapsedParams(isPhysical: isPhysical, notchFrame: notchFrame)
+    private static func makeOverlayPanel(notchFrame: NSRect, anchorMaxY: CGFloat, isPhysical: Bool, menuBarHeight: CGFloat, motion: FluidMotion, model: NotchViewModel, timer: TimerViewModel, fullscreen: FullscreenObserver, displayID: CGDirectDisplayID?, hud: HUDViewModel) -> NSPanel {
+        let q = collapsedParams(isPhysical: isPhysical, notchFrame: notchFrame, menuBarHeight: menuBarHeight)
         let frame = overlayPanelFrame(notchFrame: notchFrame, anchorMaxY: anchorMaxY, q: q)
 
         let panel = NSPanel(contentRect: frame, styleMask: [.borderless, .nonactivatingPanel, .utilityWindow], backing: .buffered, defer: false)
@@ -1093,6 +1099,11 @@ private final class NotchPanel: NSPanel {
     weak var viewModel: NotchViewModel?
     var notchFrame: NSRect = .zero
     var anchorMaxY: CGFloat = 0
+    /// 07-15 gap closure (D-06 row 1): the display's own measured menu-bar height at the moment
+    /// this panel was (re)built — `collapsedParams(for:)` derives the MacBook pill's depth from
+    /// it. `rebuildPanels()`'s kept-vs-rebuilt comparison rebuilds the set when this drifts from
+    /// `screen.menuBarHeight`, so a resolution change never leaves the pill at a stale depth.
+    var menuBarHeight: CGFloat = 0
     // Phase 6 SHELL-06/07: which `NotchGeometry.Mode` case this panel was
     // built from, and the owning screen's full frame — both set once in
     // `makePanel`, read by `NotchContentView`'s corner-radius branch and any

@@ -59,8 +59,18 @@ public struct FluidParams: Equatable, Sendable {
         self.asym = asym
     }
 
-    /// 07-DESIGN-AGREEMENT.md §1: MacBook pill, 257×36, 18pt shoulders, 3pt sag.
-    public static let macBookPill = FluidParams(half: 128.5, run: 18, d: 36, sd: 36, sag: 3)
+    /// 07-DESIGN-AGREEMENT.md §1, amended 2026-09-27 (07-15, D-06 gap closure): MacBook pill,
+    /// 257pt wide, 18pt shoulders, 3pt sag — depth is the display's measured menu-bar height,
+    /// the same rule `desktopPill` already uses below, floored at the notch height so a zero read
+    /// (Pitfall 3, `NSScreen.menuBarHeight` before launch completes) or an auto-hidden menu bar
+    /// can never uncover the camera housing (FLUID-01). The retired fixed depth (36pt) calibrated
+    /// against the design sketch's own 37pt-tall built-in menu bar; this Mac's hardware bar
+    /// measures 33pt, which is what made the fixed depth overhang by 6pt (07-06 gate row 1;
+    /// uat-evidence/gap-15/01-baseline-probe.txt).
+    public static func macBookPill(menuBarHeight: CGFloat, notchHeight: CGFloat) -> FluidParams {
+        let depth = max(menuBarHeight, notchHeight)
+        return FluidParams(half: 128.5, run: 18, d: depth, sd: depth, sag: 3)
+    }
 
     /// 07-DESIGN-AGREEMENT.md §1: Dell desktop pill at menu-bar height, 24pt shoulders, 2pt sag.
     public static func desktopPill(width: CGFloat, height: CGFloat) -> FluidParams {

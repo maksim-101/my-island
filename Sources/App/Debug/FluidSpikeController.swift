@@ -88,7 +88,7 @@ final class FluidSpikeController: NSObject {
         switch state {
         case .pill:
             return mode.isPhysical
-                ? .macBookPill
+                ? .macBookPill(menuBarHeight: screen.menuBarHeight, notchHeight: mode.anchorRect.height)
                 : .desktopPill(width: mode.anchorRect.width, height: mode.anchorRect.height)
         case .band:
             return .band(moduleCount: 5, contentTop: contentTop)
@@ -109,7 +109,7 @@ final class FluidSpikeController: NSObject {
             return q
         case .alert:
             return mode.isPhysical
-                ? .macBookPill
+                ? .macBookPill(menuBarHeight: screen.menuBarHeight, notchHeight: mode.anchorRect.height)
                 : .desktopPill(width: mode.anchorRect.width, height: mode.anchorRect.height)
         }
     }
@@ -256,7 +256,7 @@ private final class DisplayContext {
         let mode = screen.notchMode
         let contentTop = mode.isPhysical ? FluidShapeGeometry.bandContentTopPhysical : FluidShapeGeometry.bandContentTopSynthetic
         _ = contentTop
-        let restPill: FluidParams = mode.isPhysical ? .macBookPill : .desktopPill(width: mode.anchorRect.width, height: mode.anchorRect.height)
+        let restPill: FluidParams = mode.isPhysical ? .macBookPill(menuBarHeight: screen.menuBarHeight, notchHeight: mode.anchorRect.height) : .desktopPill(width: mode.anchorRect.width, height: mode.anchorRect.height)
         motion = FluidMotion(rest: restPill)
 
         let anchorRect = mode.anchorRect
