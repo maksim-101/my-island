@@ -20,6 +20,19 @@ final class TimerViewModel {
     private(set) var remaining: TimeInterval = 0
     private(set) var startedDuration: TimeInterval = 0
 
+    /// Per-local-day session count/seconds for the Timer droplet's "Today" filler row
+    /// (07-DESIGN-AGREEMENT.md §9) — persisted as JSON under `com.myisland.timerToday`. Loaded
+    /// once at init; a hand-edited/undecodable stored value reads back as an empty total (T-07-05)
+    /// rather than crash.
+    private(set) var todayTotal: DailyTimerTotal
+    private static let todayTotalKey = "com.myisland.timerToday"
+
+    // `@Observable`'s macro expansion rejects `Self.loadTodayTotal()` as a stored-property
+    // default (covariant `Self` in a stored-property initializer) — loaded explicitly here instead.
+    init() {
+        todayTotal = Self.loadTodayTotal()
+    }
+
     /// Fired once when a running timer completes (countdown ends, or the
     /// final Pomodoro cycle's focus period ends) — after the built-in sound +
     /// flash side effect below. Optional extension point; not required for
@@ -158,6 +171,20 @@ final class TimerViewModel {
             break
         }
 
+        // Today's total counts a completed countdown or a completed Pomodoro FOCUS phase — never
+        // a break. A focus phase "completes" two ways: transitioning into a break (cycle <
+        // totalCycles) or ending the run outright on the final cycle (engine.mode == nil straight
+        // from .pomodoroFocus, PomodoroEngine.tick's own last-cycle branch) — both are covered by
+        // checking `completingTokenState` alone, with no dependency on what `engine.mode` became.
+        switch completingTokenState {
+        case .countdown where engine.mode == nil:
+            recordCompletedSession(duration: startedDuration, at: now)
+        case .pomodoroFocus:
+            recordCompletedSession(duration: engine.config.focusDuration, at: now)
+        default:
+            break
+        }
+
         if engine.mode == nil {
             logger.info("Timer completed")
             stopTicking()
@@ -175,6 +202,24 @@ final class TimerViewModel {
     private func stopTicking() {
         tickTimer?.invalidate()
         tickTimer = nil
+    }
+
+    private func recordCompletedSession(duration: TimeInterval, at date: Date) {
+        todayTotal.record(duration: duration, at: date, calendar: .current)
+        persistTodayTotal()
+    }
+
+    private static func loadTodayTotal() -> DailyTimerTotal {
+        guard let data = UserDefaults.standard.data(forKey: todayTotalKey),
+              let decoded = try? JSONDecoder().decode(DailyTimerTotal.self, from: data) else {
+            return DailyTimerTotal()
+        }
+        return decoded
+    }
+
+    private func persistTodayTotal() {
+        guard let data = try? JSONEncoder().encode(todayTotal) else { return }
+        UserDefaults.standard.set(data, forKey: Self.todayTotalKey)
     }
 
     deinit {
