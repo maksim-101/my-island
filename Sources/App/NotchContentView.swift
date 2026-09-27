@@ -51,6 +51,11 @@ struct NotchContentView: View {
     let timer: TimerViewModel
     let calendar: CalendarProvider
     let nowPlaying: NowPlayingProvider
+    /// Threaded through to `WingItemsView` (07-02 Task 2) for its own music-visible /
+    /// fullscreen-suppression gate — the identical `FullscreenObserver`/`displayID` pairing
+    /// `NotchPanelController` already reads everywhere else.
+    let fullscreen: FullscreenObserver
+    let displayID: CGDirectDisplayID?
     // Phase 6 SHELL-06: only the physical camera-cutout gets concave top
     // "ears" (topCornerRadius 6) for the (unchanged, pre-fluid) expanded-panel
     // mask below — a synthetic screen has no housing for those ears to flow
@@ -106,6 +111,11 @@ struct NotchContentView: View {
                     .frame(width: shapeSize.width, height: shapeSize.height)
                     .opacity(flashOpacity)
                     .allowsHitTesting(false)
+
+                // 07-02 Task 2 (D-02/agreement §2): the 16pt wing items, drawn over the fill in
+                // the SAME frame so their own local center lines up with the pill's `cx`.
+                WingItemsView(timer: timer, nowPlaying: nowPlaying, fullscreen: fullscreen, displayID: displayID, isPhysical: isPhysical, isOpen: model.isOpen)
+                    .frame(width: shapeSize.width, height: shapeSize.height)
             }
 
             // Laid out at a CONSTANT expanded size (never `shapeSize`) so its
