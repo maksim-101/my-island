@@ -129,12 +129,42 @@ final class NotchPanelController: NSObject {
     static let modulesAwaitingDataSource: Set<BandModule> = [.claude]
 
     /// `input` minus `modulesAwaitingDataSource`, falling back to `input` unfiltered when that
-    /// would leave nothing (T-07-05: the band can never be built with zero modules) — plan 11
-    /// swaps the `input` callers pass from `BandModule.allCases` to the persisted enabled list;
-    /// this filter applies uniformly regardless of what `input` already is.
+    /// would leave nothing (T-07-05: the band can never be built with zero modules) — every call
+    /// site below now passes `enabledModules` (the persisted list, plan 11) instead of
+    /// `BandModule.allCases`; this filter applies uniformly regardless of what `input` already is.
     static func bandModules(from input: [BandModule]) -> [BandModule] {
         let filtered = input.filter { !modulesAwaitingDataSource.contains($0) }
         return filtered.isEmpty ? input : filtered
+    }
+
+    /// MOD-01 (07-11): persisted key for the Settings "Modules" toggles — Alcove-style per-module
+    /// on/off, Settings-driven, same `com.myisland.*` reverse-DNS convention as every other
+    /// persisted key above. Stored as a comma-joined list of `BandModule.rawValue`s: SwiftUI's
+    /// `AppStorage` has no native `Array<String>` support (only scalar types and
+    /// `RawRepresentable` with an `Int`/`String` raw value), so a plain `String` is the shared
+    /// physical representation this reader and `SettingsView`/`NotchContentView`'s own
+    /// `@AppStorage` bindings all parse identically.
+    static let enabledModulesKey = "com.myisland.enabledModules"
+
+    /// WR-04 paired-constant convention: the default when nothing is persisted yet — every
+    /// module, including `.claude` (kept out of the band today only by
+    /// `modulesAwaitingDataSource` above, the separate interim filter plan 14 removes).
+    static let enabledModulesDefault: [String] = BandModule.allCases.map(\.rawValue)
+
+    /// The persisted enabled subset (MOD-01) — every set's `BandLayout`/window frame/droplet
+    /// lookup below is built from this instead of `BandModule.allCases`. A missing key or an
+    /// unknown-name value degrades to `enabledModulesDefault` via `BandModules.enabled(from:)`
+    /// (T-07-05: the band can never be built with zero modules).
+    private var enabledModules: [BandModule] { Self.enabledModulesFromDefaults() }
+
+    /// Static form of `enabledModules` — `Self.makePanel` (a static factory, no instance to read
+    /// from) and `NotchContentView`'s own SwiftUI-side module list (no controller instance is
+    /// threaded to that view) both read this directly, the identical shared-UserDefaults-read
+    /// pattern `wingLeftContent`/`surfaceMaterial` already establish for a Settings-driven value
+    /// consumed on both the AppKit and SwiftUI side of this app.
+    static func enabledModulesFromDefaults() -> [BandModule] {
+        let stored = UserDefaults.standard.string(forKey: enabledModulesKey)
+        return BandModules.enabled(from: stored?.split(separator: ",").map(String.init))
     }
 
     /// 07-08 (D-06 Wave 2): the band's own outline parameters for `moduleCount`/`contentTop` — the
@@ -636,7 +666,7 @@ final class NotchPanelController: NSObject {
     /// independent computations (not a shared type) because they operate in two different
     /// coordinate spaces for two different callers (AppKit pointer math here, SwiftUI layout there).
     private func bandLayout(for panel: NotchPanel) -> BandLayout {
-        let modules = Self.bandModules(from: BandModule.allCases)
+        let modules = Self.bandModules(from: enabledModules)
         let contentTop: CGFloat = panel.isPhysical ? FluidShapeGeometry.bandContentTopPhysical : FluidShapeGeometry.bandContentTopSynthetic
         return BandLayout(moduleCount: modules.count, contentTop: contentTop, cx: panel.notchFrame.midX)
     }
@@ -644,7 +674,7 @@ final class NotchPanelController: NSObject {
     /// The open window's own frame — the band's bounding box plus droplet room, `openFrameSize`'s
     /// single source. Replaces the old fixed `expandedFrame`.
     private func openFrame(for panel: NotchPanel) -> NSRect {
-        let modules = Self.bandModules(from: BandModule.allCases)
+        let modules = Self.bandModules(from: enabledModules)
         let contentTop: CGFloat = panel.isPhysical ? FluidShapeGeometry.bandContentTopPhysical : FluidShapeGeometry.bandContentTopSynthetic
         let size = Self.openFrameSize(moduleCount: modules.count, contentTop: contentTop)
         return NSRect(
@@ -694,7 +724,7 @@ final class NotchPanelController: NSObject {
     /// rises at response 0.5 (first) or 0.32 (slide).
     private func showDroplet(_ index: Int, on panel: NotchPanel, motion: FluidMotion) {
         guard let model = panel.viewModel else { return }
-        let modules = Self.bandModules(from: BandModule.allCases)
+        let modules = Self.bandModules(from: enabledModules)
         guard index >= 0, index < modules.count else { return }
         let layout = bandLayout(for: panel)
         let target = layout.droplet(forCell: index, halfWidth: modules[index].dropletWidth / 2)
@@ -724,6 +754,23 @@ final class NotchPanelController: NSObject {
         motion.set(.dip, to: 0, preset: .close, scale: 0.8)
         motion.set(.m, to: 0, preset: .close, scale: 1.3)
         motion.setChannel(.dropAlpha, to: 0, response: 0.12, damping: 1)
+    }
+
+    /// MOD-01 (07-11): called from `SettingsView`'s `.onChange` of the persisted enabled list —
+    /// every set may have been showing a droplet for a module that just left the enabled set, so
+    /// each one drops its droplet and clears its pin first, then rebuilds its own `BandLayout` for
+    /// the new module count. An OPEN set re-flows live on the sketch's own slide spring
+    /// (index.html:764-771 module-switch handler); a closed set simply picks up the new layout the
+    /// next time it opens — no immediate motion needed since nothing is drawn.
+    func modulesChanged() {
+        for set in panelSets.values {
+            closeDroplet(on: set.panel, motion: set.motion)
+            set.model.setPinnedModule(nil)
+            let layout = bandLayout(for: set.panel)
+            if set.model.isOpen {
+                set.motion.goTo(layout.params, preset: .slide)
+            }
+        }
     }
 
     /// D-04 regression evidence for `scripts/clickthrough-probe.sh` (Task 1/2): only active when
@@ -848,7 +895,7 @@ final class NotchPanelController: NSObject {
         // 07-08 (D-06 Wave 2): the band's own bounding box plus droplet room — the single source
         // `NotchContentView`'s own `openSize` and `openFrame(for:)` both read, so the hosting
         // view's fixed content size can never disagree with either.
-        let modules = Self.bandModules(from: BandModule.allCases)
+        let modules = Self.bandModules(from: Self.enabledModulesFromDefaults())
         let contentTop: CGFloat = isPhysical ? FluidShapeGeometry.bandContentTopPhysical : FluidShapeGeometry.bandContentTopSynthetic
         let openSize = Self.openFrameSize(moduleCount: modules.count, contentTop: contentTop)
         let hostingWidth = openSize.width
@@ -1181,7 +1228,7 @@ final class NotchPanelController: NSObject {
                 // pointer leaves the whole window). `BandLayout.pointerOutside` ports the sketch's
                 // own stay/closeDroplet/closeBand pointer rule instead.
                 let layout = bandLayout(for: panel)
-                let modules = Self.bandModules(from: BandModule.allCases)
+                let modules = Self.bandModules(from: enabledModules)
 
                 // Task 2 (index.html:526-528 `if (i >= 0 && st.pinned < 0 ...)`): candidate-cell
                 // dwell tracking only runs while nothing is pinned — a pinned droplet stays put

@@ -117,11 +117,14 @@ struct NotchContentView: View {
         isPhysical ? FluidShapeGeometry.bandContentTopPhysical : FluidShapeGeometry.bandContentTopSynthetic
     }
 
-    /// Interim until plan 14 (`NotchPanelController.modulesAwaitingDataSource`): the band's own
-    /// enabled-module list. Plan 11 will switch this to the persisted Settings list; today it is
-    /// always every module minus the ones still awaiting their data source.
+    /// 07-11 (MOD-01): the band's own enabled-module list, now the persisted Settings list
+    /// (`NotchPanelController.enabledModulesFromDefaults()`) rather than every module — this view
+    /// has no controller instance threaded to it, so it reads the same shared UserDefaults key the
+    /// controller's own `enabledModules` reads, exactly like `surfaceMaterial` above reads its own
+    /// key live. Still filtered once more through `bandModules(from:)`'s interim
+    /// `modulesAwaitingDataSource` exclusion until plan 14 adds `ClaudePanelView`.
     private var enabledModules: [BandModule] {
-        NotchPanelController.bandModules(from: BandModule.allCases)
+        NotchPanelController.bandModules(from: NotchPanelController.enabledModulesFromDefaults())
     }
 
     /// The band's own outline parameters for the CURRENT enabled-module count — the single source
