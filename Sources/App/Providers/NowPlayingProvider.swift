@@ -4,6 +4,15 @@ import Foundation
 import OSLog
 import MyIslandCore
 
+/// MEDIA-04/05: the vendored adapter's transport subcommands, exactly as `run.pl` names them
+/// (`Vendor/MediaRemoteAdapter/run.pl` lines 92-97) — the only values that can ever reach a
+/// one-shot `Process`'s `arguments` array (T-05-01: literal raw value, never adapter output).
+enum NowPlayingCommand: String, Sendable {
+    case togglePlayPause = "toggle_play_pause"
+    case nextTrack = "next_track"
+    case previousTrack = "previous_track"
+}
+
 /// Owns the vendored adapter subprocess (D-13: runs for the app's whole lifetime), decodes and
 /// merges its stdout via `NowPlayingDiffMerger`, and projects the merged session to the `Sendable`
 /// `NowPlayingModel` — never letting raw adapter bytes or `NSImage` cross the actor boundary
@@ -49,6 +58,11 @@ actor NowPlayingService {
     private var buffer = Data()
     private var session: NowPlayingPayload?
     private var restartAttempts = 0
+    /// One-shot transport-command `Process` instances currently in flight (MEDIA-04/05), kept
+    /// alive by this strong reference until their own termination handler fires and removes them —
+    /// mirrors the persistent adapter's own `process`/`pipe` ownership so a one-shot subprocess is
+    /// never left to the runtime's own retain behavior.
+    private var oneShotProcesses: [Process] = []
     /// The pending backoff-restart `Task` scheduled by `handleTermination()` — stored so `stop()` can
     /// cancel it. Without this, `stop()` clears `process`/`pipe` (already `nil` by the time a restart
     /// is pending) but has no handle on the scheduled `Task.sleep` + `start()` call, so a crash-then-
@@ -88,17 +102,7 @@ actor NowPlayingService {
         // Task. `true` is the honest return because the caller's question is "is an adapter
         // subprocess running", not "did this call create one".
         guard process == nil else { return true }
-        guard let resourceURL = Bundle.main.resourceURL else {
-            logger.error("No bundle resource URL — Now Playing unavailable")
-            return false
-        }
-        let adapterDirectory = resourceURL.appendingPathComponent("MediaRemoteAdapter", isDirectory: true)
-        let scriptURL = adapterDirectory.appendingPathComponent("run.pl")
-        let dylibURL = adapterDirectory.appendingPathComponent("libMediaRemoteAdapter.dylib")
-
-        guard FileManager.default.fileExists(atPath: scriptURL.path),
-              FileManager.default.fileExists(atPath: dylibURL.path) else {
-            logger.error("Vendored adapter files not found in bundle resources — Now Playing unavailable")
+        guard let (scriptURL, dylibURL) = Self.resolveAdapterURLs(logger: logger) else {
             return false
         }
 
@@ -172,6 +176,68 @@ actor NowPlayingService {
         process?.terminate()
         process = nil
         pipe = nil
+
+        for oneShot in oneShotProcesses {
+            oneShot.terminationHandler = nil
+            oneShot.terminate()
+        }
+        oneShotProcesses.removeAll()
+    }
+
+    /// Resolves the vendored adapter's script + dylib from `Bundle.main`'s resources — the single
+    /// shared resolution site for both the persistent `loop` launch (`start()`) and a one-shot
+    /// transport command (`sendCommand(_:)`), so the two paths can never disagree about where the
+    /// adapter lives. `nonisolated` — pure `Bundle`/`FileManager` reads, no actor state.
+    nonisolated private static func resolveAdapterURLs(logger: Logger) -> (script: URL, dylib: URL)? {
+        guard let resourceURL = Bundle.main.resourceURL else {
+            logger.error("No bundle resource URL — Now Playing unavailable")
+            return nil
+        }
+        let adapterDirectory = resourceURL.appendingPathComponent("MediaRemoteAdapter", isDirectory: true)
+        let scriptURL = adapterDirectory.appendingPathComponent("run.pl")
+        let dylibURL = adapterDirectory.appendingPathComponent("libMediaRemoteAdapter.dylib")
+
+        guard FileManager.default.fileExists(atPath: scriptURL.path),
+              FileManager.default.fileExists(atPath: dylibURL.path) else {
+            logger.error("Vendored adapter files not found in bundle resources — Now Playing unavailable")
+            return nil
+        }
+        return (scriptURL, dylibURL)
+    }
+
+    /// MEDIA-04/05: fires a single one-shot transport command at the vendored adapter — a
+    /// SEPARATE `Process` from the persistent `loop` reader (`process`/`pipe` above), which is
+    /// left completely untouched; the `loop` stream reports whatever state results on its own next
+    /// event. Exactly three literal arguments, matching `start()`'s own T-05-01 shape: no decoded
+    /// adapter field or user text ever reaches a `Process` argument.
+    func sendCommand(_ command: NowPlayingCommand) {
+        guard let (scriptURL, dylibURL) = Self.resolveAdapterURLs(logger: logger) else { return }
+
+        let oneShot = Process()
+        oneShot.executableURL = URL(fileURLWithPath: "/usr/bin/perl")
+        oneShot.arguments = [scriptURL.path, dylibURL.path, command.rawValue]
+        oneShot.standardOutput = FileHandle.nullDevice
+        oneShot.standardError = FileHandle.nullDevice
+        oneShot.terminationHandler = { [weak self] proc in
+            let status = proc.terminationStatus
+            Task { await self?.finishOneShot(proc, command: command, status: status) }
+        }
+
+        oneShotProcesses.append(oneShot)
+        do {
+            try oneShot.run()
+        } catch {
+            logger.error("Failed to launch transport command process")
+            oneShotProcesses.removeAll { $0 === oneShot }
+        }
+    }
+
+    /// Drops the finished one-shot's strong reference and logs the outcome — `command.rawValue` is
+    /// an app-controlled literal from the `NowPlayingCommand` enum, never adapter output, so this
+    /// stays within T-05-02's "no adapter metadata in logs" rule.
+    private func finishOneShot(_ process: Process, command: NowPlayingCommand, status: Int32) {
+        oneShotProcesses.removeAll { $0 === process }
+        logger.info("transport command=\(command.rawValue, privacy: .public) exit=\(status, privacy: .public)")
     }
 
     /// Buffers incoming bytes and splits on the newline line delimiter so a payload larger than one
@@ -412,6 +478,22 @@ final class NowPlayingProvider {
         classification.visibility == .pausedInGrace
     }
 
+    /// FEEL-01/03: the optimistic play/pause flip `send(.togglePlayPause)` sets at once, before
+    /// the adapter's own `loop` stream reports back. `nil` once resolved — either the next applied
+    /// model already agrees (see `apply(model:)`) or `optimisticResetTask`'s 1.5s backstop clears
+    /// it unconditionally, so a session that never confirms (adapter dropped the command) doesn't
+    /// leave the glyph stuck showing the wrong state forever.
+    private(set) var optimisticIsPlaying: Bool?
+    /// The pending 1.5s optimistic-state backstop — cancelled and replaced by every new
+    /// `send(.togglePlayPause)` call, mirroring `pendingGraceExpiry`'s cancel-then-reschedule shape.
+    private var optimisticResetTask: Task<Void, Never>?
+
+    /// What the play/pause glyph should show right now (MEDIA-04/05, FEEL-01) — the optimistic
+    /// flip while one is in flight, otherwise the adapter's own last-known state.
+    var isPlayingForDisplay: Bool {
+        optimisticIsPlaying ?? (currentModel?.isPlaying ?? false)
+    }
+
     // `@ObservationIgnored`: a `lazy var` whose initializer closure captures
     // `self` cannot also be macro-expanded by `@Observable`'s
     // `ObservationTracked` accessor synthesis ("class declaration cannot
@@ -430,10 +512,40 @@ final class NowPlayingProvider {
         Task { await service.start() }
     }
 
+    /// MEDIA-04/05: forwards a transport command to the adapter as a one-shot subprocess; for
+    /// `.togglePlayPause` also flips `optimisticIsPlaying` at once (FEEL-01/03) and (re)schedules
+    /// its 1.5s backstop clear.
+    func send(_ command: NowPlayingCommand) {
+        if command == .togglePlayPause {
+            optimisticIsPlaying = !isPlayingForDisplay
+            optimisticResetTask?.cancel()
+            optimisticResetTask = Task { @MainActor [weak self] in
+                try? await Task.sleep(for: .seconds(1.5))
+                guard !Task.isCancelled else { return }
+                self?.optimisticIsPlaying = nil
+            }
+        }
+        Task { await service.sendCommand(command) }
+    }
+
     /// Applies a model update from the service: builds the session identity, classifies it against
     /// the previous classification/identity (D-06/D-07/D-12), then hands off to `handle` for the
     /// shared model/artwork/scheduling side effects.
+    ///
+    /// Also reconciles `optimisticIsPlaying` (FEEL-01/03): cleared here only when this freshly
+    /// applied model's `isPlaying` already agrees with the optimistic flip — the adapter's `loop`
+    /// stream can emit an intermediate diff (e.g. an elapsed-time tick) that still carries the OLD
+    /// `isPlaying` before the real toggle lands, and clearing unconditionally on every model would
+    /// flicker the glyph back to the pre-click state for that one frame. A model that disagrees (or
+    /// carries no play state at all) leaves the optimistic flip in place until either a later model
+    /// agrees or `optimisticResetTask`'s 1.5s backstop fires.
     private func apply(model: NowPlayingModel?) {
+        if let optimisticIsPlaying, model?.isPlaying == optimisticIsPlaying {
+            self.optimisticIsPlaying = nil
+            optimisticResetTask?.cancel()
+            optimisticResetTask = nil
+        }
+
         let identity = model.map {
             NowPlayingSessionIdentity(bundleIdentifier: $0.bundleIdentifier, title: $0.title, artist: $0.artist)
         }
