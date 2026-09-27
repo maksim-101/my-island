@@ -1,5 +1,5 @@
 ---
-version: "1.0"
+version: "1.1"
 name: my-island
 colors:
   accent: "#7C6BFF"
@@ -111,29 +111,38 @@ rules — structure comes from spacing and grouping labels, not boxes.
 
 ### Collapsed notch (locked geometry rule)
 
-The collapsed overlay is a **fixed black shape whose footprint never changes** to show content — it is
-never widened and never grown to fit a timer or now-playing. It has three zones:
+The collapsed footprint is **fixed per display** (07-DESIGN-AGREEMENT.md §11): the MacBook pill is
+257×36pt with 18pt shoulders and 3pt floor sag; the Dell desktop pill is 197×30pt (menu-bar height) with
+24pt shoulders and 2pt sag; on a fullscreen display the pill becomes a 197×9pt bulge with 72pt shoulders
+and 2pt sag. None of these ever widen or grow to fit a timer or now-playing.
 
-- **left half** — reserved for Now Playing (artwork/title),
-- **center** — the physical camera housing: opaque, **nothing is ever drawn over it**,
-- **right half** — the running timer as a 16pt progress ring in the timer's state color; the exact
-  countdown lives in the expanded panel.
+Alerts and the HUD are **separate drops that pinch off below the pill/bulge and never touch its width** —
+they are no longer part of the notch once they've separated, so they may even be wider than it.
+**opening the band is the only thing that widens the notch itself** — this replaces and resolves the old
+"never widens" rule, which read as a contradiction once the HUD/alert drops and the wing items shipped.
 
-Ambient content fills the pre-existing halves; it does not resize the notch. The **only** thing that may
-change the collapsed shape is the transient **HUD**, which grows the notch a little **downward** (below
-the camera, never wider) to show a brightness/volume level bar, then reverts. Expansion (hover / hotkey)
-morphs the same shape downward into the panel.
+Wing items (artwork, live sound wave, running-timer clock-face) sit 16pt, against the camera housing at a
+3pt gap, which stays **empty** — nothing is ever drawn over it. Expansion (hover / hotkey) pours the same
+shape into the band.
 
 ## Components
 
-- **Notch strip** (collapsed) — the fixed three-zone shape above: now-playing (left half), camera housing
-  (center, no content), running timer (right half). Never blank; never resized to fit content.
-- **Panel** (hover-reveal) — `surface` card, md rounding, hairline border, grouped rows under uppercase
-  mono labels.
+- **Notch strip** (collapsed) — the fluid pill/bulge above, wing items against the camera housing (which
+  stays empty). Never blank; its footprint never resizes to fit content.
+- **Band** (hover-reveal) — a row of two-line module summaries (Now Playing, Timer, Next meeting, Claude,
+  Clipboard), each with one round action glyph; 1166pt for five modules, never under 824pt; re-flows when
+  a module is switched off.
+- **Detail droplet** — always 188pt deep, 236–300pt wide; holds secondary detail and controls for the
+  module the band is resting on or has pinned.
+- **Drops** (HUD, alerts) — separate from the band/pill: the HUD is 160pt (MacBook) / 140pt (Dell) wide,
+  22pt deep, click-through; the meeting alert is 30pt deep (44pt on two lines) and Join is the only
+  clickable alert.
+- **Panel** (legacy stage container, retired in plan 08) — `surface` card, md rounding, hairline border,
+  grouped rows under uppercase mono labels.
 - **Primary button** — indigo fill, sm rounding, used sparingly (e.g. "Join").
 - **Chip** — pill on `surface-raised` for clipboard/metadata; sharp only in the technical variant.
 - **Attention row** — amber dot + label for Claude sessions needing you, with an indigo jump arrow on
-  hover.
+  hover. Amber is strictly attention-only.
 
 ## Do's and Don'ts
 
@@ -144,6 +153,67 @@ morphs the same shape downward into the panel.
 - **Don't** add a third UI typeface — SF Pro + SF Mono only.
 - **Don't** let coral or mint compete with amber or replace indigo; they are categorical seasoning, used
   only when a distinction genuinely needs a second hue.
-- **Don't** widen or grow the collapsed notch to fit ambient content, and **don't** render notch content
-  as a menu-bar item beside it — content lives inside the fixed notch shape (left/right halves). Only the
-  HUD grows the notch, and only downward.
+- **Don't** widen or grow the collapsed pill/bulge to fit ambient content — the collapsed footprint is
+  fixed per display; alerts and the HUD are separate drops below it that never touch its width;
+  opening the band is the only thing that widens the notch itself.
+
+## Interaction rules
+
+- **Any action one click, any detail two.** Every module's primary action is a round glyph on the band
+  itself, reachable the moment the band is open. Secondary detail and secondary controls live in the
+  detail droplet, one click (or Return) further in.
+- **Hover only ever speeds things up — it is never the only path.** Pointer rest, a click, and the
+  keyboard all reach every droplet. Resting 0.25s on the notch pours the band open; resting 0.14s on a
+  module drips its droplet down; but the same states are reachable by clicking or by keyboard (⌥Space,
+  arrows, Return) with no hover at all.
+- A click on a glyph, or anywhere inside the droplet, **never** pins, opens, or collapses anything else —
+  a glyph tap and a "close this" tap are distinct gesture regions that never overlap.
+- **No scrolling or marquee text anywhere.** A long meeting title wraps to a second line instead.
+- **Amber strictly means attention.** If a state doesn't require the user to act, it isn't amber.
+
+## Shape family
+
+One fluid outline family draws every surface — the pill, the Dell pill, the fullscreen bulge, the band,
+the detail droplet, the meeting bump, and the HUD: even-S shoulders that leave the top edge flat and
+arrive at the floor's own slope, a floor that sags under its own weight, and — for drops — smootherstep
+flanks with a rounded belly. No straight edge, no corner, anywhere in the family.
+
+| Surface | Size | Shoulders | Floor sag |
+|---|---|---|---|
+| MacBook pill | 257×36 | 18pt | 3pt |
+| Dell desktop pill | 197×30 (menu-bar height) | 24pt | 2pt |
+| Dell fullscreen bulge | 197×9 | 72pt | 2pt |
+| Band | 1166pt for five modules, never under 824pt | 132pt | 9pt |
+| Detail droplet | 236–300pt wide, always 188pt deep | 122pt flanks | 18pt belly |
+
+## Motion & feedback
+
+Every surface transition runs on the same five named `FluidSpring` presets (`FluidMotionPreset`,
+response / damping):
+
+| Spring | Response | Damping |
+|---|---|---|
+| open | 0.55 | 0.78 |
+| close | 0.50 | 0.92 |
+| droplet | 0.60 | 0.80 |
+| slide | 0.55 | 0.86 |
+| sticky pull | 0.70 | 0.90 |
+
+**Staging.** Opening pours: width leads, depth follows 1.35× slower. Closing drains: depth goes first,
+width follows 1.35× slower. A new droplet spreads, then drips. Content fades in 160ms after the surface
+opens. Dwell is 0.25s resting on the notch, 0.14s resting on a module.
+
+**Press feedback.** Every control dims and scales to 0.86 within one frame via a `ButtonStyle` reading
+`isPressed`, with a hover highlight underneath it — no click ever goes without visible feedback.
+
+**Symbol effects.** SF Symbols animate on state changes — play/pause, mute, a timer completing. Numeric
+readouts use the numeric-text content transition so digits tick instead of jumping.
+
+**Focus ring.** The standard 2pt accent ring, used for every keyboard-focused control (PANEL-09).
+
+**Haptics.** `NSHapticFeedbackManager` fires only at snap points and threshold crossings — a timer
+reaching zero, a progress axis passing a mark — **never on ordinary clicks**, and always honoring the
+system haptic setting.
+
+**Reduce Motion.** Every spring above becomes a 0.2s cross-fade; no pour/drain staging, no symbol
+effects beyond the plain content change.
