@@ -11,10 +11,10 @@ import MyIslandCore
 ///
 /// Slot rule (agreement §2): music alone → left artwork, right sound wave; a running timer alone →
 /// right clock-face only; both together → right clock-face (the timer always wins the right wing),
-/// left = the Settings choice from Task 3 (default artwork — hardcoded here until that task wires
-/// `@AppStorage(NotchPanelController.wingLeftContentKey)`). The timer disjunct for the right slot
-/// sits OUTSIDE the fullscreen suppression — a running timer keeps showing in every fullscreen
-/// state, mirroring the physical wing's pre-fluid gate exactly.
+/// left = the Settings-picked choice below (07-02 Task 3, default artwork — with no timer running
+/// this setting has no visible effect, per its own invariant test). The timer disjunct for the
+/// right slot sits OUTSIDE the fullscreen suppression — a running timer keeps showing in every
+/// fullscreen state, mirroring the physical wing's pre-fluid gate exactly.
 @MainActor
 struct WingItemsView: View {
     let timer: TimerViewModel
@@ -23,6 +23,11 @@ struct WingItemsView: View {
     let displayID: CGDirectDisplayID?
     let isPhysical: Bool
     let isOpen: Bool
+
+    /// 07-02 Task 3: read live so flipping the Settings picker updates the wing immediately with
+    /// no panel rebuild. An unknown stored value (T-06-08) degrades to `.artwork` in `leftSlot`
+    /// below, never crashes and never silently reads as `.wave`.
+    @AppStorage(NotchPanelController.wingLeftContentKey) private var wingLeftContent = NotchPanelController.wingLeftContentDefault
 
     private static let builtinX: CGFloat = 92.5 + 3 + 8
     private static let builtinY: CGFloat = 18
@@ -46,7 +51,12 @@ struct WingItemsView: View {
     }
 
     private var leftSlot: Slot? {
-        musicVisible ? .artwork : nil
+        guard musicVisible else { return nil }
+        // The Settings choice only ever matters when the timer ALSO runs — with no timer, music
+        // alone is always artwork (agreement §2), so this branch is the setting's one visible
+        // effect, and the invariant test (no timer → no visible effect) holds by construction.
+        guard timer.isRunning else { return .artwork }
+        return wingLeftContent == "wave" ? .wave : .artwork
     }
 
     private var rightSlot: Slot? {

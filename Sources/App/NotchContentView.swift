@@ -63,6 +63,10 @@ struct NotchContentView: View {
     let isPhysical: Bool
 
     @State private var flashOpacity: Double = 0
+    /// 07-02 Task 3 (D-07, 07-01's `material_decision: option`): read live so switching in
+    /// Settings needs no panel rebuild. The MacBook's collapsed pill stays black in every option
+    /// (`fillView` below) — this only ever changes a synthetic display's collapsed surface.
+    @AppStorage(NotchPanelController.surfaceMaterialKey) private var surfaceMaterial = NotchPanelController.surfaceMaterialDefault
 
     /// D-06 Wave 1: the collapsed footprint is the fluid outline's own bounding box (`2·half`
     /// wide), plus room for the sticky belly's live pull — mirrors
@@ -74,6 +78,24 @@ struct NotchContentView: View {
 
     private var expandedSize: CGSize {
         CGSize(width: NotchLayout.expandedWidth, height: NotchLayout.expandedHeight)
+    }
+
+    /// D-07 (07-02 Task 3): black everywhere by default, and always on the MacBook regardless of
+    /// the Settings choice — glass only ever replaces a SYNTHETIC display's collapsed fill.
+    /// `GlassEffectContainer` wraps the single glass surface per 07-01's `glass_container: yes`
+    /// finding (required once more than one glass surface can be visible at once; harmless — a
+    /// documented no-op — with only one).
+    @ViewBuilder
+    private var fillView: some View {
+        if !isPhysical, surfaceMaterial == "glass" {
+            GlassEffectContainer {
+                Color.clear
+                    .glassEffect(.regular.tint(Color.black.opacity(0.12)), in: FluidOutlineShape(params: motion.params))
+            }
+        } else {
+            FluidOutlineShape(params: motion.params)
+                .fill(Color.black)
+        }
     }
 
     var body: some View {
@@ -99,8 +121,7 @@ struct NotchContentView: View {
             // the instant the panel opens — the expanded band gets its own fluid geometry in
             // plan 08, this view's `mask` below stays the interim rounded-rect approximation.
             if !model.isOpen {
-                FluidOutlineShape(params: motion.params)
-                    .fill(Color.black)
+                fillView
                     .frame(width: shapeSize.width, height: shapeSize.height)
 
                 // A brief neutral/indigo flash on timer completion (D-11) — NEVER

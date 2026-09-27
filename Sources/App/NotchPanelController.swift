@@ -101,6 +101,21 @@ final class NotchPanelController: NSObject {
     /// detector on `NotchPanel.sendEvent(_:)` logging zero swallowed outside clicks.
     static let clickProbeKey = "MyIslandClickProbe"
 
+    /// 07-02 Task 3 (WR-04 paired-constant convention): which content the left wing shows when a
+    /// timer runs WITH music (the only slot the assumption-delta decision promoted to a setting —
+    /// music alone always shows artwork, a timer alone shows no left content at all). Read live via
+    /// `@AppStorage` by both `SettingsView`'s picker and `WingItemsView`'s left-slot renderer, so
+    /// switching needs no panel rebuild. An unknown stored value degrades to the default (T-06-08).
+    static let wingLeftContentKey = "com.myisland.wingLeftContent"
+    static let wingLeftContentDefault = "artwork"
+
+    /// 07-02 Task 3 (D-07, 07-01's decision `material_decision: option`): black and Liquid Glass
+    /// both ship as a Settings option, black default. The MacBook's collapsed pill stays black in
+    /// every option (it merges with the camera housing) — this key only ever affects the Dell's
+    /// collapsed pill and, later, other synthetic-display surfaces.
+    static let surfaceMaterialKey = "com.myisland.surfaceMaterial"
+    static let surfaceMaterialDefault = "black"
+
     /// A non-Bool value written by hand (or by a future migration bug) degrades to
     /// the default rather than crashing or reading as off (T-06-08).
     private var showOnNotchlessDisplays: Bool {
@@ -644,7 +659,7 @@ final class NotchPanelController: NSObject {
 
         let container = NSView(frame: NSRect(origin: .zero, size: frame.size))
         container.autoresizesSubviews = true
-        let hosting = NSHostingView(rootView: FluidOverlayView(motion: motion, model: model))
+        let hosting = NSHostingView(rootView: FluidOverlayView(motion: motion, model: model, isPhysical: isPhysical))
         hosting.frame = NSRect(origin: .zero, size: frame.size)
         hosting.autoresizingMask = [.width, .height]
         container.addSubview(hosting)
