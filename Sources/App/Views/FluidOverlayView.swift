@@ -20,8 +20,8 @@ struct FluidOverlayView: View {
     /// line and the three-ring finished pulse.
     let timer: TimerViewModel
     /// Threaded through for the SAME `isFullscreenBulge` computation `NotchContentView`/
-    /// `WingItemsView` already do — the outline timer line only ever draws on the bulge; the
-    /// desktop pill and MacBook pill keep their wing clock-face instead (Task 1).
+    /// `WingItemsView` already do — the outline timer line draws on the bulge and the MacBook
+    /// pill (user decision 2026-09-27); the Dell desktop pill keeps its wing clock-face.
     let fullscreen: FullscreenObserver
     let displayID: CGDirectDisplayID?
     /// 07-05 Task 1 (FLUID-02/PANEL-07): the same shared arbiter `NotchPanelController` already
@@ -42,9 +42,11 @@ struct FluidOverlayView: View {
     /// Mirrors `NotchContentView.isBulge`/`NotchPanelController.isFullscreenBulge(for:)` exactly.
     private var isBulge: Bool { !isPhysical && fullscreen.isFrontmostFullscreen(on: displayID) }
 
-    /// Agreement §5: only the bulge's own outline ever carries the timer line — while collapsed,
-    /// running or JUST finished (the line reaches 100% right as the pulse starts).
-    private var showsTimerLine: Bool { isBulge && (timer.isRunning || timer.finishedAt != nil) }
+    /// Agreement §5, amended 2026-09-27 (user decision): the bulge's outline AND the MacBook
+    /// pill's own outline carry the timer line — while collapsed, running or JUST finished (the
+    /// line reaches 100% right as the pulse starts). The Dell desktop pill (`!isPhysical &&
+    /// !isBulge`) is unchanged — it keeps `WingItemsView`'s clock-face.
+    private var showsTimerLine: Bool { (isBulge || isPhysical) && (timer.isRunning || timer.finishedAt != nil) }
 
     /// The colour the timer line (and, while finished, the clock-face) draws in — `tokenState`
     /// reads nil once `engine.mode` clears at completion, so `finishedTokenState` (captured right

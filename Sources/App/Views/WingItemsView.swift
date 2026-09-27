@@ -70,9 +70,13 @@ struct WingItemsView: View {
         guard !isBulge else { return nil }
         // The timer disjunct sits OUTSIDE `musicVisible`'s fullscreen suppression — a running (or
         // just-finished, 07-04 Task 2) timer still shows in every OTHER fullscreen state, same as
-        // the pre-fluid physical wing. Only the bulge itself (guarded above) replaces this
-        // clock-face with the outline timer line.
-        if timer.isRunning || timer.finishedAt != nil { return .timerFace }
+        // the pre-fluid physical wing. The bulge (guarded above) and, since 2026-09-27, the
+        // MacBook pill both replace this clock-face with `FluidOverlayView`'s outline timer line
+        // instead (its own `showsTimerLine` mirrors this exact condition) — only the Dell desktop
+        // pill still shows the clock-face here.
+        if timer.isRunning || timer.finishedAt != nil {
+            return isPhysical ? nil : .timerFace
+        }
         if musicVisible { return .wave }
         return nil
     }
