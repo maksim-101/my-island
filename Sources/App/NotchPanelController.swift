@@ -473,7 +473,7 @@ final class NotchPanelController: NSObject {
         let motion = FluidMotion(rest: restParams)
         motion.startClock(on: screen)
 
-        let panel = Self.makePanel(notchFrame: anchorRect, screen: screen, isPhysical: mode.isPhysical, model: model, motion: motion, timer: timer, calendar: calendarProvider, nowPlaying: nowPlayingProvider, fullscreen: fullscreenObserver, displayKey: key)
+        let panel = Self.makePanel(notchFrame: anchorRect, screen: screen, isPhysical: mode.isPhysical, model: model, motion: motion, timer: timer, calendar: calendarProvider, nowPlaying: nowPlayingProvider, fullscreen: fullscreenObserver, displayKey: key, hud: hud)
         panel.displayID = screen.displayID
         // `makePanel`'s own window sizing is the static, non-fullscreen-aware
         // `collapsedSurfaceFrame(isPhysical:notchFrame:anchorMaxY:)` (it has no panel/displayID to
@@ -484,6 +484,10 @@ final class NotchPanelController: NSObject {
         }
         model.onOpenChange = { [weak self, weak panel] isOpen in
             guard let self, let panel else { return }
+            // 07-05 Task 3 (sketch's own `openBand`): opening the band — by hover-dwell or the
+            // global hotkey, either path lands here via `NotchViewModel` — ends any HUD/alert
+            // drop immediately rather than letting it linger under the expanding band.
+            if isOpen { self.hud.dismissNow() }
             self.applyFrame(to: panel, isOpen: isOpen)
         }
         panel.orderFrontRegardless()
@@ -499,12 +503,18 @@ final class NotchPanelController: NSObject {
         return PanelSet(panel: panel, overlay: overlay, model: model, motion: motion)
     }
 
-    /// 07-05 Task 2 (FLUID-02): the HUD/alert drop's rest half-width/height for a given panel —
-    /// `AlertDropLayout.hud` while `hud.meeting` is nil; the meeting variant's own title-measured
-    /// size (Task 3) once it is not.
-    private func dropSize(for panel: NotchPanel) -> (halfWidth: CGFloat, height: CGFloat) {
+    /// 07-05 Task 3 (FLUID-02/PANEL-07): the HUD/alert drop's rest size for a given panel —
+    /// `AlertDropLayout.hud` while `hud.meeting` is nil, or the meeting's own title-measured size
+    /// (`AlertDropView.measuredMeetingSize`, shared with that view's own content layout) when a
+    /// meeting is showing. `hasLink` tells the caller whether this panel's own interactive window
+    /// needs to grow to cover the drop (only a linked meeting draws there at all).
+    private func dropSize(for panel: NotchPanel) -> (halfWidth: CGFloat, height: CGFloat, hasLink: Bool) {
+        if let meeting = hud.meeting {
+            let sized = AlertDropView.measuredMeetingSize(title: meeting.title, lead: meeting.lead, hasJoin: meeting.joinURL != nil, isPhysical: panel.isPhysical)
+            return (sized.halfWidth, sized.height, meeting.joinURL != nil)
+        }
         let (halfWidth, height) = AlertDropLayout.hud(isPhysical: panel.isPhysical)
-        return (halfWidth, height)
+        return (halfWidth, height, false)
     }
 
     /// Starts the HUD/alert drop's fall on one panel's own `FluidMotion` clock — ported from the
@@ -513,28 +523,58 @@ final class NotchPanelController: NSObject {
     /// in only once it has visibly separated (260ms). `hud.onVisibilityChange`'s wiring above calls
     /// this on every currently-collapsed panel simultaneously.
     private func startAlertDrop(on panel: NotchPanel, motion: FluidMotion) {
-        let (halfWidth, height) = dropSize(for: panel)
-        motion.jumpChannel(.dropOffset, to: -height * 0.6)
-        motion.jumpChannel(.dropHeight, to: height * 0.6)
-        motion.jumpChannel(.dropHalfWidth, to: min(halfWidth, 100) * 0.4)
+        let size = dropSize(for: panel)
+        motion.jumpChannel(.dropOffset, to: -size.height * 0.6)
+        motion.jumpChannel(.dropHeight, to: size.height * 0.6)
+        motion.jumpChannel(.dropHalfWidth, to: min(size.halfWidth, 100) * 0.4)
         motion.jumpChannel(.dropAlpha, to: 0)
-        motion.setChannel(.dropHeight, to: height, response: FluidMotionPreset.droplet.response * 1.2, damping: FluidMotionPreset.droplet.damping)
-        motion.setChannel(.dropHalfWidth, to: halfWidth, response: FluidMotionPreset.droplet.response * 1.6, damping: FluidMotionPreset.droplet.damping)
+        motion.setChannel(.dropHeight, to: size.height, response: FluidMotionPreset.droplet.response * 1.2, damping: FluidMotionPreset.droplet.damping)
+        motion.setChannel(.dropHalfWidth, to: size.halfWidth, response: FluidMotionPreset.droplet.response * 1.6, damping: FluidMotionPreset.droplet.damping)
         motion.setChannel(.dropOffset, to: 8, response: FluidMotionPreset.droplet.response * 1.5, damping: FluidMotionPreset.droplet.damping)
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.26) { [weak motion] in
             motion?.setChannel(.dropAlpha, to: 1, response: 0.4, damping: 1)
         }
+
+        // 07-05 Task 3 (T-07-01): a linked meeting drop's Join lives in the interactive panel, so
+        // that window's own frame must grow — once, here, never per animation frame — to the
+        // union of the collapsed bounding box and the drop's own full extent (±halfWidth, down to
+        // baseY+8+height+8) before Join can take a click.
+        guard size.hasLink, panel.viewModel?.isOpen != true else { return }
+        panel.pendingDropFrameRestore?.cancel()
+        panel.pendingDropFrameRestore = nil
+        let baseY = FluidShapeGeometry.floorY(x: 0, q: motion.params, cx: 0)
+        let collapsed = collapsedSurfaceFrame(for: panel)
+        let dropBottom = baseY + 8 + size.height + 8
+        let grownWidth = max(collapsed.width, size.halfWidth * 2)
+        let grownHeight = max(collapsed.height, dropBottom)
+        let grown = NSRect(
+            x: panel.notchFrame.midX - grownWidth / 2,
+            y: panel.anchorMaxY - grownHeight,
+            width: grownWidth,
+            height: grownHeight
+        )
+        panel.setFrame(grown, display: true)
     }
 
     /// Ends the drop — ported from `endExtra` (index.html:404-410): fades its content out fast,
     /// then it rises back into the floor and merges. `dropHeight` is deliberately left untouched
     /// (the sketch's own `endExtra` never resets it either) — once `dropOffset` rises far enough,
-    /// `AlertDropView`'s own `dropVisible` gate hides the whole drop regardless of its height.
+    /// `AlertDropView`'s own `dropVisible` gate hides the whole drop regardless of its height. A
+    /// grown interactive-panel frame (above) shrinks back once the retract animation has had time
+    /// to settle, never per frame.
     private func endAlertDrop(on panel: NotchPanel, motion: FluidMotion) {
-        let (halfWidth, height) = dropSize(for: panel)
+        let size = dropSize(for: panel)
         motion.setChannel(.dropAlpha, to: 0, response: 0.14, damping: 1)
-        motion.setChannel(.dropOffset, to: -height - 4, response: FluidMotionPreset.close.response * 1.25, damping: FluidMotionPreset.close.damping)
-        motion.setChannel(.dropHalfWidth, to: halfWidth * 0.6, response: FluidMotionPreset.close.response * 1.3, damping: FluidMotionPreset.close.damping)
+        motion.setChannel(.dropOffset, to: -size.height - 4, response: FluidMotionPreset.close.response * 1.25, damping: FluidMotionPreset.close.damping)
+        motion.setChannel(.dropHalfWidth, to: size.halfWidth * 0.6, response: FluidMotionPreset.close.response * 1.3, damping: FluidMotionPreset.close.damping)
+
+        guard size.hasLink, panel.viewModel?.isOpen != true else { return }
+        let work = DispatchWorkItem { [weak self, weak panel] in
+            guard let self, let panel, panel.viewModel?.isOpen != true else { return }
+            panel.setFrame(self.resolvedFrame(for: panel), display: true)
+        }
+        panel.pendingDropFrameRestore = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.3, execute: work)
     }
 
     /// D-04 regression evidence for `scripts/clickthrough-probe.sh` (Task 1/2): only active when
@@ -554,7 +594,7 @@ final class NotchPanelController: NSObject {
         logger.notice("clickProbe skipped mode=toggle display=\(key, privacy: .public)")
     }
 
-    private static func makePanel(notchFrame: NSRect, screen: NSScreen, isPhysical: Bool, model: NotchViewModel, motion: FluidMotion, timer: TimerViewModel, calendar: CalendarProvider, nowPlaying: NowPlayingProvider, fullscreen: FullscreenObserver, displayKey: String) -> NotchPanel {
+    private static func makePanel(notchFrame: NSRect, screen: NSScreen, isPhysical: Bool, model: NotchViewModel, motion: FluidMotion, timer: TimerViewModel, calendar: CalendarProvider, nowPlaying: NowPlayingProvider, fullscreen: FullscreenObserver, displayKey: String, hud: HUDViewModel) -> NotchPanel {
         let anchorMaxY = screen.frame.maxY
         let collapsedFrame = Self.collapsedSurfaceFrame(isPhysical: isPhysical, notchFrame: notchFrame, anchorMaxY: anchorMaxY)
         let styleMask: NSWindow.StyleMask = [.borderless, .nonactivatingPanel, .utilityWindow]
@@ -573,7 +613,7 @@ final class NotchPanelController: NSObject {
         panel.motion = motion
         panel.displayKey = displayKey
 
-        let hostingView = NonKeyHostingView(rootView: NotchContentView(model: model, motion: motion, timer: timer, calendar: calendar, nowPlaying: nowPlaying, fullscreen: fullscreen, displayID: screen.displayID, isPhysical: isPhysical))
+        let hostingView = NonKeyHostingView(rootView: NotchContentView(model: model, motion: motion, timer: timer, calendar: calendar, nowPlaying: nowPlaying, fullscreen: fullscreen, displayID: screen.displayID, hud: hud, isPhysical: isPhysical))
         // Decouple from the window's Auto Layout / constraint-update cycle:
         // `applyFrame` resizes the panel manually via `setFrame`, and letting
         // the hosting view participate in constraint-based sizing causes an
@@ -920,7 +960,14 @@ final class NotchPanelController: NSObject {
             let q = collapsedParams(for: panel)
             let isOpen = panel.viewModel?.isOpen == true
 
-            let hovering = !isOpen && FluidPointer.isDwellTarget(pointer: pointer, cx: cx, q: q)
+            // 07-05 Task 3 (agreement §6): resting on a HUD/alert drop's own content must never
+            // register as a dwell target, even where the base half-width/depth band would
+            // otherwise say yes — `alertTop` is the drop's own current top edge (`baseY +
+            // dropOffset`, the same `g` used everywhere else this plan).
+            let alertTop: CGFloat? = hud.isShowingHUD
+                ? FluidShapeGeometry.floorY(x: 0, q: q, cx: 0) + (motion.channels[.dropOffset] ?? 0)
+                : nil
+            let hovering = !isOpen && FluidPointer.isDwellTarget(pointer: pointer, cx: cx, q: q, alertTop: alertTop)
             if panel.outlineHovering != hovering {
                 panel.outlineHovering = hovering
                 Self.applyHover(panel: panel)
@@ -942,8 +989,23 @@ final class NotchPanelController: NSObject {
 
             // D-04 toggle mechanism (07-01): a collapsed panel only catches clicks that land
             // inside its own drawn outline — everything else passes through to whatever is
-            // behind it (menu bar, desktop, other apps).
-            panel.ignoresMouseEvents = !FluidShapeGeometry.contains(pointer, cx: cx, q: motion.params)
+            // behind it (menu bar, desktop, other apps). 07-05 Task 3 (T-07-01): a linked meeting
+            // drop's own pebble is ALSO tested — its Join button lives in this same interactive
+            // panel, so a click on the drop must reach it too.
+            var inside = FluidShapeGeometry.contains(pointer, cx: cx, q: motion.params)
+            if let meeting = hud.meeting, meeting.joinURL != nil {
+                let baseY = FluidShapeGeometry.floorY(x: 0, q: q, cx: 0)
+                let dropOffset = motion.channels[.dropOffset] ?? 0
+                let dropHalfWidth = motion.channels[.dropHalfWidth] ?? 0
+                let dropHeight = motion.channels[.dropHeight] ?? 0
+                if dropHalfWidth > 1, dropHeight > 0.5 {
+                    let pebble = FluidShapeGeometry.pebble(w: dropHalfWidth, y: baseY + dropOffset, h: dropHeight, ox: cx)
+                    if pebble.contains(pointer, using: .winding, transform: .identity) {
+                        inside = true
+                    }
+                }
+            }
+            panel.ignoresMouseEvents = !inside
         }
     }
 
@@ -1053,6 +1115,9 @@ private final class NotchPanel: NSPanel {
     var pendingCollapse: DispatchWorkItem?
     var pendingDwellOpen: DispatchWorkItem?
     var pendingHoverClose: DispatchWorkItem?
+    /// 07-05 Task 3: the deferred shrink-back-to-collapsed frame after a linked meeting drop ends
+    /// (`endAlertDrop`) — mirrors `pendingCollapse`'s own cancel-on-supersession idiom.
+    var pendingDropFrameRestore: DispatchWorkItem?
     // Two independent hover sources unified into one dwell state (see
     // `applyHover`): the notch's `NSTrackingArea` and the outline dwell-target
     // detector (`FluidPointer.isDwellTarget`, driven by the mouse-moved monitors).

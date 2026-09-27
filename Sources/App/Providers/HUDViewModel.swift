@@ -91,6 +91,26 @@ final class HUDViewModel {
         armFade(after: fadeDelay)
     }
 
+    /// 07-05 Task 3: Join ends the meeting drop 0.5s after being pressed, rather than waiting out
+    /// the full `NotchLayout.meetingBumpFadeDelay` — re-arms the same fade path `armFade` already
+    /// drives, just at a much shorter delay, so the drop's own retract animation (`endAlertDrop`)
+    /// still runs exactly as it would at a normal timeout.
+    func endSoon(after delay: TimeInterval = 0.5) {
+        guard isShowingHUD else { return }
+        armFade(after: delay)
+    }
+
+    /// 07-05 Task 3 (sketch's own `openBand`): opening the band by hotkey or hover-dwell ends any
+    /// HUD/alert drop immediately, rather than waiting out its own fade delay — a drop and the
+    /// expanding band must never show at once.
+    func dismissNow() {
+        guard isShowingHUD else { return }
+        pendingFade?.cancel()
+        pendingFade = nil
+        isShowingHUD = false
+        onVisibilityChange?(false)
+    }
+
     private func armFade(after delay: TimeInterval) {
         pendingFade?.cancel()
         let work = DispatchWorkItem { [weak self] in

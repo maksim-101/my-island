@@ -56,6 +56,10 @@ struct NotchContentView: View {
     /// `NotchPanelController` already reads everywhere else.
     let fullscreen: FullscreenObserver
     let displayID: CGDirectDisplayID?
+    /// 07-05 Task 3 (T-07-01): threaded so a LINKED meeting drop (`joinURL != nil`) can draw here,
+    /// in the interactive panel, so its Join button can take clicks — the HUD level drop and a
+    /// link-less meeting drop stay in `FluidOverlayView`'s always-click-through window instead.
+    let hud: HUDViewModel
     // Phase 6 SHELL-06: only the physical camera-cutout gets concave top
     // "ears" (topCornerRadius 6) for the (unchanged, pre-fluid) expanded-panel
     // mask below — a synthetic screen has no housing for those ears to flow
@@ -138,6 +142,14 @@ struct NotchContentView: View {
                 // line and, from plan 05, the meeting alert, ever draw on the bulge.
                 WingItemsView(timer: timer, nowPlaying: nowPlaying, fullscreen: fullscreen, displayID: displayID, isPhysical: isPhysical, isOpen: model.isOpen, isBulge: isBulge)
                     .frame(width: shapeSize.width, height: shapeSize.height)
+
+                // 07-05 Task 3 (T-07-01): only a LINKED meeting drop ever lands here — the HUD and
+                // a link-less meeting drop always draw in `FluidOverlayView`'s click-through
+                // window instead (see that view's own gate).
+                if let meeting = hud.meeting, let joinURL = meeting.joinURL {
+                    AlertDropView(motion: motion, kind: .meeting(title: meeting.title, lead: meeting.lead, joinURL: joinURL, onJoin: { hud.endSoon() }), isPhysical: isPhysical)
+                        .frame(width: shapeSize.width, height: shapeSize.height)
+                }
             }
 
             // Laid out at a CONSTANT expanded size (never `shapeSize`) so its

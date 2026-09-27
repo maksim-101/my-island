@@ -130,12 +130,17 @@ struct FluidOverlayView: View {
                     .allowsHitTesting(false)
                 }
 
-                // 07-05: the HUD level drop is always click-through, so it draws here whenever
-                // `hud` is showing a level glyph (not a meeting). The linked-meeting variant
-                // (Task 3) draws in the interactive panel instead so its Join can take clicks; a
-                // link-less meeting drop still draws here.
-                if hud.isShowingHUD, hud.meeting == nil {
-                    AlertDropView(motion: motion, kind: .level(glyph: hud.glyph, level: hud.level), isPhysical: isPhysical)
+                // 07-05 (T-07-01): the HUD level drop and a LINK-LESS meeting drop both stay
+                // fully click-through, so both draw here. A linked meeting drop (Join needs
+                // clicks) draws in the interactive panel instead (`NotchContentView`, Task 3).
+                if hud.isShowingHUD {
+                    if let meeting = hud.meeting {
+                        if meeting.joinURL == nil {
+                            AlertDropView(motion: motion, kind: .meeting(title: meeting.title, lead: meeting.lead, joinURL: nil, onJoin: {}), isPhysical: isPhysical)
+                        }
+                    } else {
+                        AlertDropView(motion: motion, kind: .level(glyph: hud.glyph, level: hud.level), isPhysical: isPhysical)
+                    }
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)

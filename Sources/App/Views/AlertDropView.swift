@@ -1,18 +1,22 @@
 import SwiftUI
+import AppKit
 import MyIslandCore
 
-/// One drop type for the volume/brightness HUD and, from Task 3, the meeting alert
-/// (07-DESIGN-AGREEMENT.md §6, FLUID-02/PANEL-07): a pebble that swells out of whatever the
-/// collapsed surface currently shows (MacBook pill, Dell pill or fullscreen bulge), hangs by a
-/// neck that narrows to an hourglass, pinches off at 7pt and settles 8pt below. `motion` supplies
-/// every geometry channel (`params`, `channels[.dropOffset/.dropHeight/.dropHalfWidth/.dropAlpha]`)
-/// plus the attachment hysteresis (`dropDetached`) kept ON `FluidMotion` itself — not this
-/// transient struct — so it survives being torn down and recreated on every SwiftUI re-render.
-/// `kind` only ever decides the CONTENT drawn inside the drop, never the shape math both kinds
-/// share.
+/// One drop type for the volume/brightness HUD and the meeting alert (07-DESIGN-AGREEMENT.md §6,
+/// FLUID-02/PANEL-07): a pebble that swells out of whatever the collapsed surface currently shows
+/// (MacBook pill, Dell pill or fullscreen bulge), hangs by a neck that narrows to an hourglass,
+/// pinches off at 7pt and settles 8pt below. `motion` supplies every geometry channel (`params`,
+/// `channels[.dropOffset/.dropHeight/.dropHalfWidth/.dropAlpha]`) plus the attachment hysteresis
+/// (`dropDetached`) kept ON `FluidMotion` itself — not this transient struct — so it survives being
+/// torn down and recreated on every SwiftUI re-render. `kind` only ever decides the CONTENT drawn
+/// inside the drop, never the shape math both kinds share.
 struct AlertDropView: View {
     enum Kind {
         case level(glyph: HUDGlyph, level: Double)
+        /// `onJoin` fires only when the label is actually tapped (never on a link-less meeting,
+        /// which never draws a Join button in the first place) — 07-05 Task 3's "leaves 0.5s
+        /// later" behavior lives in whoever supplies this closure (`HUDViewModel.endSoon`).
+        case meeting(title: String, lead: String, joinURL: URL?, onJoin: () -> Void)
     }
 
     let motion: FluidMotion
@@ -70,7 +74,14 @@ struct AlertDropView: View {
                 }
             }
         }
-        .allowsHitTesting(false)
+        .allowsHitTesting(kindHasClickTarget)
+    }
+
+    /// Only a linked meeting drop (Join) ever wants clicks — the level HUD and a link-less
+    /// meeting drop stay fully click-through even where this view happens to be hosted.
+    private var kindHasClickTarget: Bool {
+        if case .meeting(_, _, let joinURL, _) = kind { return joinURL != nil }
+        return false
     }
 
     @ViewBuilder
@@ -78,6 +89,8 @@ struct AlertDropView: View {
         switch kind {
         case .level(let glyph, let level):
             levelContent(glyph: glyph, level: level)
+        case .meeting(let title, let lead, let joinURL, let onJoin):
+            meetingContent(title: title, lead: lead, joinURL: joinURL, onJoin: onJoin)
         }
     }
 
@@ -98,5 +111,54 @@ struct AlertDropView: View {
                         .animation(.easeOut(duration: 0.18), value: level)
                 }
         }
+    }
+
+    /// The meeting alert: a video glyph, the lead ("60m"/"15m"/"now") in bold, the title in
+    /// `textMuted`, wrapping to a second line once `AlertDropLayout.meeting` says so — never
+    /// scrolling or marquee (agreement §6) — then Join only when a link exists (PANEL-07 empty).
+    private func meetingContent(title: String, lead: String, joinURL: URL?, onJoin: @escaping () -> Void) -> some View {
+        let sized = Self.measuredMeetingSize(title: title, lead: lead, hasJoin: joinURL != nil, isPhysical: isPhysical)
+        return HStack(alignment: .top, spacing: Tokens.Spacing.sm) {
+            Image(systemName: "video.fill")
+                .font(.system(size: 13))
+                .foregroundStyle(Tokens.Color.text)
+            leadTitleText(lead: lead, title: title)
+                .lineLimit(sized.twoLines ? 2 : 1)
+                .truncationMode(.tail)
+            if let joinURL {
+                Button {
+                    NSWorkspace.shared.open(joinURL)
+                    onJoin()
+                } label: {
+                    Text("Join")
+                        .font(Tokens.Font.buttonPrimary)
+                        .foregroundStyle(Tokens.Color.accentInk)
+                        .padding(.horizontal, Tokens.Spacing.md)
+                        .padding(.vertical, Tokens.Spacing.xs)
+                        .background(Tokens.Color.accent)
+                        .clipShape(Capsule())
+                }
+                .buttonStyle(GlyphButtonStyle())
+            }
+        }
+    }
+
+    /// Combines the bold lead and the muted title into one `Text` via interpolation (SwiftUI's
+    /// replacement for the deprecated `Text + Text` concatenation operator), so `lineLimit`/
+    /// `truncationMode` above apply across both pieces as a single wrapping unit.
+    private func leadTitleText(lead: String, title: String) -> Text {
+        let leadText = Text(lead + " ").font(.system(size: 11, weight: .bold)).foregroundStyle(Tokens.Color.text)
+        let titleText = Text(title).font(.system(size: 11, weight: .regular)).foregroundStyle(Tokens.Color.textMuted)
+        return Text("\(leadText)\(titleText)")
+    }
+
+    /// The meeting drop's size, measured in REAL rendered points (PANEL-07 encoding edge) via
+    /// `NSAttributedString` at the system font, 11pt — never character counts. Shared by this
+    /// view's own content layout and `NotchPanelController`'s channel/frame driving, so the two
+    /// can never disagree about how wide a given title measures.
+    static func measuredMeetingSize(title: String, lead: String, hasJoin: Bool, isPhysical: Bool) -> (halfWidth: CGFloat, height: CGFloat, twoLines: Bool) {
+        let leadWidth = NSAttributedString(string: lead + " ", attributes: [.font: NSFont.systemFont(ofSize: 11, weight: .bold)]).size().width
+        let titleWidth = NSAttributedString(string: title, attributes: [.font: NSFont.systemFont(ofSize: 11, weight: .regular)]).size().width
+        return AlertDropLayout.meeting(leadWidth: leadWidth, titleWidth: titleWidth, hasJoin: hasJoin, isPhysical: isPhysical)
     }
 }
