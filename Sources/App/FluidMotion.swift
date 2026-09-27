@@ -32,6 +32,14 @@ final class FluidMotion: NSObject {
     private var displayLink: CADisplayLink?
     private var lastTimestamp: CFTimeInterval?
 
+    /// 07-08 (D-06 Wave 2): one-shot "the springs settled" notification, replacing the fixed
+    /// `NotchLayout.collapseWindowDelay` timer for the band's close-then-shrink window sequencing.
+    /// A pointer lingering near the collapsed pill after close keeps `belly`/`lean`/`glow`
+    /// retargeting (never `allSettled`) — the 1.5s backstop below is what guarantees this always
+    /// fires, not just the ideal "sprang actually stopped" path.
+    private var settledCallback: (() -> Void)?
+    private var settledBackstop: DispatchWorkItem?
+
     // Frame-timing ring buffer for `frameStats()` (D-03(a)/FEEL-05 measurement).
     private var intervalsMs: [Double] = []
     private let maxSamples = 3600
@@ -96,6 +104,35 @@ final class FluidMotion: NSObject {
         springs[key]?.v ?? 0
     }
 
+    /// One-shot: fires `callback` once every spring/channel has settled, or after a 1.5s backstop —
+    /// whichever comes first — then clears itself. Cancelled by `cancelWhenSettled()`, which every
+    /// caller that supersedes a pending close (a reopen, a fresh probe step) must call first so a
+    /// stale registration never fires against the wrong state. Only one registration is live at a
+    /// time — a second call replaces, not queues, the first.
+    func whenSettled(_ callback: @escaping () -> Void) {
+        cancelWhenSettled()
+        if allSettled {
+            callback()
+            return
+        }
+        settledCallback = callback
+        let backstop = DispatchWorkItem { [weak self] in
+            guard let self, let pending = self.settledCallback else { return }
+            self.settledCallback = nil
+            self.settledBackstop = nil
+            pending()
+        }
+        settledBackstop = backstop
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5, execute: backstop)
+    }
+
+    /// Cancels any pending `whenSettled` registration without firing it.
+    func cancelWhenSettled() {
+        settledCallback = nil
+        settledBackstop?.cancel()
+        settledBackstop = nil
+    }
+
     // MARK: - Clock
 
     func startClock(on screen: NSScreen) {
@@ -133,6 +170,12 @@ final class FluidMotion: NSObject {
 
         if allSettled {
             stopClock()
+            if let pending = settledCallback {
+                settledCallback = nil
+                settledBackstop?.cancel()
+                settledBackstop = nil
+                pending()
+            }
         }
     }
 

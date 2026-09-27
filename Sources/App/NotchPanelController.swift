@@ -75,6 +75,11 @@ final class NotchPanelController: NSObject {
     // adapter subprocess at quit (D-13's "stopped at quit").
     let nowPlayingProvider = NowPlayingProvider()
 
+    // Owned ONCE here too (07-08, PANEL-02 prerequisite): the clipboard-history slice moves up
+    // from `ExpandedPanelView`'s old local `@State` (deleted this plan) so history survives every
+    // panel rebuild, matching every other provider's convention above.
+    let clipboard = ClipboardViewModel()
+
     // Owned ONCE here too (Phase 5, D-10/D-11): the fullscreen signal must
     // survive a screen-parameter rebuild exactly like the other providers
     // above — creating it inside `rebuildPanels` would tear down and restart
@@ -115,6 +120,33 @@ final class NotchPanelController: NSObject {
     /// collapsed pill and, later, other synthetic-display surfaces.
     static let surfaceMaterialKey = "com.myisland.surfaceMaterial"
     static let surfaceMaterialDefault = "black"
+
+    /// 07-08 (D-06 Wave 2, interim until plan 14): the Claude module has no data source yet, so it
+    /// stays out of the band regardless of the (future, plan 11) persisted enabled list — plans
+    /// 08-11 show four cells (988pt); plan 14 deletes this set and adds `ClaudePanelView`, and the
+    /// band reaches its final five-module 1166pt width. No plan before 14 should treat 988pt as
+    /// the band's final width.
+    static let modulesAwaitingDataSource: Set<BandModule> = [.claude]
+
+    /// `input` minus `modulesAwaitingDataSource`, falling back to `input` unfiltered when that
+    /// would leave nothing (T-07-05: the band can never be built with zero modules) — plan 11
+    /// swaps the `input` callers pass from `BandModule.allCases` to the persisted enabled list;
+    /// this filter applies uniformly regardless of what `input` already is.
+    static func bandModules(from input: [BandModule]) -> [BandModule] {
+        let filtered = input.filter { !modulesAwaitingDataSource.contains($0) }
+        return filtered.isEmpty ? input : filtered
+    }
+
+    /// 07-08 (D-06 Wave 2): the band's own outline parameters for `moduleCount`/`contentTop` — the
+    /// single source `openFrame(for:)`'s window sizing and `NotchContentView`'s constant hosting
+    /// frame both read, so the two can never disagree about how big the open band is. `18 + 7 + 8`
+    /// is the droplet's own rim/shadow margin beyond its raw `dropletHeight`.
+    static func openFrameSize(moduleCount: Int, contentTop: CGFloat) -> CGSize {
+        let params = FluidParams.band(moduleCount: moduleCount, contentTop: contentTop)
+        let width = params.half * 2
+        let height = params.d + params.sag + FluidShapeGeometry.dropletHeight + 18 + 7 + 8
+        return CGSize(width: width, height: height)
+    }
 
     /// A non-Bool value written by hand (or by a future migration bug) degrades to
     /// the default rather than crashing or reading as off (T-06-08).
@@ -320,10 +352,11 @@ final class NotchPanelController: NSObject {
                 tearDown(set)
                 let newSet = makePanelSet(for: screen, mode: mode, key: key)
                 panelSets[key] = newSet
+                // 07-08: the band's own open/close motion is driven entirely by `FluidMotion`'s
+                // spring clock (`onOpenChange` below), never by SwiftUI's `withAnimation`
+                // (RESEARCH.md Pitfall 2) — the old SwiftUI cross-fade spring is retired.
                 if wasOpen {
-                    withAnimation(NotchLayout.morphAnimation) {
-                        newSet.model.toggle()
-                    }
+                    newSet.model.toggle()
                 }
                 rebuilt += 1
             } else {
@@ -473,7 +506,7 @@ final class NotchPanelController: NSObject {
         let motion = FluidMotion(rest: restParams)
         motion.startClock(on: screen)
 
-        let panel = Self.makePanel(notchFrame: anchorRect, screen: screen, isPhysical: mode.isPhysical, model: model, motion: motion, timer: timer, calendar: calendarProvider, nowPlaying: nowPlayingProvider, fullscreen: fullscreenObserver, displayKey: key, hud: hud)
+        let panel = Self.makePanel(notchFrame: anchorRect, screen: screen, isPhysical: mode.isPhysical, model: model, motion: motion, timer: timer, calendar: calendarProvider, nowPlaying: nowPlayingProvider, fullscreen: fullscreenObserver, displayKey: key, hud: hud, clipboard: clipboard)
         panel.displayID = screen.displayID
         // `makePanel`'s own window sizing is the static, non-fullscreen-aware
         // `collapsedSurfaceFrame(isPhysical:notchFrame:anchorMaxY:)` (it has no panel/displayID to
@@ -483,11 +516,16 @@ final class NotchPanelController: NSObject {
             panel.setFrame(resolvedFrame(for: panel), display: true)
         }
         model.onOpenChange = { [weak self, weak panel] isOpen in
-            guard let self, let panel else { return }
+            guard let self, let panel, let motion = panel.motion else { return }
             // 07-05 Task 3 (sketch's own `openBand`): opening the band — by hover-dwell or the
             // global hotkey, either path lands here via `NotchViewModel` — ends any HUD/alert
             // drop immediately rather than letting it linger under the expanding band.
             if isOpen { self.hud.dismissNow() }
+            if isOpen {
+                self.openBand(on: panel, motion: motion)
+            } else {
+                self.closeBand(on: panel, motion: motion)
+            }
             self.applyFrame(to: panel, isOpen: isOpen)
         }
         panel.orderFrontRegardless()
@@ -577,6 +615,58 @@ final class NotchPanelController: NSObject {
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.3, execute: work)
     }
 
+    /// D-06 Wave 2 (PANEL-04): this panel's own band cell/droplet geometry — `cx` is the panel's
+    /// GLOBAL notch midpoint (matching every other pointer/`FluidShapeGeometry.contains` call in
+    /// this file), NOT the SwiftUI-local `cx` `NotchContentView`'s own `bandLayout` uses for
+    /// on-screen positioning. Same module list/content-top rule as that view's copy — kept as two
+    /// independent computations (not a shared type) because they operate in two different
+    /// coordinate spaces for two different callers (AppKit pointer math here, SwiftUI layout there).
+    private func bandLayout(for panel: NotchPanel) -> BandLayout {
+        let modules = Self.bandModules(from: BandModule.allCases)
+        let contentTop: CGFloat = panel.isPhysical ? FluidShapeGeometry.bandContentTopPhysical : FluidShapeGeometry.bandContentTopSynthetic
+        return BandLayout(moduleCount: modules.count, contentTop: contentTop, cx: panel.notchFrame.midX)
+    }
+
+    /// The open window's own frame — the band's bounding box plus droplet room, `openFrameSize`'s
+    /// single source. Replaces the old fixed `expandedFrame`.
+    private func openFrame(for panel: NotchPanel) -> NSRect {
+        let modules = Self.bandModules(from: BandModule.allCases)
+        let contentTop: CGFloat = panel.isPhysical ? FluidShapeGeometry.bandContentTopPhysical : FluidShapeGeometry.bandContentTopSynthetic
+        let size = Self.openFrameSize(moduleCount: modules.count, contentTop: contentTop)
+        return NSRect(
+            x: panel.notchFrame.midX - size.width / 2,
+            y: panel.anchorMaxY - size.height,
+            width: size.width,
+            height: size.height
+        )
+    }
+
+    /// Ported from the sketch's `openBand` (index.html:334-343): pours the collapsed outline into
+    /// the band on the open spring/stagger, settles belly/lean back to rest, brightens the glow,
+    /// and rises `bandAlpha` after `FluidTiming.contentDelay` so content fades in slightly behind
+    /// the box growth. `hud.dismissNow()` (any drop) is already called by the `onOpenChange` wiring
+    /// above before this runs.
+    private func openBand(on panel: NotchPanel, motion: FluidMotion) {
+        let layout = bandLayout(for: panel)
+        motion.goTo(layout.params, preset: .open, stagger: FluidStagger.pour)
+        motion.set(.belly, to: 0, preset: .open)
+        motion.set(.lean, to: 0, preset: .open)
+        motion.setChannel(.glow, to: 0.28, response: FluidMotionPreset.open.response, damping: FluidMotionPreset.open.damping)
+        DispatchQueue.main.asyncAfter(deadline: .now() + FluidTiming.contentDelay) { [weak panel, weak motion] in
+            guard let panel, let motion, panel.viewModel?.isOpen == true else { return }
+            motion.setChannel(.bandAlpha, to: 1, response: 0.45, damping: 1)
+        }
+    }
+
+    /// Ported from the sketch's `closeBand` (index.html:345-351): drains `bandAlpha` back to 0,
+    /// retracts the outline to the collapsed rest params on the close spring/stagger with
+    /// `FluidTiming.lag`, and dims the glow back down.
+    private func closeBand(on panel: NotchPanel, motion: FluidMotion) {
+        motion.setChannel(.bandAlpha, to: 0, response: 0.2, damping: 1)
+        motion.goTo(collapsedParams(for: panel), preset: .close, lag: FluidTiming.lag, stagger: FluidStagger.drain)
+        motion.setChannel(.glow, to: 0.2, response: FluidMotionPreset.close.response, damping: FluidMotionPreset.close.damping)
+    }
+
     /// D-04 regression evidence for `scripts/clickthrough-probe.sh` (Task 1/2): only active when
     /// `clickProbeKey` is set. Under the `toggle` click-through mechanism there is no alpha
     /// hit-test to probe — see `clickProbeKey`'s doc comment — so this always logs the `skipped`
@@ -594,7 +684,7 @@ final class NotchPanelController: NSObject {
         logger.notice("clickProbe skipped mode=toggle display=\(key, privacy: .public)")
     }
 
-    private static func makePanel(notchFrame: NSRect, screen: NSScreen, isPhysical: Bool, model: NotchViewModel, motion: FluidMotion, timer: TimerViewModel, calendar: CalendarProvider, nowPlaying: NowPlayingProvider, fullscreen: FullscreenObserver, displayKey: String, hud: HUDViewModel) -> NotchPanel {
+    private static func makePanel(notchFrame: NSRect, screen: NSScreen, isPhysical: Bool, model: NotchViewModel, motion: FluidMotion, timer: TimerViewModel, calendar: CalendarProvider, nowPlaying: NowPlayingProvider, fullscreen: FullscreenObserver, displayKey: String, hud: HUDViewModel, clipboard: ClipboardViewModel) -> NotchPanel {
         let anchorMaxY = screen.frame.maxY
         let collapsedFrame = Self.collapsedSurfaceFrame(isPhysical: isPhysical, notchFrame: notchFrame, anchorMaxY: anchorMaxY, menuBarHeight: screen.menuBarHeight)
         let styleMask: NSWindow.StyleMask = [.borderless, .nonactivatingPanel, .utilityWindow]
@@ -617,7 +707,7 @@ final class NotchPanelController: NSObject {
         panel.motion = motion
         panel.displayKey = displayKey
 
-        let hostingView = NonKeyHostingView(rootView: NotchContentView(model: model, motion: motion, timer: timer, calendar: calendar, nowPlaying: nowPlaying, fullscreen: fullscreen, displayID: screen.displayID, hud: hud, isPhysical: isPhysical))
+        let hostingView = NonKeyHostingView(rootView: NotchContentView(model: model, motion: motion, timer: timer, calendar: calendar, nowPlaying: nowPlaying, fullscreen: fullscreen, displayID: screen.displayID, hud: hud, clipboard: clipboard, isPhysical: isPhysical))
         // Decouple from the window's Auto Layout / constraint-update cycle:
         // `applyFrame` resizes the panel manually via `setFrame`, and letting
         // the hosting view participate in constraint-based sizing causes an
@@ -636,41 +726,42 @@ final class NotchPanelController: NSObject {
         // `NSHostingView`, so no window-resize feedback can originate from
         // SwiftUI's layout pass — `applyFrame` remains the ONLY code that
         // resizes the window.
-        let expandedWidth = NotchLayout.expandedWidth
-        let expandedHeight = NotchLayout.expandedHeight
+        // 07-08 (D-06 Wave 2): the band's own bounding box plus droplet room — the single source
+        // `NotchContentView`'s own `openSize` and `openFrame(for:)` both read, so the hosting
+        // view's fixed content size can never disagree with either.
+        let modules = Self.bandModules(from: BandModule.allCases)
+        let contentTop: CGFloat = isPhysical ? FluidShapeGeometry.bandContentTopPhysical : FluidShapeGeometry.bandContentTopSynthetic
+        let openSize = Self.openFrameSize(moduleCount: modules.count, contentTop: contentTop)
+        let hostingWidth = openSize.width
+        let hostingHeight = openSize.height
 
-        // A plain `NSView` cannot be relied upon for hover detection here:
-        // `ExpandedPanelView`'s `KeyboardShortcuts.Recorder` (an AppKit
-        // `NSView` bridged via `NSViewRepresentable`) is positioned on the
-        // left of the panel and does not reliably honor SwiftUI's
-        // `.allowsHitTesting(false)` for its own event tracking, so it
-        // silently swallows hover over the left half of the collapsed notch
-        // and SwiftUI's `.onHover` never fires there (SHELL-11). A
-        // `NSTrackingArea` on this container — whose bounds always equal the
-        // window's full content rect, collapsed or expanded — sidesteps
-        // SwiftUI/NSView hit-testing entirely and is coordinate-exact for
-        // both notch halves.
+        // A plain `NSView` cannot be relied upon for hover detection here — SwiftUI's own
+        // `.onHover` has repeatedly proven unreliable inside this app's non-activating `NSPanel`
+        // (SHELL-11; confirmed again for `GlyphButtonStyle`'s hover state in 07-05). A
+        // `NSTrackingArea` on this container — whose bounds always equal the window's full
+        // content rect, collapsed or open — sidesteps SwiftUI/NSView hit-testing entirely and is
+        // coordinate-exact for both.
         let container = HoverTrackingView(frame: NSRect(origin: .zero, size: collapsedFrame.size))
         container.autoresizesSubviews = true
         container.wantsLayer = true
         container.layer?.masksToBounds = true
 
-        // Fixed at the expanded size (matches the constant SwiftUI content
+        // Fixed at the open (band) size (matches the constant SwiftUI content
         // size in `NotchContentView`), centered horizontally and top-pinned
         // within the container. While the container is collapsed (notch
         // sized), only the top-center notch region is visible; the rest is
         // clipped by `masksToBounds`. When `applyFrame` grows the window, the
         // full hosting content becomes visible without ever resizing itself.
         hostingView.frame = NSRect(
-            x: (container.bounds.width - expandedWidth) / 2,
-            y: container.bounds.height - expandedHeight,
-            width: expandedWidth,
-            height: expandedHeight
+            x: (container.bounds.width - hostingWidth) / 2,
+            y: container.bounds.height - hostingHeight,
+            width: hostingWidth,
+            height: hostingHeight
         )
         // Horizontal centering + top-pinning across window resizes is owned by
         // `HoverTrackingView.resizeSubviews(withOldSize:)`, NOT an
         // `autoresizingMask`. The mask corrupts this: because the hosting view
-        // is WIDER than the collapsed container (expandedWidth 2.2× the notch),
+        // is WIDER than the collapsed container (the open band's own bounding box),
         // AppKit's autoresizing snaps the overflowing view to x=0 on the
         // collapsed→HUD-bump `setFrame` (height grows, width stays notch-sized),
         // which right-shifts the centered HUD content into the clipped right
@@ -813,25 +904,12 @@ final class NotchPanelController: NSObject {
         return panel
     }
 
-    /// The window frame while expanded — grows downward from the notch,
-    /// staying horizontally centered on it.
-    private static func expandedFrame(notchFrame: NSRect, anchorMaxY: CGFloat) -> NSRect {
-        let width = NotchLayout.expandedWidth
-        let height = NotchLayout.expandedHeight
-        return NSRect(
-            x: notchFrame.midX - width / 2,
-            y: anchorMaxY - height,
-            width: width,
-            height: height
-        )
-    }
-
     /// The one place that decides whether a given panel's window is at its
-    /// collapsed (fluid pill) or expanded size. The Ambient HUD no longer factors in
+    /// collapsed (fluid pill) or open (band) size. The Ambient HUD no longer factors in
     /// here — it's a detached pill in its own window.
     private func resolvedFrame(for panel: NotchPanel) -> NSRect {
         if panel.viewModel?.isOpen == true {
-            return Self.expandedFrame(notchFrame: panel.notchFrame, anchorMaxY: panel.anchorMaxY)
+            return openFrame(for: panel)
         }
         return collapsedSurfaceFrame(for: panel)
     }
@@ -841,14 +919,18 @@ final class NotchPanelController: NSObject {
     /// or the global-hotkey `toggle()`.
     ///
     /// On expand, the window grows to its full size immediately — the extra
-    /// area is transparent, so the jump is invisible, and the SwiftUI content
-    /// morph (already animating via `NotchLayout.morphAnimation`) grows into
-    /// it. On collapse, the window shrink is deferred until the content morph
-    /// has visually finished (DEFECT B ordering), so the box never appears to
-    /// pop/jump.
+    /// area is transparent, so the jump is invisible, and the fluid outline
+    /// (already animating on `motion`'s own spring clock, `openBand` above)
+    /// pours into it. On collapse, the window shrink is deferred until
+    /// `motion.whenSettled` reports the retract has actually finished (07-08:
+    /// replaces the old fixed `NotchLayout.collapseWindowDelay` timer), so the
+    /// box never appears to pop/jump ahead of the still-draining outline.
     private func applyFrame(to panel: NotchPanel, isOpen: Bool) {
         panel.pendingCollapse?.cancel()
         panel.pendingCollapse = nil
+        // 07-08: cancel any pending settle-then-shrink registration too — "cancelled by a reopen"
+        // is what keeps a stale close's window-shrink from firing after a fresh open superseded it.
+        panel.motion?.cancelWhenSettled()
 
         // DIAGNOSTIC ONLY (plan 04-02 checkpoint round 5): correlate frame
         // changes against the hover-transition log in NotchViewModel and the
@@ -895,7 +977,7 @@ final class NotchPanelController: NSObject {
                 self.logClickProbeNow(key: panel.displayKey)
             }
             panel.pendingCollapse = work
-            DispatchQueue.main.asyncAfter(deadline: .now() + NotchLayout.collapseWindowDelay, execute: work)
+            panel.motion?.whenSettled { [weak work] in work?.perform() }
         }
     }
 
@@ -906,9 +988,9 @@ final class NotchPanelController: NSObject {
     /// resolves to exactly one screen, the same assumption `canBecomeKey` already relies on.
     func toggle() {
         guard let panel = panels.first(where: { $0.screenFrame.contains(NSEvent.mouseLocation) }) else { return }
-        withAnimation(NotchLayout.morphAnimation) {
-            panel.viewModel?.toggle()
-        }
+        // 07-08: the band's own motion is driven entirely by `FluidMotion`'s spring clock
+        // (`onOpenChange` → `openBand`/`closeBand`), never by SwiftUI's `withAnimation`.
+        panel.viewModel?.toggle()
     }
 
     /// Drives the hover-dwell state machine from the `HoverTrackingView`'s
@@ -931,19 +1013,13 @@ final class NotchPanelController: NSObject {
         if hovering {
             model.hoverBegan()
             let work = DispatchWorkItem { [weak panel] in
-                guard let model = panel?.viewModel else { return }
-                withAnimation(NotchLayout.morphAnimation) {
-                    model.dwellElapsed()
-                }
+                panel?.viewModel?.dwellElapsed()
             }
             panel.pendingDwellOpen = work
             DispatchQueue.main.asyncAfter(deadline: .now() + NotchLayout.hoverDwellDelay, execute: work)
         } else {
             let work = DispatchWorkItem { [weak panel] in
-                guard let model = panel?.viewModel else { return }
-                withAnimation(NotchLayout.morphAnimation) {
-                    model.hoverEnded()
-                }
+                panel?.viewModel?.hoverEnded()
             }
             panel.pendingHoverClose = work
             DispatchQueue.main.asyncAfter(deadline: .now() + NotchLayout.hoverCollapseGrace, execute: work)
@@ -980,10 +1056,35 @@ final class NotchPanelController: NSObject {
             }
 
             if isOpen {
-                // Open panels stay catching until plan 08 gives the band an outline.
-                panel.ignoresMouseEvents = false
+                // 07-08 (D-06 Wave 2): the AppKit tracking-area exit no longer closes the band —
+                // the open window is now much larger than the drawn band+droplet outline, so
+                // `handleHoverChange`'s own dwell-close would fire far too late (only once the
+                // pointer leaves the whole window). `BandLayout.pointerOutside` ports the sketch's
+                // own stay/closeDroplet/closeBand pointer rule instead; `droplet: nil, pinned:
+                // false` here since no droplet exists until Task 2 wires `hotModule`/`pinnedModule`.
+                let layout = bandLayout(for: panel)
+                switch layout.pointerOutside(pointer, currentHalf: motion.params.half, droplet: nil, pinned: false) {
+                case .stay, .closeDroplet:
+                    panel.pendingBandClose?.cancel()
+                    panel.pendingBandClose = nil
+                case .closeBand:
+                    if panel.pendingBandClose == nil {
+                        let work = DispatchWorkItem { [weak panel] in
+                            guard let panel, panel.viewModel?.isOpen == true else { return }
+                            panel.pendingBandClose = nil
+                            panel.viewModel?.hoverEnded()
+                        }
+                        panel.pendingBandClose = work
+                        DispatchQueue.main.asyncAfter(deadline: .now() + NotchLayout.hoverCollapseGrace, execute: work)
+                    }
+                }
+                // D-04 (07-01's toggle decision) extended to the open band: a click only catches
+                // when it lands inside the LIVE (still-animating) outline.
+                panel.ignoresMouseEvents = !FluidShapeGeometry.contains(pointer, cx: cx, q: motion.params)
                 continue
             }
+            panel.pendingBandClose?.cancel()
+            panel.pendingBandClose = nil
 
             // 07-05 (agreement §6): while a HUD/alert drop shows, the sticky pull/lean is damped
             // to 30% (index.html:519 `if (st.extra){ pull *= .3; lean *= .3; }`) — `hud` broadcasts
@@ -1018,7 +1119,14 @@ final class NotchPanelController: NSObject {
     /// Collapses the notch-tracking-area and outline-dwell hover sources into a
     /// single dwell state, so moving the cursor between the two never reads as
     /// a leave (which would flicker the panel closed).
+    ///
+    /// 07-08 (D-06 Wave 2): while open, this AppKit-tracking-area-driven path is disabled
+    /// entirely — the plan's own instruction ("the tracking area's exit no longer closes the
+    /// band"). The open window is sized to the band+droplet room, much larger than the drawn
+    /// outline within it; `handleMouseMoved`'s `pendingBandClose` (pointer-outside-the-OUTLINE,
+    /// not outside-the-WINDOW) is the sole close trigger while open.
     private static func applyHover(panel: NotchPanel) {
+        guard panel.viewModel?.isOpen != true else { return }
         let hovering = panel.notchHovering || panel.outlineHovering
         guard hovering != panel.lastHoverApplied else { return }
         panel.lastHoverApplied = hovering
@@ -1129,6 +1237,12 @@ private final class NotchPanel: NSPanel {
     /// 07-05 Task 3: the deferred shrink-back-to-collapsed frame after a linked meeting drop ends
     /// (`endAlertDrop`) — mirrors `pendingCollapse`'s own cancel-on-supersession idiom.
     var pendingDropFrameRestore: DispatchWorkItem?
+    /// 07-08 (D-06 Wave 2): the open band's own pointer-driven close grace — armed when
+    /// `BandLayout.pointerOutside` first reports `.closeBand`, cancelled the moment the pointer
+    /// re-enters the band/droplet (`.stay`). Replaces the collapsed pill's AppKit
+    /// `NSTrackingArea` exit as the open-state close trigger (that tracking area now covers the
+    /// whole, much larger open window, not the drawn band+droplet outline within it).
+    var pendingBandClose: DispatchWorkItem?
     // Two independent hover sources unified into one dwell state (see
     // `applyHover`): the notch's `NSTrackingArea` and the outline dwell-target
     // detector (`FluidPointer.isDwellTarget`, driven by the mouse-moved monitors).

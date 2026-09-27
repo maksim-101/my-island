@@ -60,10 +60,14 @@ struct NotchContentView: View {
     /// in the interactive panel, so its Join button can take clicks — the HUD level drop and a
     /// link-less meeting drop stay in `FluidOverlayView`'s always-click-through window instead.
     let hud: HUDViewModel
+    /// 07-08 (PANEL-02 prerequisite): the SAME `ClipboardViewModel` instance
+    /// `NotchPanelController` now owns once — replaces `ExpandedPanelView`'s retired local
+    /// `@State private var clipboard`, so history survives every panel rebuild.
+    let clipboard: ClipboardViewModel
     // Phase 6 SHELL-06: only the physical camera-cutout gets concave top
-    // "ears" (topCornerRadius 6) for the (unchanged, pre-fluid) expanded-panel
-    // mask below — a synthetic screen has no housing for those ears to flow
-    // into, so its expanded mask has square top corners.
+    // "ears" for the (retired) pre-fluid expanded-panel mask — kept as a field for the band's own
+    // content-top choice below (the physical notch's band content starts lower than a synthetic
+    // display's, `FluidShapeGeometry.bandContentTopPhysical`/`bandContentTopSynthetic`).
     let isPhysical: Bool
 
     /// 07-02 Task 3 (D-07, 07-01's `material_decision: option`): read live so switching in
@@ -71,16 +75,61 @@ struct NotchContentView: View {
     /// (`fillView` below) — this only ever changes a synthetic display's collapsed surface.
     @AppStorage(NotchPanelController.surfaceMaterialKey) private var surfaceMaterial = NotchPanelController.surfaceMaterialDefault
 
+    /// 07-08 (D-06 Wave 2): the band's own content-top — physical clears the measured 32pt camera
+    /// housing/33pt menu bar (07-15 gap closure re-confirmed this against the hardware numbers,
+    /// not the sketch's stale 37pt assumption); synthetic sits right under the menu bar.
+    private var contentTop: CGFloat {
+        isPhysical ? FluidShapeGeometry.bandContentTopPhysical : FluidShapeGeometry.bandContentTopSynthetic
+    }
+
+    /// Interim until plan 14 (`NotchPanelController.modulesAwaitingDataSource`): the band's own
+    /// enabled-module list. Plan 11 will switch this to the persisted Settings list; today it is
+    /// always every module minus the ones still awaiting their data source.
+    private var enabledModules: [BandModule] {
+        NotchPanelController.bandModules(from: BandModule.allCases)
+    }
+
+    /// The band's own outline parameters for the CURRENT enabled-module count — the single source
+    /// both this view's constant hosting frame (`openSize`) and `NotchPanelController.openFrame`
+    /// read, so window sizing and content layout can never disagree about how wide/deep the open
+    /// band is.
+    private var bandLayout: BandLayout {
+        BandLayout(moduleCount: enabledModules.count, contentTop: contentTop, cx: openSize.width / 2)
+    }
+
     /// D-06 Wave 1: the collapsed footprint is the fluid outline's own bounding box (`2·half`
     /// wide), plus room for the sticky belly's live pull — mirrors
     /// `NotchPanelController.collapsedSurfaceFrame(for:)`'s window sizing exactly, so the mask
-    /// used below never clips the pill mid-nudge.
+    /// used below never clips the pill mid-nudge. No longer read for the outer hosting frame
+    /// (`openSize` below is now constant regardless of `model.isOpen` — see that property's own
+    /// comment) but still the true collapsed-rest bounding box other call sites may want.
     private var collapsedSize: CGSize {
         CGSize(width: motion.params.half * 2, height: motion.params.d + motion.params.sag + 6)
     }
 
-    private var expandedSize: CGSize {
-        CGSize(width: NotchLayout.expandedWidth, height: NotchLayout.expandedHeight)
+    /// 07-08 (D-06 Wave 2): the CONSTANT hosting frame — the band's own bounding box plus droplet
+    /// room, `NotchPanelController.openFrameSize`'s single source. Load-bearing for the SAME reason
+    /// the old fixed `expandedSize` was (see `NotchPanelController.makePanel`'s hosting-view
+    /// comment): `NSHostingView.updateAnimatedWindowSize(_:)` fires whenever this view's reported
+    /// SwiftUI content size changes, and `NotchPanelController.applyFrame` is already the sole
+    /// window-resizer — a constant frame here means the two resize paths never fight. The single
+    /// `FluidOutlineShape(params: motion.params)` fill below draws whatever the LIVE, animating
+    /// outline currently is (collapsed pill through the open band) inside this fixed canvas; the
+    /// canvas size itself never needs to track `model.isOpen`.
+    private var openSize: CGSize {
+        NotchPanelController.openFrameSize(moduleCount: enabledModules.count, contentTop: contentTop)
+    }
+
+    /// Ported from index.html:701 `const fade = st.open ? Math.max(0, 1 - P.bandA.x * 3) : 1` —
+    /// collapsed to one formula since `bandAlpha` already rests at 0 while closed, so the `else`
+    /// branch is redundant. `WingItemsView`'s own `isOpen` gate below is deliberately passed
+    /// `false` (never mutated by this view's Boolean `model.isOpen`): that gate gives a binary
+    /// opacity cut at the instant `isOpen` flips, which would pop the wings out a full pour cycle
+    /// before `bandAlpha` itself has risen — this continuous multiplier is what the sketch's own
+    /// fade actually specifies, and it already reaches 0 well before `bandAlpha` finishes rising
+    /// (at `bandAlpha` ≈ 0.33), so the wings are fully gone long before the band settles either way.
+    private var wingFade: CGFloat {
+        max(0, 1 - (motion.channels[.bandAlpha] ?? 0) * 3)
     }
 
     /// 07-04 Task 1 (FLUID-01, agreement §1/§5): whether this display's collapsed surface is
@@ -111,83 +160,66 @@ struct NotchContentView: View {
     }
 
     var body: some View {
-        let shapeSize = model.isOpen ? expandedSize : collapsedSize
-        // The OUTER frame is a CONSTANT size (always expandedSize, regardless
-        // of isOpen) — this is load-bearing. `NSHostingView` calls
-        // `updateAnimatedWindowSize(_:)` whenever its SwiftUI content's
-        // reported size CHANGES, and that method resizes the AppKit window
-        // itself. `NotchPanelController.applyFrame` is already the sole
-        // window-resizer (manual `setFrame`); if the hosting view's content
-        // size also changes (as it did when this frame used
-        // `maxWidth/maxHeight: .infinity`), the two resize paths fight and
-        // the window enters an invalid state, aborting with an uncaught
-        // NSException. Keeping the outer frame constant means the hosting
-        // view's reported content size never changes, so
-        // `updateAnimatedWindowSize` has nothing to animate — only the
-        // fluid outline inside morphs visually (driven by `motion`'s own
-        // clock, never by this view's animation transaction).
+        // ONE surface for both states (D-06 Wave 2): the outer frame is a CONSTANT `openSize`
+        // (never switches on `model.isOpen`) for the identical `NSHostingView.updateAnimatedWindowSize`
+        // reason the old fixed `expandedSize` frame carried — see `openSize`'s own comment.
+        // `FluidOutlineShape(params: motion.params)` draws whatever the LIVE, animating outline
+        // currently is — collapsed pill through the fully open band — inside this fixed canvas.
         ZStack(alignment: .top) {
-            // D-06 Wave 1 (07-02): the collapsed fill is the fluid pill silhouette — drawn on
-            // BOTH displays now (D-01), not gated on `isPhysical` any more (the MacBook and Dell
-            // pills are both fluid-family outlines; only their rest `FluidParams` differ). Hidden
-            // the instant the panel opens — the expanded band gets its own fluid geometry in
-            // plan 08, this view's `mask` below stays the interim rounded-rect approximation.
-            if !model.isOpen {
-                fillView
-                    .frame(width: shapeSize.width, height: shapeSize.height)
+            fillView
+                .frame(width: openSize.width, height: openSize.height)
 
-                // 07-02 Task 2 (D-02/agreement §2): the 16pt wing items, drawn over the fill in
-                // the SAME frame so their own local center lines up with the pill's `cx`. Empty
-                // while the fullscreen bulge is showing (07-04 Task 1) — only the outline timer
-                // line and, from plan 05, the meeting alert, ever draw on the bulge.
-                WingItemsView(timer: timer, nowPlaying: nowPlaying, fullscreen: fullscreen, displayID: displayID, isPhysical: isPhysical, isOpen: model.isOpen, isBulge: isBulge)
-                    .frame(width: shapeSize.width, height: shapeSize.height)
+            // 07-02 Task 2 (D-02/agreement §2): the 16pt wing items — now ALWAYS rendered (no
+            // longer gated on `!model.isOpen`) so they can fade continuously via `wingFade` instead
+            // of popping out the instant the band starts pouring. `isOpen: false` here is
+            // deliberate — see `wingFade`'s own doc comment for why the internal binary gate is
+            // routed around rather than driven from `model.isOpen`.
+            WingItemsView(timer: timer, nowPlaying: nowPlaying, fullscreen: fullscreen, displayID: displayID, isPhysical: isPhysical, isOpen: false, isBulge: isBulge)
+                .frame(width: openSize.width, height: openSize.height)
+                .opacity(wingFade)
 
-                // 07-05 Task 3 (T-07-01): only a LINKED meeting drop ever lands here — the HUD and
-                // a link-less meeting drop always draw in `FluidOverlayView`'s click-through
-                // window instead (see that view's own gate).
-                if let meeting = hud.meeting, let joinURL = meeting.joinURL {
-                    AlertDropView(motion: motion, kind: .meeting(title: meeting.title, lead: meeting.lead, joinURL: joinURL, onJoin: { hud.endSoon() }), isPhysical: isPhysical)
-                        .frame(width: shapeSize.width, height: shapeSize.height)
-                }
+            // 07-05 Task 3 (T-07-01): only a LINKED meeting drop ever lands here, and only while
+            // collapsed — `NotchPanelController.onOpenChange` already calls `hud.dismissNow()` the
+            // instant the band starts opening (sketch's own `openBand`), so this never needs to
+            // coexist with the band's own content.
+            if !model.isOpen, let meeting = hud.meeting, let joinURL = meeting.joinURL {
+                AlertDropView(motion: motion, kind: .meeting(title: meeting.title, lead: meeting.lead, joinURL: joinURL, onJoin: { hud.endSoon() }), isPhysical: isPhysical)
+                    .frame(width: openSize.width, height: openSize.height)
             }
 
-            // Laid out at a CONSTANT expanded size (never `shapeSize`) so its
-            // VStack/HStack is always measured at its final geometry and never
-            // reflows mid-morph — that reflow was the "wobble" (title +
-            // recorder pill visibly sliding into place at a different rate
-            // than everything else). The whole panel instead fades in/out as
-            // ONE unit and is masked to a shape sized to the currently
-            // morphing box (`shapeSize`) so it never paints outside the still
-            // growing/shrinking black notch.
-            ExpandedPanelView(timer: timer, calendar: calendar, nowPlaying: nowPlaying)
-                .frame(width: expandedSize.width, height: expandedSize.height, alignment: .topLeading)
-                .mask(alignment: .top) {
-                    NotchShape(topCornerRadius: isPhysical ? 6 : 0, bottomCornerRadius: model.isOpen ? 24 : 14)
-                        .frame(width: shapeSize.width, height: shapeSize.height)
-                }
-                .opacity(model.isOpen ? 1 : 0)
-                // Collapsed content still occupies the full expanded footprint
-                // (to stay constant-sized), so hit-testing must be disabled
-                // while closed or it would swallow hover over the invisible
-                // area beyond the collapsed notch.
-                .allowsHitTesting(model.isOpen)
-                // Content trails the box growth slightly on expand (so text
-                // never appears before the box exists), and fades out in step
-                // with the box shrinking back down on collapse.
-                .animation(
-                    NotchLayout.morphAnimation.delay(model.isOpen ? NotchLayout.expandContentDelay : 0),
-                    value: model.isOpen
-                )
+            // D-06 Wave 2 (PANEL-04): the band's row of module summaries — present at all times,
+            // pure `bandAlpha` opacity (0 while collapsed, since that channel rests at 0) rather
+            // than an `if model.isOpen` add/remove, so it fades in step with the pour/drain
+            // exactly like the wings above. Hit-testing gated on the discrete `model.isOpen`
+            // (never partially interactive mid-morph).
+            BandView(
+                modules: enabledModules,
+                layout: bandLayout,
+                hotIndex: nil,
+                pinnedIndex: nil,
+                timer: timer,
+                nowPlaying: nowPlaying,
+                calendar: calendar,
+                clipboard: clipboard,
+                onTapCell: { _ in }
+            )
+            .frame(width: bandLayout.cellsWidth, height: 50)
+            .position(x: bandLayout.cellsX + bandLayout.cellsWidth / 2, y: contentTop - 6 * (1 - bandAlpha) + 25)
+            .opacity(bandAlpha)
+            .allowsHitTesting(model.isOpen)
         }
-        .frame(width: expandedSize.width, height: expandedSize.height, alignment: .top)
+        .frame(width: openSize.width, height: openSize.height, alignment: .top)
         // Hover is intentionally NOT detected here via SwiftUI `.onHover`.
         // `NotchPanelController`'s `HoverTrackingView` (an AppKit
         // `NSTrackingArea` on the window's container view) drives
-        // `model.hoverBegan()`/`dwellElapsed()`/`hoverEnded()` instead — the
-        // recorder inside `ExpandedPanelView` does not reliably honor
-        // `.allowsHitTesting(false)` for its own hit-testing, which silently
-        // swallowed `.onHover` over the left half of the collapsed notch
+        // `model.hoverBegan()`/`dwellElapsed()`/`hoverEnded()` instead — SwiftUI's own hover
+        // detection has repeatedly proven unreliable inside this app's non-activating `NSPanel`
         // (SHELL-11).
+    }
+
+    /// `motion.channels[.bandAlpha]` clamped non-negative — the band's own pour/drain opacity,
+    /// read live off the spring clock every tick (RESEARCH.md Pitfall 2: never SwiftUI-animated).
+    private var bandAlpha: CGFloat {
+        max(0, motion.channels[.bandAlpha] ?? 0)
     }
 }
