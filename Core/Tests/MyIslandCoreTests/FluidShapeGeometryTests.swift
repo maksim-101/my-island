@@ -131,8 +131,11 @@ import CoreGraphics
 // 07-15 gap closure (T-07-26, characterization not a gate): the chevron's relMinX (127, measured
 // via MenuBarAgent's AX tree, uat-evidence/gap-15/01-baseline-probe.txt 2026-09-27) is not
 // portable across x — recompute the depth bound from `boundaryY` at the measured x rather than
-// asserting a literal. The pill's shoulder tip enters the chevron's frame only in its very top
-// (well under half a point at this reading); the glyph band (y ≥ 11) stays clear.
+// asserting a literal. At this specific reading the pill's shoulder tip enters the chevron's
+// frame only in its very top (well under half a point) and the glyph band (y ≥ 11) stays clear.
+// The chevron's own AX frame moved during 07-15's own session and later settled at a deeper
+// reading (relMinX 118, ~20pt fill, past the glyph band — 07-15-SUMMARY.md "Chevron measurement")
+// — this test characterizes the 127 sample only, not a stable property of the live system.
 @Test func shoulderTipInChevronFrame() {
     let q = FluidParams.macBookPill(menuBarHeight: 33, notchHeight: 32)
     let relMinX: CGFloat = 127
