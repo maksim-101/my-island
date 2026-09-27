@@ -1,3 +1,4 @@
+import Foundation
 import Testing
 @testable import MyIslandCore
 
@@ -58,4 +59,37 @@ import Testing
 @Test func detectStripsHTMLTagsBeforeMatchingNotes() {
     let result = VideoLinkDetector.detect(url: nil, location: nil, notes: "<p>Join: <a href=\"https://meet.google.com/abc-defg-hij\">https://meet.google.com/abc-defg-hij</a></p>")
     #expect(result?.absoluteString == "https://meet.google.com/abc-defg-hij")
+}
+
+// 07-10-PLAN's `<behavior>` list, one test per literal example — RED phase, written against the
+// plan's own spec before `serviceName(for:)` exists.
+
+@Test func serviceNameForGoogleMeet() {
+    let url = URL(string: "https://meet.google.com/abc-defg-hij")!
+    #expect(VideoLinkDetector.serviceName(for: url) == "Google Meet")
+}
+
+@Test func serviceNameForZoomSubdomain() {
+    let url = URL(string: "https://us02web.zoom.us/j/123")!
+    #expect(VideoLinkDetector.serviceName(for: url) == "Zoom")
+}
+
+@Test func serviceNameForTeams() {
+    let url = URL(string: "https://teams.microsoft.com/l/meetup-join/abcdef")!
+    #expect(VideoLinkDetector.serviceName(for: url) == "Teams")
+}
+
+@Test func serviceNameForFaceTime() {
+    let url = URL(string: "https://facetime.apple.com/join#v=1&p=abc123&k=xYz_-9")!
+    #expect(VideoLinkDetector.serviceName(for: url) == "FaceTime")
+}
+
+@Test func serviceNameForWebex() {
+    let url = URL(string: "https://example.webex.com/meet/x")!
+    #expect(VideoLinkDetector.serviceName(for: url) == "Webex")
+}
+
+@Test func serviceNameForUnknownHostIsNil() {
+    let url = URL(string: "https://example.com")!
+    #expect(VideoLinkDetector.serviceName(for: url) == nil)
 }
