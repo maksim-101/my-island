@@ -587,6 +587,15 @@ final class NotchPanelController: NSObject {
                 panel.bandFocus = BandFocus(moduleCount: self.enabledModules.count)
                 panel.dropletFocus.reset()
                 self.syncKeyFocus(on: panel)
+                // Same funnel, same reasoning as the keyboard-focus fix above: `applyHover`
+                // debounces on `lastHoverApplied` but is a no-op entirely while the band is open
+                // (see its own doc comment), so any close that bypasses it directly —
+                // `handleMouseMoved`'s pointer-outside `.closeBand` chief among them — leaves
+                // `lastHoverApplied` stuck at `true` from the original hover-in. The next real
+                // hover-in then reads as "no change" against that stale flag and the dwell-open
+                // timer never gets scheduled. Resetting it here, on every close, makes the next
+                // hover always re-evaluate from a clean baseline.
+                panel.lastHoverApplied = false
             }
             self.applyFrame(to: panel, isOpen: isOpen)
         }
