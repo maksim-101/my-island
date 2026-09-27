@@ -591,11 +591,22 @@ final class NotchPanelController: NSObject {
                 // debounces on `lastHoverApplied` but is a no-op entirely while the band is open
                 // (see its own doc comment), so any close that bypasses it directly —
                 // `handleMouseMoved`'s pointer-outside `.closeBand` chief among them — leaves
-                // `lastHoverApplied` stuck at `true` from the original hover-in. The next real
-                // hover-in then reads as "no change" against that stale flag and the dwell-open
-                // timer never gets scheduled. Resetting it here, on every close, makes the next
-                // hover always re-evaluate from a clean baseline.
-                panel.lastHoverApplied = false
+                // `lastHoverApplied` stuck wherever it was at hover-in time.
+                //
+                // RESYNC, don't force-clear: `notchHovering` (the AppKit tracking area, pinned to
+                // the container's full bounds — wider than the drawn pill) can still read `true`
+                // here even though `outlineHovering` (the drawn-shape `contains` check that
+                // actually drove the `.closeBand` pointer-outside close) has already gone false.
+                // Forcing `lastHoverApplied` to `false` unconditionally manufactures a false
+                // false→true edge the moment ANY mouse-moved event lands inside that still-hot
+                // wider container — even one that never crosses the pill's own drawn border —
+                // and reopens the band prematurely. Mirroring the two live source booleans here
+                // instead means the next `applyHover` only fires on a REAL edge: if the pointer
+                // has genuinely left both regions the mirrored value is already `false` and a
+                // fresh hover-in triggers correctly (the original bug); if the pointer is still
+                // inside the wider tracking rect the mirrored value stays `true` and no premature
+                // reopen fires until the pointer actually leaves that rect too.
+                panel.lastHoverApplied = panel.notchHovering || panel.outlineHovering
             }
             self.applyFrame(to: panel, isOpen: isOpen)
         }
