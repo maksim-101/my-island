@@ -5,9 +5,6 @@ import CoreGraphics
 /// `bandFrame`/`cells`/`setHot`/`cellAt`/`inDrop` and the pointer branch of `frame()`
 /// (lines 316-320, 355-368, 439-449, 525-534) — no AppKit/SwiftUI import, unrounded CGFloat
 /// throughout (07-DESIGN-AGREEMENT.md §1, §3).
-///
-/// RED-phase stub: signatures are final, bodies are placeholders that intentionally fail the
-/// behavior tests (`BandLayoutTests.swift`).
 public struct BandLayout {
     public let moduleCount: Int
     public let contentTop: CGFloat
@@ -29,39 +26,63 @@ public struct BandLayout {
     /// index.html:319 `cells().half` — `(frame.x1 - frame.x0) / 2`, the droplet's own clamp bound.
     public let halfContent: CGFloat
 
+    private var n: Int { max(1, moduleCount) }
+
     public init(moduleCount: Int, contentTop: CGFloat, cx: CGFloat = 0) {
         self.moduleCount = moduleCount
         self.contentTop = contentTop
         self.cx = cx
         let params = FluidParams.band(moduleCount: moduleCount, contentTop: contentTop)
         self.params = params
-        self.frame = FluidShapeGeometry.frameOf(params, cx: cx)
-        self.cellsX = 0
-        self.cellsWidth = 0
-        self.cellWidth = 0
-        self.centers = []
-        self.halfContent = 0
+        let frame = FluidShapeGeometry.frameOf(params, cx: cx)
+        self.frame = frame
+        let count = max(1, moduleCount)
+        let cellsX = frame.x0 + 6
+        let cellsWidth = frame.x1 - frame.x0 - 12
+        let cellWidth = cellsWidth / CGFloat(count)
+        self.cellsX = cellsX
+        self.cellsWidth = cellsWidth
+        self.cellWidth = cellWidth
+        self.halfContent = (frame.x1 - frame.x0) / 2
+        self.centers = (0..<count).map { cellsX + cellWidth * (CGFloat($0) + 0.5) }
     }
 
     /// index.html:355-362 `DROP_W`/`setHot`'s `mx`/`lim` — outer modules continue the band's own
     /// end curve (agreement §3), a middle module's droplet clamps to stay inside the band.
     public func droplet(forCell cell: Int, halfWidth: CGFloat) -> (mx: CGFloat, m: CGFloat, s2: CGFloat, dip: CGFloat) {
-        (0, 0, 0, 0)
+        let s2 = FluidShapeGeometry.dropletFlank
+        let dip = FluidShapeGeometry.dropletHeight
+        let lim = max(0, halfContent - halfWidth - s2 - 26)
+        let mx: CGFloat
+        if n == 1 {
+            mx = 0
+        } else if cell == 0 {
+            mx = frame.x0 - cx + halfWidth - 1
+        } else if cell == n - 1 {
+            mx = frame.x1 - cx - halfWidth + 1
+        } else {
+            let raw = centers[cell] - cx
+            mx = max(-lim, min(lim, raw))
+        }
+        return (mx, halfWidth, s2, dip)
     }
 
     /// index.html:439-444 `cellAt` — the pointer-to-cell hit test; `nil` outside the cell row.
     public func cellAt(_ p: CGPoint) -> Int? {
-        nil
+        if p.y < contentTop - 6 || p.y > frame.d + 4 { return nil }
+        if p.x < cellsX || p.x > cellsX + cellsWidth { return nil }
+        let idx = Int(floor((p.x - cellsX) / cellWidth))
+        return min(n - 1, max(0, idx))
     }
 
     /// index.html:529 `inBand` inline expression.
     public func inBand(_ p: CGPoint, currentHalf: CGFloat) -> Bool {
-        false
+        abs(p.x - cx) < currentHalf + 8 && p.y < frame.d + params.sag + 6
     }
 
     /// index.html:445-448 `inDrop`.
     public func inDroplet(_ p: CGPoint, mx: CGFloat, m: CGFloat, s2: CGFloat, dip: CGFloat) -> Bool {
-        false
+        abs(p.x - (cx + mx)) < m + s2 * 0.5 && p.y >= frame.d - 4 && p.y < frame.d + dip + 8
     }
 
     /// index.html:525-534, the `!inBand && !inDrop(p)` branch — three outcomes: stay, close the
@@ -72,7 +93,18 @@ public struct BandLayout {
         droplet: (mx: CGFloat, m: CGFloat, s2: CGFloat, dip: CGFloat)?,
         pinned: Bool
     ) -> BandPointerAction {
-        .stay
+        if inBand(p, currentHalf: currentHalf) { return .stay }
+        if let droplet, inDroplet(p, mx: droplet.mx, m: droplet.m, s2: droplet.s2, dip: droplet.dip) { return .stay }
+
+        let dx = abs(p.x - cx)
+        if let droplet, !pinned, dx < currentHalf, p.y < frame.d + droplet.dip + 30 {
+            return .closeDroplet
+        }
+        if !pinned { return .closeBand }
+        if p.y > frame.d + (droplet?.dip ?? 0) + 40 || dx > currentHalf + 40 {
+            return .closeBand
+        }
+        return .stay
     }
 }
 
