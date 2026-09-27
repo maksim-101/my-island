@@ -50,14 +50,14 @@ struct TimerPanelView: View {
     /// the default choice; the other three are plain countdowns.
     private var presetChips: some View {
         HStack(spacing: Tokens.Spacing.xs) {
-            presetChip(title: "5m") { timer.startCountdown(minutes: 5) }
-            presetChip(title: "15m") { timer.startCountdown(minutes: 15) }
-            presetChip(title: "25m focus", tinted: true) { timer.startPomodoro() }
-            presetChip(title: "50m") { timer.startCountdown(minutes: 50) }
+            presetChip(title: "5m", index: 0) { timer.startCountdown(minutes: 5) }
+            presetChip(title: "15m", index: 1) { timer.startCountdown(minutes: 15) }
+            presetChip(title: "25m focus", tinted: true, index: 2) { timer.startPomodoro() }
+            presetChip(title: "50m", index: 3) { timer.startCountdown(minutes: 50) }
         }
     }
 
-    private func presetChip(title: String, tinted: Bool = false, action: @escaping () -> Void) -> some View {
+    private func presetChip(title: String, tinted: Bool = false, index: Int, action: @escaping () -> Void) -> some View {
         Button(action: action) {
             Text(title)
                 .font(.system(size: 10.5, weight: .medium).monospaced())
@@ -69,16 +69,23 @@ struct TimerPanelView: View {
         }
         .buttonStyle(GlyphButtonStyle())
         .accessibilityLabel("Start \(title) timer")
+        .dropletFocusable(index: index, ring: .capsule, action: action)
     }
 
     /// The one control that stays a two-step flow by design (PANEL-06's own carve-out): an EMPTY
-    /// `DurationField` plus its own explicit Start.
+    /// `DurationField` plus its own explicit Start. `minutesFieldFocused` bridges 07-12's
+    /// keyboard-index-4 "make it first responder" action to the real `NSTextField` inside
+    /// `DurationField` — SwiftUI's `.focused(_:)` on an `NSViewRepresentable` drives
+    /// `window.makeFirstResponder(_:)` on the wrapped view.
+    @FocusState private var minutesFieldFocused: Bool
+
     private var minutesRow: some View {
         HStack(spacing: Tokens.Spacing.xs) {
             HStack(spacing: 3) {
                 DurationField(minutes: $customMinutes)
                     .frame(width: 34)
                     .accessibilityLabel("Duration in minutes")
+                    .focused($minutesFieldFocused)
                 Text("min")
                     .font(Tokens.Font.bodyMD)
                     .foregroundStyle(Tokens.Color.textMuted)
@@ -88,13 +95,13 @@ struct TimerPanelView: View {
             .background(Tokens.Color.surfaceRaised)
             .clipShape(RoundedRectangle(cornerRadius: Tokens.Radius.sm))
             .help("Type or scroll to set minutes")
+            .dropletFocusable(index: 4, ring: .roundedRect(Tokens.Radius.sm)) {
+                minutesFieldFocused = true
+            }
 
             Spacer(minLength: Tokens.Spacing.xs)
 
-            Button {
-                guard let customMinutes else { return }
-                timer.startCountdown(minutes: Double(customMinutes))
-            } label: {
+            Button(action: startCustomTimer) {
                 Text("Start")
                     .font(Tokens.Font.buttonPrimary)
                     .foregroundStyle(Tokens.Color.accentInk)
@@ -106,7 +113,13 @@ struct TimerPanelView: View {
             .buttonStyle(GlyphButtonStyle())
             .disabled(customMinutes == nil)
             .opacity(customMinutes == nil ? 0.45 : 1)
+            .dropletFocusable(index: 5, ring: .roundedRect(Tokens.Radius.sm), action: startCustomTimer)
         }
+    }
+
+    private func startCustomTimer() {
+        guard let customMinutes else { return }
+        timer.startCountdown(minutes: Double(customMinutes))
     }
 
     // MARK: - Running: phase label, big readout, ring, transport
@@ -153,9 +166,7 @@ struct TimerPanelView: View {
 
     private var transportControls: some View {
         HStack(spacing: Tokens.Spacing.md) {
-            Button {
-                if timer.isPaused { timer.resume() } else { timer.pause() }
-            } label: {
+            Button(action: pauseResume) {
                 Image(systemName: timer.isPaused ? "play.fill" : "pause.fill")
                     .contentTransition(.symbolEffect(.replace))
                     .font(.system(size: 13, weight: .semibold))
@@ -166,6 +177,7 @@ struct TimerPanelView: View {
             }
             .buttonStyle(GlyphButtonStyle())
             .help(timer.isPaused ? "Resume" : "Pause")
+            .dropletFocusable(index: 0, ring: .circle, action: pauseResume)
 
             Button {
                 timer.reset()
@@ -179,7 +191,12 @@ struct TimerPanelView: View {
             }
             .buttonStyle(GlyphButtonStyle())
             .help("Stop")
+            .dropletFocusable(index: 1, ring: .circle) { timer.reset() }
         }
+    }
+
+    private func pauseResume() {
+        if timer.isPaused { timer.resume() } else { timer.pause() }
     }
 
     private var phaseLabel: String {

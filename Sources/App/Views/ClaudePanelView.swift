@@ -103,6 +103,7 @@ struct ClaudePanelView: View {
                         .lineLimit(1)
                 }
                 .buttonStyle(GlyphButtonStyle())
+                .dropletFocusable(index: 0, ring: .roundedRect(6)) { jump(to: session) }
 
                 Spacer()
 
@@ -123,8 +124,11 @@ struct ClaudePanelView: View {
         if !otherSessions.isEmpty {
             ScrollView {
                 VStack(alignment: .leading, spacing: 1) {
-                    ForEach(otherSessions) { session in
-                        sessionRow(session)
+                    // 07-12 (PANEL-09): each row's own keyboard index continues right after the
+                    // request card's index 0 when that card is showing (`featuredNeedsAttention`);
+                    // otherwise the rows themselves start at 0 (no card "used up" an index).
+                    ForEach(Array(otherSessions.enumerated()), id: \.element.id) { offset, session in
+                        sessionRow(session, index: featuredNeedsAttention ? offset + 1 : offset)
                     }
                 }
                 .frame(maxWidth: .infinity, alignment: .top)
@@ -135,7 +139,7 @@ struct ClaudePanelView: View {
         }
     }
 
-    private func sessionRow(_ session: ClaudeSession) -> some View {
+    private func sessionRow(_ session: ClaudeSession, index: Int) -> some View {
         Button {
             jump(to: session)
         } label: {
@@ -159,6 +163,7 @@ struct ClaudePanelView: View {
             .clipShape(RoundedRectangle(cornerRadius: Tokens.Radius.sm))
         }
         .buttonStyle(GlyphButtonStyle())
+        .dropletFocusable(index: index, ring: .roundedRect(Tokens.Radius.sm)) { jump(to: session) }
     }
 
     private func rowStatusText(_ session: ClaudeSession) -> String {

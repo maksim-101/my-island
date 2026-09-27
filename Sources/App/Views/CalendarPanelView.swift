@@ -79,6 +79,9 @@ struct CalendarPanelView: View {
                     }
                     .buttonStyle(GlyphButtonStyle())
                     .help("Join meeting")
+                    .dropletFocusable(index: 0, ring: .roundedRect(Tokens.Radius.sm)) {
+                        NSWorkspace.shared.open(joinURL)
+                    }
                 }
 
                 Button {
@@ -94,6 +97,9 @@ struct CalendarPanelView: View {
                 }
                 .buttonStyle(GlyphButtonStyle())
                 .help("Open in Calendar")
+                .dropletFocusable(index: event.joinURL != nil ? 1 : 0, ring: .roundedRect(Tokens.Radius.sm)) {
+                    openInCalendar(event.startDate)
+                }
             }
 
             Spacer(minLength: 0)
@@ -122,6 +128,7 @@ struct CalendarPanelView: View {
             }
             .buttonStyle(GlyphButtonStyle())
             .help("Open in Calendar")
+            .dropletFocusable(index: 0, ring: .roundedRect(Tokens.Radius.sm)) { openInCalendar(.now) }
 
             Spacer(minLength: 0)
 
@@ -222,6 +229,7 @@ struct CalendarPanelView: View {
             }
             .buttonStyle(GlyphButtonStyle())
             .help("Grant Calendar access")
+            .dropletFocusable(index: 0, ring: .roundedRect(Tokens.Radius.sm)) { calendar.requestOrOpenSettings() }
         }
     }
 

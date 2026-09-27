@@ -37,8 +37,8 @@ struct ClipboardPanelView: View {
                     VStack(alignment: .leading, spacing: 1) {
                         // Edge PANEL-02 ordering: `entries` is already newest-first
                         // (`ClipboardViewModel.pollIfChanged`/`select` both maintain that order).
-                        ForEach(clipboard.entries) { entry in
-                            ClipboardRowView(entry: entry) {
+                        ForEach(Array(clipboard.entries.enumerated()), id: \.element.id) { index, entry in
+                            ClipboardRowView(entry: entry, index: index) {
                                 clipboard.select(entry)
                             }
                         }
@@ -61,6 +61,8 @@ struct ClipboardPanelView: View {
 /// stored/re-copied string (`entry.text`) stays full/verbatim.
 private struct ClipboardRowView: View {
     let entry: ClipboardViewModel.ClipboardEntry
+    /// 07-12 (PANEL-09): this row's own keyboard index within the droplet's `DropletFocus`.
+    let index: Int
     let onSelect: () -> Void
 
     @State private var isHovering = false
@@ -108,6 +110,7 @@ private struct ClipboardRowView: View {
         }
         .buttonStyle(GlyphButtonStyle())
         .onHover { isHovering = $0 }
+        .dropletFocusable(index: index, ring: .roundedRect(Tokens.Radius.sm)) { copy() }
     }
 
     @ViewBuilder

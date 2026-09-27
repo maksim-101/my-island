@@ -120,14 +120,14 @@ struct NowPlayingPanelView: View {
 
     private var controlsRow: some View {
         HStack(spacing: Tokens.Spacing.md) {
-            transportButton(systemName: "backward.fill", command: .previousTrack, diameter: 26, help: "Previous")
+            transportButton(systemName: "backward.fill", command: .previousTrack, diameter: 26, help: "Previous", index: 0)
             playPauseButton
-            transportButton(systemName: "forward.fill", command: .nextTrack, diameter: 26, help: "Next")
+            transportButton(systemName: "forward.fill", command: .nextTrack, diameter: 26, help: "Next", index: 2)
         }
         .disabled(nowPlaying.currentModel == nil)
     }
 
-    private func transportButton(systemName: String, command: NowPlayingCommand, diameter: CGFloat, help: String) -> some View {
+    private func transportButton(systemName: String, command: NowPlayingCommand, diameter: CGFloat, help: String, index: Int) -> some View {
         Button {
             nowPlaying.send(command)
         } label: {
@@ -140,6 +140,7 @@ struct NowPlayingPanelView: View {
         }
         .buttonStyle(GlyphButtonStyle())
         .help(help)
+        .dropletFocusable(index: index, ring: .circle) { nowPlaying.send(command) }
     }
 
     private var playPauseButton: some View {
@@ -156,6 +157,7 @@ struct NowPlayingPanelView: View {
         }
         .buttonStyle(GlyphButtonStyle())
         .help(nowPlaying.isPlayingForDisplay ? "Pause" : "Play")
+        .dropletFocusable(index: 1, ring: .circle) { nowPlaying.send(.togglePlayPause) }
     }
 }
 
