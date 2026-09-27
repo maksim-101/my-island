@@ -485,6 +485,9 @@ final class NotchPanelController: NSObject {
         set.panel.pendingCollapse?.cancel()
         set.panel.pendingDwellOpen?.cancel()
         set.panel.pendingHoverClose?.cancel()
+        set.panel.pendingBandClose?.cancel()
+        set.panel.pendingIntent?.cancel()
+        set.motion.cancelWhenSettled()
         set.motion.stopClock()
         set.panel.close()
         set.overlay.close()
@@ -527,6 +530,17 @@ final class NotchPanelController: NSObject {
                 self.closeBand(on: panel, motion: motion)
             }
             self.applyFrame(to: panel, isOpen: isOpen)
+        }
+        // 07-08 Task 2 (PANEL-04): a band cell's body click toggles its pin — clicking the already
+        // pinned cell unpins; clicking a different cell moves the pin there and shows its droplet.
+        model.onCellTap = { [weak self, weak panel] index in
+            guard let self, let panel, let motion = panel.motion, let model = panel.viewModel else { return }
+            if model.pinnedModule == index {
+                model.setPinnedModule(nil)
+            } else {
+                model.setPinnedModule(index)
+                self.showDroplet(index, on: panel, motion: motion)
+            }
         }
         panel.orderFrontRegardless()
 
@@ -658,13 +672,58 @@ final class NotchPanelController: NSObject {
         }
     }
 
-    /// Ported from the sketch's `closeBand` (index.html:345-351): drains `bandAlpha` back to 0,
-    /// retracts the outline to the collapsed rest params on the close spring/stagger with
-    /// `FluidTiming.lag`, and dims the glow back down.
+    /// Ported from the sketch's `closeBand` (index.html:345-351): the droplet closes first (Task 2's
+    /// `closeDroplet`), then drains `bandAlpha` back to 0, retracts the outline to the collapsed
+    /// rest params on the close spring/stagger with `FluidTiming.lag`, and dims the glow back down.
+    /// Also clears the pinned/candidate/intent bookkeeping — none of it should survive a close.
     private func closeBand(on panel: NotchPanel, motion: FluidMotion) {
+        closeDroplet(on: panel, motion: motion)
+        panel.viewModel?.setPinnedModule(nil)
+        panel.candidateCell = nil
+        panel.pendingIntent?.cancel()
+        panel.pendingIntent = nil
         motion.setChannel(.bandAlpha, to: 0, response: 0.2, damping: 1)
         motion.goTo(collapsedParams(for: panel), preset: .close, lag: FluidTiming.lag, stagger: FluidStagger.drain)
         motion.setChannel(.glow, to: 0.2, response: FluidMotionPreset.close.response, damping: FluidMotionPreset.close.damping)
+    }
+
+    /// D-06 Wave 2 (PANEL-04): ports the sketch's `setHot(i)` (index.html:356-368) — the first
+    /// droplet drips/grows in place (`mx` jumps straight to target, `m` jumps to 60% and animates
+    /// the rest, `dip` scaled ×1.25 on the `.droplet` preset); every later one slides on the
+    /// `.slide` preset instead of restarting the drip. `dropAlpha` always jumps to 0 first, then
+    /// rises at response 0.5 (first) or 0.32 (slide).
+    private func showDroplet(_ index: Int, on panel: NotchPanel, motion: FluidMotion) {
+        guard let model = panel.viewModel else { return }
+        let modules = Self.bandModules(from: BandModule.allCases)
+        guard index >= 0, index < modules.count else { return }
+        let layout = bandLayout(for: panel)
+        let target = layout.droplet(forCell: index, halfWidth: modules[index].dropletWidth / 2)
+        let wasShowing = model.hotModule != nil
+
+        model.setHotModule(index, frame: DropletFrame(mx: target.mx, m: target.m))
+
+        let preset: FluidMotionPreset = wasShowing ? .slide : .droplet
+        if !wasShowing {
+            motion.jumpParam(.mx, to: target.mx)
+            motion.jumpParam(.m, to: target.m * 0.6)
+        }
+        motion.set(.mx, to: target.mx, preset: preset)
+        motion.set(.m, to: target.m, preset: preset, scale: 0.8)
+        motion.set(.s2, to: target.s2, preset: preset)
+        motion.set(.dip, to: target.dip, preset: preset, scale: wasShowing ? 1 : 1.25)
+        motion.jumpChannel(.dropAlpha, to: 0)
+        motion.setChannel(.dropAlpha, to: 1, response: wasShowing ? 0.32 : 0.5, damping: 1)
+    }
+
+    /// Ports the sketch's `closeDrop` (index.html:369-373): `dip` and `m` retract on the close
+    /// preset (×0.8 / ×1.3 response respectively), `dropAlpha` fades fast (0.12, damping 1). A
+    /// no-op when nothing is showing.
+    private func closeDroplet(on panel: NotchPanel, motion: FluidMotion) {
+        guard let model = panel.viewModel, model.hotModule != nil else { return }
+        model.setHotModule(nil, frame: nil)
+        motion.set(.dip, to: 0, preset: .close, scale: 0.8)
+        motion.set(.m, to: 0, preset: .close, scale: 1.3)
+        motion.setChannel(.dropAlpha, to: 0, response: 0.12, damping: 1)
     }
 
     /// D-04 regression evidence for `scripts/clickthrough-probe.sh` (Task 1/2): only active when
@@ -1055,18 +1114,65 @@ final class NotchPanelController: NSObject {
                 Self.applyHover(panel: panel)
             }
 
-            if isOpen {
+            if isOpen, let model = panel.viewModel {
                 // 07-08 (D-06 Wave 2): the AppKit tracking-area exit no longer closes the band —
                 // the open window is now much larger than the drawn band+droplet outline, so
                 // `handleHoverChange`'s own dwell-close would fire far too late (only once the
                 // pointer leaves the whole window). `BandLayout.pointerOutside` ports the sketch's
-                // own stay/closeDroplet/closeBand pointer rule instead; `droplet: nil, pinned:
-                // false` here since no droplet exists until Task 2 wires `hotModule`/`pinnedModule`.
+                // own stay/closeDroplet/closeBand pointer rule instead.
                 let layout = bandLayout(for: panel)
-                switch layout.pointerOutside(pointer, currentHalf: motion.params.half, droplet: nil, pinned: false) {
-                case .stay, .closeDroplet:
+                let modules = Self.bandModules(from: BandModule.allCases)
+
+                // Task 2 (index.html:526-528 `if (i >= 0 && st.pinned < 0 ...)`): candidate-cell
+                // dwell tracking only runs while nothing is pinned — a pinned droplet stays put
+                // regardless of where the pointer wanders inside the band.
+                if model.pinnedModule == nil {
+                    let cellIndex = layout.cellAt(pointer)
+                    if let cellIndex, cellIndex != panel.candidateCell {
+                        panel.candidateCell = cellIndex
+                        panel.pendingIntent?.cancel()
+                        panel.pendingIntent = nil
+                        if model.hotModule != nil {
+                            // A droplet is already up — slide immediately (sketch: `st.hot >= 0`
+                            // bypasses the `candT > INTENT` dwell check).
+                            self.showDroplet(cellIndex, on: panel, motion: motion)
+                        } else {
+                            let work = DispatchWorkItem { [weak self, weak panel] in
+                                guard let self, let panel, let motion = panel.motion, let model = panel.viewModel,
+                                      panel.candidateCell == cellIndex, model.pinnedModule == nil else { return }
+                                self.showDroplet(cellIndex, on: panel, motion: motion)
+                            }
+                            panel.pendingIntent = work
+                            DispatchQueue.main.asyncAfter(deadline: .now() + FluidTiming.intent, execute: work)
+                        }
+                    } else if cellIndex == nil {
+                        panel.candidateCell = nil
+                        panel.pendingIntent?.cancel()
+                        panel.pendingIntent = nil
+                    }
+                }
+
+                let dropletGeom: (mx: CGFloat, m: CGFloat, s2: CGFloat, dip: CGFloat)?
+                if let hot = model.hotModule, hot < modules.count {
+                    dropletGeom = layout.droplet(forCell: hot, halfWidth: modules[hot].dropletWidth / 2)
+                } else {
+                    dropletGeom = nil
+                }
+
+                switch layout.pointerOutside(pointer, currentHalf: motion.params.half, droplet: dropletGeom, pinned: model.pinnedModule != nil) {
+                case .stay:
                     panel.pendingBandClose?.cancel()
                     panel.pendingBandClose = nil
+                case .closeDroplet:
+                    if panel.pendingBandClose == nil {
+                        let work = DispatchWorkItem { [weak self, weak panel] in
+                            guard let self, let panel, let motion = panel.motion, panel.viewModel?.isOpen == true else { return }
+                            panel.pendingBandClose = nil
+                            self.closeDroplet(on: panel, motion: motion)
+                        }
+                        panel.pendingBandClose = work
+                        DispatchQueue.main.asyncAfter(deadline: .now() + NotchLayout.hoverCollapseGrace, execute: work)
+                    }
                 case .closeBand:
                     if panel.pendingBandClose == nil {
                         let work = DispatchWorkItem { [weak panel] in
@@ -1238,11 +1344,19 @@ private final class NotchPanel: NSPanel {
     /// (`endAlertDrop`) — mirrors `pendingCollapse`'s own cancel-on-supersession idiom.
     var pendingDropFrameRestore: DispatchWorkItem?
     /// 07-08 (D-06 Wave 2): the open band's own pointer-driven close grace — armed when
-    /// `BandLayout.pointerOutside` first reports `.closeBand`, cancelled the moment the pointer
-    /// re-enters the band/droplet (`.stay`). Replaces the collapsed pill's AppKit
-    /// `NSTrackingArea` exit as the open-state close trigger (that tracking area now covers the
-    /// whole, much larger open window, not the drawn band+droplet outline within it).
+    /// `BandLayout.pointerOutside` first reports `.closeDroplet` or `.closeBand`, cancelled the
+    /// moment the pointer re-enters the band/droplet (`.stay`). Replaces the collapsed pill's
+    /// AppKit `NSTrackingArea` exit as the open-state close trigger (that tracking area now covers
+    /// the whole, much larger open window, not the drawn band+droplet outline within it). Only one
+    /// of `.closeDroplet`/`.closeBand` is ever pending at a time — a single slot is enough.
     var pendingBandClose: DispatchWorkItem?
+    /// 07-08 Task 2: the candidate cell the pointer is currently resting on while open and nothing
+    /// is pinned — paired with `pendingIntent`'s `FluidTiming.intent` (0.14s) dwell timer, ported
+    /// from the sketch's own `st.cand`/`st.candT`.
+    var candidateCell: Int?
+    /// 07-08 Task 2: the intent-dwell timer for `candidateCell` — cancelled on every candidate
+    /// change; fires `showDroplet` only if the candidate is still current when it elapses.
+    var pendingIntent: DispatchWorkItem?
     // Two independent hover sources unified into one dwell state (see
     // `applyHover`): the notch's `NSTrackingArea` and the outline dwell-target
     // detector (`FluidPointer.isDwellTarget`, driven by the mouse-moved monitors).

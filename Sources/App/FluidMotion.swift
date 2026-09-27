@@ -89,6 +89,17 @@ final class FluidMotion: NSObject {
         syncParams()
     }
 
+    /// 07-08 Task 2 (deviation, Rule 3 — blocking): a single-key `jump`, ported from the sketch's
+    /// own per-spring `P.mx.jump(mx)` (index.html:364) — `showDroplet`'s first-droplet branch snaps
+    /// `mx` straight to its target while `m` jumps to only 60% of target and animates the rest, so
+    /// the first droplet visibly drips/grows in place rather than sliding in from elsewhere. The
+    /// existing `jump(to:)` only jumps every key at once (to a full `FluidParams`), which would also
+    /// reset the band's own open half/run/d/sd/sag — not what a droplet show should ever do.
+    func jumpParam(_ key: FluidParamKey, to value: CGFloat) {
+        springs[key]?.jump(value)
+        syncParams()
+    }
+
     func setChannel(_ channel: FluidChannel, to value: CGFloat, response: CGFloat, damping: CGFloat) {
         channelSprings[channel]?.to(value, preset: FluidMotionPreset(response: response, damping: damping))
         resume()

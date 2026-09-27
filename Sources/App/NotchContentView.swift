@@ -2,6 +2,16 @@ import SwiftUI
 import AppKit
 import MyIslandCore
 
+/// 07-08 Task 2: the detail droplet's own TARGET placement — set once per `showDroplet` call,
+/// never re-derived from the live, still-animating outline springs (`motion.params.mx`/`.m`).
+/// Mirrors the sketch's own `renderDrop(i, mx, m)`, which sets `dropBox`'s position/size once and
+/// never touches it again per frame — only the OUTLINE (drawn via `FluidOutlineShape`) animates
+/// toward this target; the content box itself does not reflow mid-drip/slide.
+struct DropletFrame: Equatable {
+    let mx: CGFloat
+    let m: CGFloat
+}
+
 @MainActor
 @Observable
 final class NotchViewModel {
@@ -13,10 +23,26 @@ final class NotchViewModel {
     /// frame in sync with the SwiftUI content state.
     var onOpenChange: ((Bool) -> Void)?
 
+    /// 07-08 Task 2 (PANEL-04): fired when a band cell's body is tapped — `NotchPanelController`
+    /// wires this to the pin-toggle path, mirroring `onOpenChange`'s own controller-owns-the-logic
+    /// pattern (this view model only carries the event outward and stores the resulting state).
+    var onCellTap: ((Int) -> Void)?
+
     var isOpen: Bool {
         if case .open = dwell.state { return true }
         return false
     }
+
+    /// The band cell currently showing its droplet — `nil` when no droplet is up. Set by
+    /// `NotchPanelController.showDroplet`/`closeDroplet`, read by `NotchContentView` to decide
+    /// whether/which `DropletView` to host.
+    private(set) var hotModule: Int?
+    /// The band cell whose droplet is pinned open (stays until the pointer is 40pt beyond the
+    /// band, or is tapped again) — `nil` when nothing is pinned.
+    private(set) var pinnedModule: Int?
+    /// The showing droplet's own TARGET placement (see `DropletFrame`'s own doc comment) — `nil`
+    /// exactly when `hotModule` is `nil`.
+    private(set) var dropletFrame: DropletFrame?
 
     func hoverBegan() {
         dwell.hoverBegan()
@@ -38,6 +64,15 @@ final class NotchViewModel {
         let wasOpen = isOpen
         dwell.toggle()
         if isOpen != wasOpen { onOpenChange?(isOpen) }
+    }
+
+    func setHotModule(_ index: Int?, frame: DropletFrame?) {
+        hotModule = index
+        dropletFrame = frame
+    }
+
+    func setPinnedModule(_ index: Int?) {
+        pinnedModule = index
     }
 }
 
@@ -187,26 +222,45 @@ struct NotchContentView: View {
                     .frame(width: openSize.width, height: openSize.height)
             }
 
-            // D-06 Wave 2 (PANEL-04): the band's row of module summaries — present at all times,
-            // pure `bandAlpha` opacity (0 while collapsed, since that channel rests at 0) rather
-            // than an `if model.isOpen` add/remove, so it fades in step with the pour/drain
-            // exactly like the wings above. Hit-testing gated on the discrete `model.isOpen`
-            // (never partially interactive mid-morph).
-            BandView(
-                modules: enabledModules,
-                layout: bandLayout,
-                hotIndex: nil,
-                pinnedIndex: nil,
-                timer: timer,
-                nowPlaying: nowPlaying,
-                calendar: calendar,
-                clipboard: clipboard,
-                onTapCell: { _ in }
-            )
-            .frame(width: bandLayout.cellsWidth, height: 50)
-            .position(x: bandLayout.cellsX + bandLayout.cellsWidth / 2, y: contentTop - 6 * (1 - bandAlpha) + 25)
-            .opacity(bandAlpha)
+            // D-06 Wave 2 (PANEL-04): the band's row of module summaries plus its one detail
+            // droplet, clipped together to the live outline exactly like the sketch's own
+            // clip-path (Task 2) — nothing outside this group needs clipping (the linked-meeting
+            // `AlertDropView` above draws only while collapsed, when this group is already at
+            // opacity 0). Present at all times, pure `bandAlpha`/`dropAlpha` opacity rather than
+            // an `if model.isOpen` add/remove, so both fade in step with the pour/drain. Hit-testing
+            // gated on the discrete `model.isOpen` (never partially interactive mid-morph).
+            Group {
+                BandView(
+                    modules: enabledModules,
+                    layout: bandLayout,
+                    hotIndex: model.hotModule,
+                    pinnedIndex: model.pinnedModule,
+                    timer: timer,
+                    nowPlaying: nowPlaying,
+                    calendar: calendar,
+                    clipboard: clipboard,
+                    onTapCell: { model.onCellTap?($0) }
+                )
+                .frame(width: bandLayout.cellsWidth, height: 50)
+                .position(x: bandLayout.cellsX + bandLayout.cellsWidth / 2, y: contentTop - 6 * (1 - bandAlpha) + 25)
+                .opacity(bandAlpha)
+
+                if let hot = model.hotModule, let dropletFrame = model.dropletFrame, hot < enabledModules.count {
+                    DropletView(
+                        module: enabledModules[hot],
+                        frame: dropletFrame,
+                        d: bandLayout.frame.d,
+                        cx: bandLayout.cx,
+                        timer: timer,
+                        nowPlaying: nowPlaying,
+                        calendar: calendar,
+                        clipboard: clipboard
+                    )
+                    .opacity(dropAlpha)
+                }
+            }
             .allowsHitTesting(model.isOpen)
+            .clipShape(FluidOutlineShape(params: motion.params))
         }
         .frame(width: openSize.width, height: openSize.height, alignment: .top)
         // Hover is intentionally NOT detected here via SwiftUI `.onHover`.
@@ -221,5 +275,14 @@ struct NotchContentView: View {
     /// read live off the spring clock every tick (RESEARCH.md Pitfall 2: never SwiftUI-animated).
     private var bandAlpha: CGFloat {
         max(0, motion.channels[.bandAlpha] ?? 0)
+    }
+
+    /// 07-08 Task 2: `motion.channels[.dropAlpha]` — the SAME channel `AlertDropView`'s HUD/meeting
+    /// drop already animates (07-05), reused here exactly as the sketch's own `P.dropA` is reused
+    /// for both the band's detail droplet and the collapsed bump/HUD drop. The two never show
+    /// simultaneously (the alert drop only while collapsed, the detail droplet only while open), so
+    /// sharing one channel is the sketch's own design, not an accidental collision.
+    private var dropAlpha: CGFloat {
+        max(0, motion.channels[.dropAlpha] ?? 0)
     }
 }
