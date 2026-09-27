@@ -1149,7 +1149,16 @@ final class NotchPanelController: NSObject {
         container.addSubview(hosting)
         panel.contentView = container
 
-        panel.level = NSWindow.Level(rawValue: NSWindow.Level.mainMenu.rawValue + 3)
+        // 2026-09-27 (Fable consult, verified live): ONE LEVEL ABOVE the interactive panel
+        // (mainMenu+3), not the same level. Sharing a level with the interactive panel meant any
+        // same-level reorder — `panel.makeKey()` on hover/hotkey open chief among them, never
+        // followed by an overlay re-front — could put the interactive panel's opaque fill in
+        // front of this window, occluding the inner half of every stroke on the shared outline
+        // path (worst at the sharply curved shoulders, matching what was reported). A strictly
+        // higher level makes that entire class of bug structurally impossible — WindowServer
+        // never interleaves windows across levels — rather than requiring every future call site
+        // that might reorder same-level windows to remember to re-assert this one's front order.
+        panel.level = NSWindow.Level(rawValue: NSWindow.Level.mainMenu.rawValue + 4)
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary, .ignoresCycle]
         panel.isOpaque = false
         panel.backgroundColor = .clear
