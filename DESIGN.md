@@ -85,8 +85,9 @@ as considered instrument, not decoration; information-dense but never loud.
 Color on a timer always **means** which timer/state is running, and the collapsed ring and the expanded
 axis/chip use the **same** color so the two views read as one:
 
-- **Countdown → indigo** (`accent`) — a plain countdown carries no focus/break semantics, so it uses the
-  identity accent, not a warm hue.
+- **Countdown → orange** (`accent-countdown`, `#FF9500`) — amended 2026-09-27: the original indigo
+  choice collided visually with the collapsed pill's always-present indigo rim, which draws on the
+  identical outline path the countdown progress line does; orange reads distinctly against it.
 - **Pomodoro focus → coral** (`accent-warm`).
 - **Pomodoro break → mint** (`accent-cool`).
 

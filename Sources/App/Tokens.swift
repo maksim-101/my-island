@@ -21,6 +21,12 @@ enum Tokens {
         static let accentWarm = SwiftUI.Color(hex: 0xFF6B5C)
         /// Categorical secondary accent (e.g. Pomodoro break).
         static let accentCool = SwiftUI.Color(hex: 0x3DDC97)
+        /// Categorical secondary accent for a plain countdown timer (user decision, 2026-09-27 —
+        /// supersedes the original design agreement's "countdown = indigo/accent" choice, which
+        /// collided visually with the collapsed pill's always-present indigo rim on the identical
+        /// outline path). Deliberately NOT `signal` (0xFFB338, reserved exclusively for
+        /// attention/"needs you" per DESIGN.md's amber rule) — a distinct, more saturated orange.
+        static let accentCountdown = SwiftUI.Color(hex: 0xFF9500)
         static let background = SwiftUI.Color(hex: 0x0A0B0D)
         static let surface = SwiftUI.Color(hex: 0x15161A)
         static let surfaceRaised = SwiftUI.Color(hex: 0x1C1E23)
@@ -74,7 +80,7 @@ enum Tokens {
     /// timer/state is running, shared by collapsed dot and expanded ring.
     static func timerColor(for state: TimerState?) -> SwiftUI.Color {
         switch state {
-        case .countdown: return Color.accent
+        case .countdown: return Color.accentCountdown
         case .pomodoroFocus: return Color.accentWarm
         case .pomodoroBreak: return Color.accentCool
         case nil: return Color.textFaint
