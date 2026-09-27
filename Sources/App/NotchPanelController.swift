@@ -375,7 +375,18 @@ final class NotchPanelController: NSObject {
         var kept = 0
         for key in diff.kept {
             guard let set = panelSets[key], let (screen, mode) = desired[key] else { continue }
-            if set.panel.notchFrame != mode.anchorRect || set.panel.anchorMaxY != screen.frame.maxY || set.panel.isPhysical != mode.isPhysical || set.panel.menuBarHeight != screen.menuBarHeight {
+            // 2026-09-27 (regression found live): `screen.menuBarHeight` is `frame.maxY -
+            // visibleFrame.maxY`, which reads `0` whenever ANY app — including one on the
+            // built-in display itself — goes native fullscreen and the menu bar auto-hides.
+            // `NSApplication.didChangeScreenParametersNotification` (this method's own caller)
+            // fires on exactly that transition. Comparing against the live value unconditionally
+            // meant every fullscreen toggle tore down and rebuilt the physical panel set — a
+            // brand-new `FluidMotion` with every channel (including the running timer's own
+            // outline-progress spring) reset to 0, needing to visibly re-animate from empty each
+            // time. `FluidParams.macBookPill(menuBarHeight:notchHeight:)` already floors depth at
+            // the notch height (07-15), so a transient 0 changes nothing about the drawn geometry
+            // — only a genuine, currently-visible menu-bar reading is worth rebuilding for.
+            if set.panel.notchFrame != mode.anchorRect || set.panel.anchorMaxY != screen.frame.maxY || set.panel.isPhysical != mode.isPhysical || (screen.menuBarHeight > 0 && set.panel.menuBarHeight != screen.menuBarHeight) {
                 // WR-02 (06-REVIEW.md): a fresh `NotchViewModel` always starts collapsed — carry
                 // the torn-down set's open state forward through the SAME code path a hover/hotkey
                 // open uses (`toggle()`), rather than reaching into the new model's private dwell
@@ -438,6 +449,22 @@ final class NotchPanelController: NSObject {
             logger.notice("kept-reapplied key=\(key, privacy: .public) window=overlay before=\(NSStringFromRect(set.overlay.frame), privacy: .public) after=\(NSStringFromRect(overlayTarget), privacy: .public)")
             set.overlay.setFrame(overlayTarget, display: true)
         }
+
+        // 2026-09-27 (regression found live): `makePanelSet` orders `panel` then `overlay` front
+        // exactly ONCE, at creation — nothing re-asserts that relative order afterward. Both
+        // windows share the same level (`mainMenu+3`), and WindowServer can and does reshuffle
+        // same-level window ordering across a Space/fullscreen transition. If the overlay (which
+        // draws the rim and, since 2026-09-27, the pill's own timer line) ends up BEHIND the
+        // interactive panel (which draws the opaque black fill), the fill occludes the inner half
+        // of every stroke straddling the outline — worst at the sharply curved shoulders near the
+        // wings, barely noticeable on the flat floor, exactly the asymmetry reported. `kept`
+        // panels (the common case for a fullscreen toggle, now that the menu-bar-height rebuild
+        // trigger above is scoped to real changes) never went through `makePanelSet` again, so
+        // nothing here ever re-asserted it. `orderFrontRegardless()` is idempotent and cheap when
+        // the order is already correct — safe to call unconditionally on every reapply, not just
+        // when something drifted.
+        set.panel.orderFrontRegardless()
+        set.overlay.orderFrontRegardless()
     }
 
     /// 20260912 (hide-through-space-switch): sets `alphaValue = 0` on all three windows of the
