@@ -28,6 +28,11 @@ struct DropletView: View {
     /// 07-14 (CLAUDE-01/02/03): the read-only, already-sorted session list — `ClaudePanelView`'s
     /// own data source, replacing plan 08's `EmptyView()` placeholder.
     let claudeSessions: [ClaudeSession]
+    /// 07-12 (PANEL-09): the panel's own `DropletFocus` registry (`NotchPanel.dropletFocus`) —
+    /// injected into the environment so every control inside `content` can register itself via
+    /// `.dropletFocusable`, and reset whenever `module` changes so a fresh droplet never inherits a
+    /// stale registration/ring from whatever was showing before.
+    let dropletFocus: DropletFocus
 
     private static let contentHeight: CGFloat = 180
 
@@ -40,6 +45,8 @@ struct DropletView: View {
             // arithmetic collapses to a straight `cx + mx` center once expressed as SwiftUI's
             // center-anchored `.position(_:_:)`.
             .position(x: cx + frame.mx, y: d + 4 + Self.contentHeight / 2)
+            .environment(dropletFocus)
+            .onChange(of: module, initial: true) { _, _ in dropletFocus.reset() }
     }
 
     @ViewBuilder

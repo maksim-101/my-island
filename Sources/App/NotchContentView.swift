@@ -74,6 +74,38 @@ final class NotchViewModel {
     func setPinnedModule(_ index: Int?) {
         pinnedModule = index
     }
+
+    /// 07-12 (PANEL-09): the band cell currently keyboard-focused (`BandFocus.zone == .band(i)`)
+    /// — `nil` whenever the keyboard focus zone is `.droplet` or absent entirely. Mirrors
+    /// `hotModule`/`pinnedModule`'s own controller-sets/view-reads shape; `NotchPanelController`
+    /// calls this from `syncKeyFocus(on:)` after every `BandFocus` mutation.
+    private(set) var keyFocusIndex: Int?
+
+    func setKeyFocusIndex(_ index: Int?) {
+        keyFocusIndex = index
+    }
+
+    /// 07-12 (PANEL-05/PANEL-09): the band cell's transient "Opening…"/"Copied"/"Jumping…"
+    /// confirmation text — moved up from `BandView`'s own local `@State` so `performPrimaryAction`
+    /// (now on `NotchPanelController`, driven by both a glyph click and a keyboard Return) can set
+    /// the SAME flash regardless of which path triggered it.
+    private(set) var flashMessages: [BandModule: String] = [:]
+    private var flashTasks: [BandModule: Task<Void, Never>] = [:]
+
+    func flash(_ text: String, for module: BandModule) {
+        flashTasks[module]?.cancel()
+        flashMessages[module] = text
+        flashTasks[module] = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .seconds(1.3))
+            guard !Task.isCancelled else { return }
+            self?.flashMessages[module] = nil
+        }
+    }
+
+    /// 07-12 (PANEL-09): fired when a band cell's glyph is clicked OR its Return key is pressed —
+    /// `NotchPanelController` wires this to `performPrimaryAction(for:on:)`, mirroring
+    /// `onCellTap`'s own controller-owns-the-logic pattern.
+    var onPerformPrimaryAction: ((BandModule) -> Void)?
 }
 
 @MainActor
@@ -103,6 +135,9 @@ struct NotchContentView: View {
     /// parameter forces this call site to thread it through): the same instance
     /// `NotchPanelController` owns once, threaded here exactly like every other provider above.
     let claudeSessions: ClaudeSessionsProvider
+    /// 07-12 (PANEL-09): the panel's own `DropletFocus` registry (`NotchPanel.dropletFocus`) —
+    /// threaded straight through to `DropletView`, which injects it into the environment.
+    let dropletFocus: DropletFocus
     // Phase 6 SHELL-06: only the physical camera-cutout gets concave top
     // "ears" for the (retired) pre-fluid expanded-panel mask — kept as a field for the band's own
     // content-top choice below (the physical notch's band content starts lower than a synthetic
@@ -242,12 +277,15 @@ struct NotchContentView: View {
                     layout: bandLayout,
                     hotIndex: model.hotModule,
                     pinnedIndex: model.pinnedModule,
+                    keyFocusIndex: model.keyFocusIndex,
                     timer: timer,
                     nowPlaying: nowPlaying,
                     calendar: calendar,
                     clipboard: clipboard,
                     claudeSessions: claudeSessions,
-                    onTapCell: { model.onCellTap?($0) }
+                    flashMessages: model.flashMessages,
+                    onTapCell: { model.onCellTap?($0) },
+                    onPerformPrimaryAction: { model.onPerformPrimaryAction?($0) }
                 )
                 .frame(width: bandLayout.cellsWidth, height: 50)
                 .position(x: bandLayout.cellsX + bandLayout.cellsWidth / 2, y: contentTop - 6 * (1 - bandAlpha) + 25)
@@ -263,7 +301,8 @@ struct NotchContentView: View {
                         nowPlaying: nowPlaying,
                         calendar: calendar,
                         clipboard: clipboard,
-                        claudeSessions: claudeSessions.sessions
+                        claudeSessions: claudeSessions.sessions,
+                        dropletFocus: dropletFocus
                     )
                     .opacity(dropAlpha)
                 }

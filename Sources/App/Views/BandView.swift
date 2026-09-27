@@ -16,6 +16,10 @@ struct BandView: View {
     let layout: BandLayout
     let hotIndex: Int?
     let pinnedIndex: Int?
+    /// 07-12 (PANEL-09): the band cell currently keyboard-focused (`NotchViewModel.keyFocusIndex`,
+    /// mirroring `BandFocus.zone == .band(i)`) — draws the standard 2pt accent ring, distinct from
+    /// `pinnedIndex`'s own bottom-capsule indicator.
+    let keyFocusIndex: Int?
     let timer: TimerViewModel
     let nowPlaying: NowPlayingProvider
     let calendar: CalendarProvider
@@ -23,14 +27,16 @@ struct BandView: View {
     /// 07-14 (CLAUDE-01/02/03): the read-only, 3s-polled session list — the Claude cell's own
     /// data source, replacing plan 08's `EmptyView()` placeholder.
     let claudeSessions: ClaudeSessionsProvider
+    /// 07-12: transient "Opening…"/"Copied"/"Jumping…" confirmation text (sketch `say`, 1.3s) —
+    /// moved up to `NotchViewModel.flashMessages` (from this view's own local `@State`) so
+    /// `performPrimaryAction` sets the SAME flash regardless of whether a glyph click or a
+    /// keyboard Return triggered it.
+    let flashMessages: [BandModule: String]
     let onTapCell: (Int) -> Void
-
-    /// Transient "Opening…"/"Copied" confirmation text (sketch `say`, 1.3s) for the two glyphs
-    /// whose action has no other visible state change to confirm it (Join opens a URL; the
-    /// clipboard glyph re-copies silently) — keyed by module since only one instance of each
-    /// module exists per band. Now Playing/Timer glyphs confirm via their own icon swap instead.
-    @State private var flashMessages: [BandModule: String] = [:]
-    @State private var flashTasks: [BandModule: Task<Void, Never>] = [:]
+    /// 07-12 (PANEL-09): fired by both a glyph click (below) and, via `NotchPanelController`'s own
+    /// key routing, a Return press on a focused band cell — the one place either trigger's
+    /// underlying action (`NotchPanelController.performPrimaryAction(for:on:)`) actually runs.
+    let onPerformPrimaryAction: (BandModule) -> Void
 
     var body: some View {
         HStack(spacing: 0) {
@@ -72,6 +78,16 @@ struct BandView: View {
                     .padding(.bottom, 1)
             }
         }
+        .overlay {
+            // 07-12 (PANEL-09): the standard 2pt accent focus ring, drawn only for the band's OWN
+            // keyboard focus (`BandFocus.zone == .band(i)`) — distinct from `pinned`'s bottom
+            // capsule, which tracks the mouse/keyboard-shared droplet-pin state above.
+            if keyFocusIndex == index {
+                RoundedRectangle(cornerRadius: 12)
+                    .inset(by: 1)
+                    .stroke(Tokens.Color.accent, lineWidth: 2)
+            }
+        }
     }
 
     @ViewBuilder
@@ -100,36 +116,36 @@ struct BandView: View {
                     tooltip: nowPlaying.isPlayingForDisplay ? "Pause" : "Play",
                     symbolReplace: true
                 ) {
-                    nowPlaying.send(.togglePlayPause)
+                    performPrimaryAction(for: .nowPlaying)
                 }
             }
 
         case .timer:
             if timer.isPaused {
                 glyphButton(systemName: "play.fill", tooltip: "Resume") {
-                    timer.resume()
+                    performPrimaryAction(for: .timer)
                 }
             } else if timer.isRunning {
                 glyphButton(systemName: "pause.fill", tooltip: "Pause") {
-                    timer.pause()
+                    performPrimaryAction(for: .timer)
                 }
             } else {
                 glyphButton(systemName: "play.fill", tooltip: "Start 25m") {
-                    timer.startPomodoro()
+                    performPrimaryAction(for: .timer)
                 }
             }
 
         case .nextMeeting:
-            if let event = calendar.events.first, shouldShowJoinGlyph(for: event) {
+            if let event = calendar.events.first, Self.shouldShowJoinGlyph(for: event) {
                 glyphButton(systemName: "video.fill", tooltip: "Join", primary: true) {
-                    startJoin(event)
+                    performPrimaryAction(for: .nextMeeting)
                 }
             }
 
         case .clipboard:
             if clipboard.entries.first != nil {
                 glyphButton(systemName: "doc.on.doc", tooltip: "Copy latest again") {
-                    copyLatestClipboardEntry()
+                    performPrimaryAction(for: .clipboard)
                 }
             }
 
@@ -137,12 +153,22 @@ struct BandView: View {
         // nothing needs the user (edge PANEL-05 empty), matching every other module's glyph-absent
         // convention above.
         case .claude:
-            if let top = claudeSessions.waiting.first {
+            if claudeSessions.waiting.first != nil {
                 glyphButton(systemName: "arrow.up.right", tooltip: "Jump to pane", amber: true) {
-                    jumpToClaudePane(top)
+                    performPrimaryAction(for: .claude)
                 }
             }
         }
+    }
+
+    /// 07-12 (PANEL-09): the one place a glyph click AND a keyboard Return (routed through
+    /// `NotchPanelController.sendEvent`'s key routing → `.performGlyph(i)` →
+    /// `NotchViewModel.onPerformPrimaryAction`) both land — `onPerformPrimaryAction` is the
+    /// injected closure to `NotchPanelController.performPrimaryAction(for:on:)`, the actual action
+    /// implementation (moved off this view so the AppKit key-routing path can call the identical
+    /// code a click already ran).
+    private func performPrimaryAction(for module: BandModule) {
+        onPerformPrimaryAction(module)
     }
 
     private func glyphButton(
@@ -173,52 +199,15 @@ struct BandView: View {
     }
 
     /// Join shows only when the next event carries a link AND either starts within 15 minutes or
-    /// is already under way (07-DESIGN-AGREEMENT.md §4).
-    private func shouldShowJoinGlyph(for event: CalendarEventModel) -> Bool {
+    /// is already under way (07-DESIGN-AGREEMENT.md §4). `static` (07-12): reused by
+    /// `NotchPanelController.performPrimaryAction(for:on:)` so the glyph-visibility check and the
+    /// action's own guard can never drift apart.
+    static func shouldShowJoinGlyph(for event: CalendarEventModel) -> Bool {
         guard event.joinURL != nil else { return false }
         let now = Date()
         let isRunning = event.startDate <= now && now < event.endDate
         let startsSoon = event.startDate > now && event.startDate.timeIntervalSince(now) <= 15 * 60
         return isRunning || startsSoon
-    }
-
-    private func startJoin(_ event: CalendarEventModel) {
-        guard let joinURL = event.joinURL else { return }
-        flash("Opening\u{2026}", for: .nextMeeting)
-        NSWorkspace.shared.open(joinURL)
-    }
-
-    private func copyLatestClipboardEntry() {
-        guard let entry = clipboard.entries.first else { return }
-        clipboard.select(entry)
-        flash("Copied", for: .clipboard)
-    }
-
-    /// 07-14: flashes "Jumping…" immediately (the subprocess chain — `/bin/ps` then
-    /// `/usr/bin/osascript` — is not instant), then supersedes it with "Pane not found" on
-    /// failure via the same `flash(_:for:)` cancel-and-restart mechanism every other glyph uses; a
-    /// success leaves the "Jumping…" flash to clear on its own 1.3s timer.
-    private func jumpToClaudePane(_ session: ClaudeSession) {
-        flash("Jumping to iTerm2 pane\u{2026}", for: .claude)
-        Task { @MainActor in
-            let succeeded = await ClaudePaneJumper.jump(to: session)
-            if !succeeded {
-                flash("Pane not found", for: .claude)
-            }
-        }
-    }
-
-    /// Sketch `say` (1.3s flash, index.html `act()`): replaces the cell's own secondary line with
-    /// `text` for confirmation, then restores it — cancels any flash already in flight for the
-    /// SAME module so a rapid re-click doesn't clear early.
-    private func flash(_ text: String, for module: BandModule) {
-        flashTasks[module]?.cancel()
-        flashMessages[module] = text
-        flashTasks[module] = Task { @MainActor in
-            try? await Task.sleep(for: .seconds(1.3))
-            guard !Task.isCancelled else { return }
-            flashMessages[module] = nil
-        }
     }
 
     // MARK: - Now Playing

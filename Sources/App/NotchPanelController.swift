@@ -562,6 +562,15 @@ final class NotchPanelController: NSObject {
                 self.showDroplet(index, on: panel, motion: motion)
             }
         }
+        // 07-12 (PANEL-09): the SAME action a glyph click and a keyboard Return both run —
+        // `BandView`'s own `performPrimaryAction(for:)` wrapper calls this closure directly; the
+        // AppKit key-routing path (`applyBandFocusEffect`'s `.performGlyph` case) calls
+        // `performPrimaryAction(for:on:)` on `self` directly, no closure indirection needed there.
+        model.onPerformPrimaryAction = { [weak self, weak panel] module in
+            guard let self, let panel else { return }
+            self.performPrimaryAction(for: module, on: panel)
+        }
+        panel.controller = self
         panel.orderFrontRegardless()
 
         let overlay = Self.makeOverlayPanel(notchFrame: anchorRect, anchorMaxY: anchorMaxY, isPhysical: mode.isPhysical, menuBarHeight: screen.menuBarHeight, motion: motion, model: model, timer: timer, fullscreen: fullscreenObserver, displayID: screen.displayID, hud: hud)
@@ -761,6 +770,10 @@ final class NotchPanelController: NSObject {
             if set.model.isOpen {
                 set.motion.goTo(layout.params, preset: .slide)
             }
+            // PANEL-09 (07-12): a module switch can shrink the band while keyboard focus is
+            // active — clamps `bandFocus`'s own pinned/showing/zone indices to the new count.
+            _ = set.panel.bandFocus.moduleCountChanged(enabledModules.count)
+            syncKeyFocus(on: set.panel)
         }
     }
 
@@ -864,7 +877,7 @@ final class NotchPanelController: NSObject {
         panel.motion = motion
         panel.displayKey = displayKey
 
-        let hostingView = NonKeyHostingView(rootView: NotchContentView(model: model, motion: motion, timer: timer, calendar: calendar, nowPlaying: nowPlaying, fullscreen: fullscreen, displayID: screen.displayID, hud: hud, clipboard: clipboard, claudeSessions: claudeSessions, isPhysical: isPhysical))
+        let hostingView = NonKeyHostingView(rootView: NotchContentView(model: model, motion: motion, timer: timer, calendar: calendar, nowPlaying: nowPlaying, fullscreen: fullscreen, displayID: screen.displayID, hud: hud, clipboard: clipboard, claudeSessions: claudeSessions, dropletFocus: panel.dropletFocus, isPhysical: isPhysical))
         // Decouple from the window's Auto Layout / constraint-update cycle:
         // `applyFrame` resizes the panel manually via `setFrame`, and letting
         // the hosting view participate in constraint-based sizing causes an
@@ -1149,6 +1162,174 @@ final class NotchPanelController: NSObject {
         panel.viewModel?.toggle()
     }
 
+    /// PANEL-09 (07-12): the ⌥Space entry point — the ONLY path that takes keyboard focus (see
+    /// `NotchPanel.canBecomeKey`'s own doc comment). Resolves the panel under the pointer exactly
+    /// like `toggle()` above; on open, remembers the frontmost app so Esc/a second ⌥Space can give
+    /// it back, opens through the same `model.toggle()` path hover uses, becomes key ONCE, seeds
+    /// `BandFocus` at the first module, and shows its droplet after the sketch's own 260ms delay
+    /// (index.html:334-344 `openBand(true)`, distinct from `FluidTiming.contentDelay`'s 160ms
+    /// `bandAlpha` rise); on close, hands focus straight back.
+    func toggleFromHotkey() {
+        guard let panel = panels.first(where: { $0.screenFrame.contains(NSEvent.mouseLocation) }) else { return }
+        guard let model = panel.viewModel else { return }
+        if model.isOpen {
+            closeBandAndRestoreFocus(on: panel)
+            return
+        }
+        panel.previousApp = NSWorkspace.shared.frontmostApplication
+        model.toggle()
+        // The ONE forced-key call in this file — see `NotchPanel.canBecomeKey`'s own doc comment.
+        panel.makeKey()
+        panel.bandFocus = BandFocus(moduleCount: enabledModules.count)
+        _ = panel.bandFocus.hotkeyOpened()
+        model.setPinnedModule(0)
+        syncKeyFocus(on: panel)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.26) { [weak self, weak panel] in
+            guard let self, let panel, let motion = panel.motion, panel.viewModel?.isOpen == true else { return }
+            self.showDroplet(0, on: panel, motion: motion)
+        }
+    }
+
+    /// PANEL-09: closes the band through the SAME `model.toggle()` path hover uses (never a direct
+    /// `closeBand` call — that would desync `HoverDwell`'s own state), resigns key status, and
+    /// hands focus back to whichever app was frontmost before `toggleFromHotkey` opened this panel
+    /// — the Esc chain's final step (`applyBandFocusEffect`'s `.closeBand` case) and the hotkey's
+    /// own close branch above both end here, so there is exactly one place this restore logic runs.
+    private func closeBandAndRestoreFocus(on panel: NotchPanel) {
+        if panel.viewModel?.isOpen == true {
+            panel.viewModel?.toggle()
+        }
+        panel.resignKey()
+        let app = panel.previousApp
+        panel.previousApp = nil
+        app?.activate()
+        panel.bandFocus = BandFocus(moduleCount: enabledModules.count)
+        panel.dropletFocus.reset()
+        syncKeyFocus(on: panel)
+    }
+
+    /// PANEL-09: turns one `BandFocus.Effect` into the matching AppKit/SwiftUI action — the single
+    /// place both `toggleFromHotkey`'s own `.showDroplet(0)` (applied inline above, not through
+    /// here — it needs the 260ms delay) and `NotchPanel.sendEvent`'s key routing (`handleBandKeyDown`
+    /// below) dispatch through.
+    private func applyBandFocusEffect(_ effect: BandFocus.Effect, on panel: NotchPanel, motion: FluidMotion) {
+        switch effect {
+        case .none:
+            break
+        case .showDroplet(let i):
+            // Mirrors `model.onCellTap`'s own click-to-pin behaviour (07-08 Task 2) — a
+            // keyboard-selected module "sticks" exactly like a clicked one, so `handleMouseMoved`'s
+            // own `model.pinnedModule == nil` gate leaves it alone.
+            panel.viewModel?.setPinnedModule(i)
+            showDroplet(i, on: panel, motion: motion)
+        case .closeDroplet:
+            panel.viewModel?.setPinnedModule(nil)
+            closeDroplet(on: panel, motion: motion)
+        case .closeBand:
+            closeBandAndRestoreFocus(on: panel)
+        case .performGlyph(let i):
+            let modules = enabledModules
+            guard i >= 0, i < modules.count else { break }
+            performPrimaryAction(for: modules[i], on: panel)
+        case .pressControl(let i):
+            panel.dropletFocus.perform(i)
+        }
+        syncKeyFocus(on: panel)
+    }
+
+    /// PANEL-09: mirrors `panel.bandFocus.zone` into the SwiftUI-observable side (`keyFocusIndex`
+    /// on `NotchViewModel` for the band ring, `focusedIndex` on `DropletFocus` for the droplet
+    /// ring) after every `BandFocus` mutation, and logs the change.
+    private func syncKeyFocus(on panel: NotchPanel) {
+        switch panel.bandFocus.zone {
+        case .band(let i):
+            panel.viewModel?.setKeyFocusIndex(i)
+            panel.dropletFocus.setFocusedIndex(nil)
+            logger.notice("keyFocus zone=band index=\(i, privacy: .public)")
+        case .droplet(let i):
+            panel.viewModel?.setKeyFocusIndex(nil)
+            panel.dropletFocus.setFocusedIndex(i)
+            logger.notice("keyFocus zone=droplet index=\(i, privacy: .public)")
+        case .none:
+            panel.viewModel?.setKeyFocusIndex(nil)
+            panel.dropletFocus.setFocusedIndex(nil)
+            logger.notice("keyFocus zone=none index=-1")
+        }
+    }
+
+    /// PANEL-09: `NotchPanel.sendEvent`'s own key-routing entry point — `fileprivate` so that type
+    /// (declared later in this same file) can call it. Returns `true` when the event was consumed
+    /// (a recognized key while the band is open, the panel is key, and no text field is editing);
+    /// every other key returns `false` so `sendEvent` falls through to `super`.
+    fileprivate func handleBandKeyDown(_ event: NSEvent, on panel: NotchPanel) -> Bool {
+        guard panel.isKeyWindow, panel.viewModel?.isOpen == true else { return false }
+        // The field editor for the minutes `NSTextField` is an `NSTextView` while editing is
+        // active (AppKit's field-editor pattern) — this is what "first responder is not a text
+        // view" actually detects; a click has already made the field first responder by the time
+        // any of these key codes could route here.
+        if panel.firstResponder is NSTextView { return false }
+        guard let motion = panel.motion else { return false }
+        let controlCount = panel.dropletFocus.count
+        let effect: BandFocus.Effect
+        switch event.keyCode {
+        case 123: effect = panel.bandFocus.arrowLeft()
+        case 124: effect = panel.bandFocus.arrowRight()
+        case 125: effect = panel.bandFocus.arrowDown(controlCount: controlCount)
+        case 126: effect = panel.bandFocus.arrowUp(controlCount: controlCount)
+        case 48: effect = panel.bandFocus.tab(backward: event.modifierFlags.contains(.shift), controlCount: controlCount)
+        case 36, 76: effect = panel.bandFocus.returnKey()
+        case 53: effect = panel.bandFocus.escape()
+        default: return false
+        }
+        applyBandFocusEffect(effect, on: panel, motion: motion)
+        return true
+    }
+
+    /// PANEL-05/PANEL-09: the module's one-click primary action — extracted from `BandView`'s own
+    /// former inline glyph closures so a glyph click (via `NotchViewModel.onPerformPrimaryAction`)
+    /// and a keyboard Return (via `applyBandFocusEffect`'s `.performGlyph` case) run the exact same
+    /// code. Reads the SAME provider instances `BandView` itself reads (this controller owns all
+    /// of them once — `timer`/`nowPlayingProvider`/`calendarProvider`/`clipboard`/`claudeSessions`)
+    /// so no data needs threading from the view; each case's own guard mirrors the corresponding
+    /// glyph-visibility check in `BandView.actionGlyph(for:)` exactly, so a keyboard Return on a
+    /// module with no applicable action is a safe no-op instead of a crash.
+    fileprivate func performPrimaryAction(for module: BandModule, on panel: NotchPanel) {
+        switch module {
+        case .nowPlaying:
+            guard nowPlayingProvider.currentModel != nil else { return }
+            nowPlayingProvider.send(.togglePlayPause)
+
+        case .timer:
+            if timer.isPaused {
+                timer.resume()
+            } else if timer.isRunning {
+                timer.pause()
+            } else {
+                timer.startPomodoro()
+            }
+
+        case .nextMeeting:
+            guard let event = calendarProvider.events.first, BandView.shouldShowJoinGlyph(for: event), let joinURL = event.joinURL else { return }
+            panel.viewModel?.flash("Opening\u{2026}", for: .nextMeeting)
+            NSWorkspace.shared.open(joinURL)
+
+        case .clipboard:
+            guard let entry = clipboard.entries.first else { return }
+            clipboard.select(entry)
+            panel.viewModel?.flash("Copied", for: .clipboard)
+
+        case .claude:
+            guard let top = claudeSessions.waiting.first else { return }
+            panel.viewModel?.flash("Jumping to iTerm2 pane\u{2026}", for: .claude)
+            Task { @MainActor [weak panel] in
+                let succeeded = await ClaudePaneJumper.jump(to: top)
+                if !succeeded {
+                    panel?.viewModel?.flash("Pane not found", for: .claude)
+                }
+            }
+        }
+    }
+
     /// Drives the hover-dwell state machine from the `HoverTrackingView`'s
     /// AppKit `NSTrackingArea` enter/exit events (SHELL-11 fix), replacing
     /// SwiftUI `.onHover` — which the left half of the notch never received
@@ -1193,6 +1374,14 @@ final class NotchPanelController: NSObject {
         let mouseGlobal = NSEvent.mouseLocation
         for panel in panels {
             guard let motion = panel.motion else { continue }
+            // PANEL-09 (07-12, index.html:431): real pointer movement — every call here is one,
+            // since this method only runs off the `.mouseMoved` monitors — ends keyboard mode.
+            // `zone` is only ever non-nil while a hotkey-opened band is up, so this is a no-op the
+            // rest of the time.
+            if panel.bandFocus.zone != nil {
+                _ = panel.bandFocus.pointerMoved()
+                syncKeyFocus(on: panel)
+            }
             let pointer = CGPoint(x: mouseGlobal.x, y: panel.anchorMaxY - mouseGlobal.y)
             let cx = panel.notchFrame.midX
             let q = collapsedParams(for: panel)
@@ -1466,6 +1655,24 @@ private final class NotchPanel: NSPanel {
     /// the miss was this race, not a geometry defect. `handleMouseMoved` skips its own
     /// `ignoresMouseEvents` write for a panel while this is `true`.
     var probeInProgress = false
+    /// PANEL-09 (07-12): weak back-reference to the owning controller, set once in
+    /// `makePanelSet` — lets `sendEvent(_:)` below route a key-down into
+    /// `NotchPanelController.handleBandKeyDown(_:on:)` without this file needing a second,
+    /// duplicate copy of the key-routing switch. Weak: `panelSets` already owns this panel
+    /// strongly, so a strong back-reference here would be a retain cycle.
+    weak var controller: NotchPanelController?
+    /// PANEL-09: this panel's own keyboard-focus state machine (Core, 07-07) — reset to a fresh
+    /// `BandFocus(moduleCount:)` on every `toggleFromHotkey` open/close and every Esc-driven close,
+    /// mutated in place by `NotchPanelController.handleBandKeyDown(_:on:)` on every recognized key.
+    var bandFocus = BandFocus(moduleCount: 0)
+    /// PANEL-09: this panel's own droplet control registry (07-12) — one instance for the panel's
+    /// whole lifetime (not recreated per droplet open), reset by `DropletView` whenever the shown
+    /// module changes.
+    let dropletFocus = DropletFocus()
+    /// PANEL-09: the app that was frontmost when `toggleFromHotkey` opened this panel — `nil`
+    /// whenever the band isn't open via the hotkey path. Restored (and cleared) by
+    /// `NotchPanelController.closeBandAndRestoreFocus(on:)`.
+    var previousApp: NSRunningApplication?
     // Two independent hover sources unified into one dwell state (see
     // `applyHover`): the notch's `NSTrackingArea` and the outline dwell-target
     // detector (`FluidPointer.isDwellTarget`, driven by the mouse-moved monitors).
@@ -1483,11 +1690,13 @@ private final class NotchPanel: NSPanel {
     //
     // Phase 6 Plan 03 (D-07): the hotkey opens every panel at once, but only ONE panel may ever
     // become key — the one whose `screenFrame` contains the pointer — so typed input (today: the
-    // minutes field after a click; Phase 8: keyboard navigation) always lands on the display the
-    // user is actually looking at, never on a panel the pointer isn't over. `toggle()` itself
-    // calls nothing that requests key status, so this gate alone (combined with
-    // `becomesKeyOnlyIfNeeded`) is what enforces the rule — no forced-key AppKit call exists
-    // anywhere in this file.
+    // minutes field after a click, and keyboard band/droplet navigation, 07-12) always lands on
+    // the display the user is actually looking at, never on a panel the pointer isn't over.
+    // `toggle()` itself calls nothing that requests key status, so this gate alone (combined with
+    // `becomesKeyOnlyIfNeeded`) is what enforces the rule for every path except one: 07-12's
+    // `NotchPanelController.toggleFromHotkey()` deliberately forces this ONE panel's key status on
+    // open — the single, documented exception to "no forced-key AppKit call" this file otherwise
+    // holds to everywhere else (hover-open, every pointer path, `toggle()` above).
     override var canBecomeKey: Bool { screenFrame.contains(NSEvent.mouseLocation) }
     override var canBecomeMain: Bool { false }
 
@@ -1512,6 +1721,12 @@ private final class NotchPanel: NSPanel {
             if !inside {
                 Self.outsideClickLogger.notice("outsideClick display=\(self.displayKey, privacy: .public) x=\(localX, privacy: .public) y=\(localY, privacy: .public)")
             }
+        }
+        // PANEL-09 (07-12): only reachable at all while THIS panel is key, which only happens via
+        // `NotchPanelController.toggleFromHotkey()` — every other open path leaves the panel
+        // non-key, so this branch is simply never entered for a hover-opened or click-opened band.
+        if event.type == .keyDown, let controller, controller.handleBandKeyDown(event, on: self) {
+            return
         }
         super.sendEvent(event)
     }

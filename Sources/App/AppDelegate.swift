@@ -33,8 +33,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
         notchPanelController = NotchPanelController()
 
+        // PANEL-09 (07-12): the dedicated hotkey entry point — takes key focus (the one
+        // documented exception, see `NotchPanel.canBecomeKey`'s own doc comment) and seeds
+        // `BandFocus`; `NotchPanelController.toggle()` (used by no other caller) stays the
+        // plain, non-key-taking open/close.
         KeyboardShortcuts.onKeyDown(for: .toggleNotchPanel) { [weak self] in
-            self?.notchPanelController?.toggle()
+            self?.notchPanelController?.toggleFromHotkey()
         }
 
         NotificationCenter.default.addObserver(
