@@ -112,9 +112,10 @@ rules — structure comes from spacing and grouping labels, not boxes.
 ### Collapsed notch (locked geometry rule)
 
 The collapsed footprint is **fixed per display** (07-DESIGN-AGREEMENT.md §11): the MacBook pill is
-257×36pt with 18pt shoulders and 3pt floor sag; the Dell desktop pill is 197×30pt (menu-bar height) with
-24pt shoulders and 2pt sag; on a fullscreen display the pill becomes a 197×9pt bulge with 72pt shoulders
-and 2pt sag. None of these ever widen or grow to fit a timer or now-playing.
+257pt wide with 18pt shoulders and 3pt floor sag, and as deep as the display's own measured menu bar
+(33pt on this MacBook), never shallower than the camera housing; the Dell desktop pill is 197×30pt
+(menu-bar height) with 24pt shoulders and 2pt sag; on a fullscreen display the pill becomes a 197×9pt
+bulge with 72pt shoulders and 2pt sag. None of these ever widen or grow to fit a timer or now-playing.
 
 Alerts and the HUD are **separate drops that pinch off below the pill/bulge and never touch its width** —
 they are no longer part of the notch once they've separated, so they may even be wider than it.
@@ -180,7 +181,7 @@ flanks with a rounded belly. No straight edge, no corner, anywhere in the family
 
 | Surface | Size | Shoulders | Floor sag |
 |---|---|---|---|
-| MacBook pill | 257×36 | 18pt | 3pt |
+| MacBook pill | 257×(menu-bar height, never shallower than the camera housing) | 18pt | 3pt |
 | Dell desktop pill | 197×30 (menu-bar height) | 24pt | 2pt |
 | Dell fullscreen bulge | 197×9 | 72pt | 2pt |
 | Band | 1166pt for five modules, never under 824pt | 132pt | 9pt |
