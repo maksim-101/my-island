@@ -53,6 +53,19 @@ public enum VideoLinkDetector {
         return nil
     }
 
+    /// Maps a detected video-call URL's host to a display name for the Next-meeting droplet's
+    /// time-range row (07-10-PLAN's `<behavior>` list). `nil` for anything not recognized —
+    /// callers fall back to the event's plain `location` string.
+    public static func serviceName(for url: URL) -> String? {
+        guard let host = url.host?.lowercased() else { return nil }
+        if host == "meet.google.com" { return "Google Meet" }
+        if host == "zoom.us" || host.hasSuffix(".zoom.us") { return "Zoom" }
+        if host == "teams.microsoft.com" || host == "teams.live.com" { return "Teams" }
+        if host == "facetime.apple.com" { return "FaceTime" }
+        if host == "webex.com" || host.hasSuffix(".webex.com") { return "Webex" }
+        return nil
+    }
+
     private static func stripHTMLTags(_ text: String) -> String {
         guard let regex = try? NSRegularExpression(pattern: "<[^>]+>") else { return text }
         let range = NSRange(text.startIndex..., in: text)
