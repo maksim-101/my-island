@@ -1601,11 +1601,21 @@ final class NotchPanelController: NSObject {
             // genuinely still there, because both look identical from the cached flag alone.
             // Self-correct it here from the SAME live `NSEvent.mouseLocation` this method already
             // reads on every real mouse-moved event anywhere on screen (the global monitor above),
-            // exactly mirroring how `outlineHovering` already self-corrects two lines up — a
-            // simple screen-space frame containment check against the panel's own current frame
-            // (both in the same bottom-left-origin global coordinate space, no conversion needed).
+            // exactly mirroring how `outlineHovering` already self-corrects two lines up.
+            //
+            // Deliberately `resolvedFrame(for:)`, NOT `panel.frame`: on close, `isOpen` flips
+            // false immediately but the actual AppKit window frame stays at the large OPEN size
+            // until `motion.whenSettled` fires and `applyFrame` shrinks it (the drain animation,
+            // several hundred ms). A `panel.frame.contains` check during that window reads `true`
+            // for a pointer that only just left the band's drawn OUTLINE, not the still-oversized
+            // window — re-asserting `notchHovering = true` on every move and starving
+            // `lastHoverApplied` of the `false` edge a fresh hover-in needs. `applyFrame` already
+            // solves exactly this for the real AppKit tracking area via `HoverTrackingView.hoverRect`
+            // (pinned to the collapsed rect for the same reason, same window); `resolvedFrame(for:)`
+            // is the identical target — it returns `collapsedSurfaceFrame(for:)` whenever `isOpen`
+            // is false, regardless of whether the window itself has caught up yet.
             if !isOpen {
-                let insideContainer = panel.frame.contains(mouseGlobal)
+                let insideContainer = resolvedFrame(for: panel).contains(mouseGlobal)
                 if panel.notchHovering != insideContainer {
                     panel.notchHovering = insideContainer
                     Self.applyHover(panel: panel)
