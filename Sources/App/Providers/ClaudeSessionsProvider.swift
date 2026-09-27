@@ -112,7 +112,7 @@ final class ClaudeSessionsProvider {
     /// dropped UNLESS the session still `needsYou` and its file is under 60s old — the grace
     /// window between the owning `claude` process exiting and `SessionEnd` removing the file.
     nonisolated private static func isLive(_ session: ClaudeSession, now: Date) -> Bool {
-        guard let pid = session.pid else { return true }
+        guard let pid = session.pid, pid > 1 else { return true }
         if kill(pid, 0) == 0 { return true }
         guard errno == ESRCH else { return true }
         if session.status.needsYou, now.timeIntervalSince(session.updatedAt) < 60 { return true }
