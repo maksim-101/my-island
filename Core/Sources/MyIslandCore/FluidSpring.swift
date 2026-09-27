@@ -16,20 +16,33 @@ public final class FluidSpring {
         self.t = x
     }
 
+    /// Ported from index.html:136 `to(t, c, s = 1)`.
     public func to(_ target: CGFloat, preset: FluidMotionPreset? = nil, scale: CGFloat = 1) {
-        // stub
+        t = target
+        if let preset {
+            resp = preset.response * scale
+            damp = preset.damping
+        }
     }
 
+    /// Ported from index.html:137 `jump(x)`.
     public func jump(_ x: CGFloat) {
-        // stub
+        self.x = x
+        self.t = x
+        self.v = 0
     }
 
+    /// Ported from index.html:138-142 `step(dt)` — semi-implicit Euler, velocity updated first,
+    /// then position, identical order of operations.
     public func step(_ dt: CGFloat) {
-        // stub
+        let k = pow(2 * CGFloat.pi / resp, 2)
+        let c = 4 * CGFloat.pi * damp / resp
+        v += (-k * (x - t) - c * v) * dt
+        x += v * dt
     }
 
     public var isSettled: Bool {
-        false
+        abs(x - t) < 0.001 && abs(v) < 0.001
     }
 }
 
@@ -43,25 +56,25 @@ public struct FluidMotionPreset: Equatable, Sendable {
         self.damping = damping
     }
 
-    public static let open = FluidMotionPreset(response: 0, damping: 0)
-    public static let close = FluidMotionPreset(response: 0, damping: 0)
-    public static let droplet = FluidMotionPreset(response: 0, damping: 0)
-    public static let slide = FluidMotionPreset(response: 0, damping: 0)
-    public static let sticky = FluidMotionPreset(response: 0, damping: 0)
+    public static let open = FluidMotionPreset(response: 0.55, damping: 0.78)
+    public static let close = FluidMotionPreset(response: 0.50, damping: 0.92)
+    public static let droplet = FluidMotionPreset(response: 0.60, damping: 0.80)
+    public static let slide = FluidMotionPreset(response: 0.55, damping: 0.86)
+    public static let sticky = FluidMotionPreset(response: 0.70, damping: 0.90)
 }
 
 /// Ported from index.html:210-211 `POUR`/`DRAIN` — per-key response multipliers for the
 /// opening-pours / closing-drains stagger.
 public enum FluidStagger {
-    public static let pour: [FluidParamKey: CGFloat] = [:]
-    public static let drain: [FluidParamKey: CGFloat] = [:]
+    public static let pour: [FluidParamKey: CGFloat] = [.half: 0.8, .run: 0.9, .d: 1.35, .sd: 1.35]
+    public static let drain: [FluidParamKey: CGFloat] = [.d: 0.8, .sd: 0.8, .half: 1.35, .run: 1.35]
 }
 
 /// Ported from index.html:208-212's timing constants.
 public enum FluidTiming {
-    public static let dwell: CGFloat = 0
-    public static let intent: CGFloat = 0
-    public static let lag: CGFloat = 0
-    public static let contentDelay: CGFloat = 0
-    public static let pull: CGFloat = 0
+    public static let dwell: CGFloat = 0.25
+    public static let intent: CGFloat = 0.14
+    public static let lag: CGFloat = 0.12
+    public static let contentDelay: CGFloat = 0.16
+    public static let pull: CGFloat = 5
 }
