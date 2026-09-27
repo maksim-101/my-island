@@ -20,6 +20,9 @@ struct BandView: View {
     let nowPlaying: NowPlayingProvider
     let calendar: CalendarProvider
     let clipboard: ClipboardViewModel
+    /// 07-14 (CLAUDE-01/02/03): the read-only, 3s-polled session list — the Claude cell's own
+    /// data source, replacing plan 08's `EmptyView()` placeholder.
+    let claudeSessions: ClaudeSessionsProvider
     let onTapCell: (Int) -> Void
 
     /// Transient "Opening…"/"Copied" confirmation text (sketch `say`, 1.3s) for the two glyphs
@@ -78,10 +81,7 @@ struct BandView: View {
         case .timer: timerContent
         case .nextMeeting: nextMeetingContent
         case .clipboard: clipboardContent
-        // Interim (07-15 gap closure note stays 07-08-scoped): unreachable while
-        // `NotchPanelController.modulesAwaitingDataSource` keeps `.claude` out of the enabled set —
-        // plan 14 adds the real content and removes that set.
-        case .claude: EmptyView()
+        case .claude: claudeContent
         }
     }
 
@@ -133,10 +133,15 @@ struct BandView: View {
                 }
             }
 
-        // Unreachable while `.claude` stays out of the enabled set (see `content(for:)` above) —
-        // plan 14 adds the amber jump glyph alongside its real data source.
+        // 07-14 (CLAUDE-02, agreement §4): jump to the top waiting session's pane — absent when
+        // nothing needs the user (edge PANEL-05 empty), matching every other module's glyph-absent
+        // convention above.
         case .claude:
-            EmptyView()
+            if let top = claudeSessions.waiting.first {
+                glyphButton(systemName: "arrow.up.right", tooltip: "Jump to pane", amber: true) {
+                    jumpToClaudePane(top)
+                }
+            }
         }
     }
 
@@ -144,6 +149,7 @@ struct BandView: View {
         systemName: String,
         tooltip: String,
         primary: Bool = false,
+        amber: Bool = false,
         symbolReplace: Bool = false,
         action: @escaping () -> Void
     ) -> some View {
@@ -157,7 +163,7 @@ struct BandView: View {
                 }
             }
             .font(.system(size: 11, weight: .semibold))
-            .foregroundStyle(primary ? Tokens.Color.accentInk : Tokens.Color.text)
+            .foregroundStyle(primary ? Tokens.Color.accentInk : (amber ? Tokens.Color.signal : Tokens.Color.text))
             .frame(width: 24, height: 24)
             .background(primary ? Tokens.Color.accent : Tokens.Color.surfaceRaised)
             .clipShape(Circle())
@@ -186,6 +192,20 @@ struct BandView: View {
         guard let entry = clipboard.entries.first else { return }
         clipboard.select(entry)
         flash("Copied", for: .clipboard)
+    }
+
+    /// 07-14: flashes "Jumping…" immediately (the subprocess chain — `/bin/ps` then
+    /// `/usr/bin/osascript` — is not instant), then supersedes it with "Pane not found" on
+    /// failure via the same `flash(_:for:)` cancel-and-restart mechanism every other glyph uses; a
+    /// success leaves the "Jumping…" flash to clear on its own 1.3s timer.
+    private func jumpToClaudePane(_ session: ClaudeSession) {
+        flash("Jumping to iTerm2 pane\u{2026}", for: .claude)
+        Task { @MainActor in
+            let succeeded = await ClaudePaneJumper.jump(to: session)
+            if !succeeded {
+                flash("Pane not found", for: .claude)
+            }
+        }
     }
 
     /// Sketch `say` (1.3s flash, index.html `act()`): replaces the cell's own secondary line with
@@ -332,12 +352,49 @@ struct BandView: View {
         }
     }
 
+    // MARK: - Claude
+
+    /// 07-14 (CLAUDE-01/03, sketch `CELL.claude`): a 30pt badge — amber with the waiting count
+    /// when a session needs the user, quiet with the total session count otherwise; line 1 is the
+    /// top waiting session's repo (amber) or "Claude"; line 2 is "Permission"/"Your turn", else
+    /// the total-session summary. Every session-supplied string (only `repo` here) passes through
+    /// `ClaudeSessions.displaySafe` (T-07-21).
+    private var claudeContent: some View {
+        let top = claudeSessions.waiting.first
+        let badgeCount = top != nil ? claudeSessions.waitingCount : claudeSessions.sessions.count
+        return Group {
+            Text("\(badgeCount)")
+                .font(.system(size: 12, weight: .bold).monospaced())
+                .foregroundStyle(top != nil ? Tokens.Color.signal : Tokens.Color.textMuted)
+                .frame(width: 30, height: 30)
+                .background(top != nil ? Tokens.Color.signal.opacity(0.14) : Tokens.Color.surfaceRaised)
+                .clipShape(Circle())
+            twoLine(
+                primary: top.map { ClaudeSessions.displaySafe($0.repo) } ?? "Claude",
+                secondary: flashMessages[.claude] ?? claudeSecondary(top: top),
+                primaryColor: top != nil ? Tokens.Color.signal : nil
+            )
+        }
+    }
+
+    /// "Permission" / "Your turn" while a session waits; otherwise the total-session summary
+    /// (edge: 0 sessions reads "No sessions", matching the must_haves empty-state truth exactly).
+    private func claudeSecondary(top: ClaudeSession?) -> String {
+        if let top {
+            return top.status == .awaitingPermission ? "Permission" : "Your turn"
+        }
+        let total = claudeSessions.sessions.count
+        guard total > 0 else { return "No sessions" }
+        return "\(total) session\(total == 1 ? "" : "s") working"
+    }
+
     // MARK: - Shared two-line summary
 
     private func twoLine(
         primary: String,
         secondary: String,
         primaryMuted: Bool = false,
+        primaryColor: SwiftUI.Color? = nil,
         primaryFont: Font = .system(size: 12.5, weight: .semibold),
         primaryTransition: Bool = false
     ) -> some View {
@@ -352,7 +409,7 @@ struct BandView: View {
                 }
             }
             .font(primaryFont)
-            .foregroundStyle(primaryMuted ? Tokens.Color.textMuted : Tokens.Color.text)
+            .foregroundStyle(primaryColor ?? (primaryMuted ? Tokens.Color.textMuted : Tokens.Color.text))
             .lineLimit(1)
             .truncationMode(.tail)
 

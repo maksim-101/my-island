@@ -80,6 +80,12 @@ final class NotchPanelController: NSObject {
     // panel rebuild, matching every other provider's convention above.
     let clipboard = ClipboardViewModel()
 
+    // Owned ONCE here too (07-14, CLAUDE-01/02/03 pulled forward from v2): the read-only 3s poll
+    // of `~/.claude/statusbar/state.d` and its decoded/sorted session list must survive every
+    // panel rebuild exactly like every other provider above — recreating it per-rebuild would
+    // restart its poll timer on every clamshell open/close or display change.
+    let claudeSessions = ClaudeSessionsProvider()
+
     // Owned ONCE here too (Phase 5, D-10/D-11): the fullscreen signal must
     // survive a screen-parameter rebuild exactly like the other providers
     // above — creating it inside `rebuildPanels` would tear down and restart
@@ -121,22 +127,6 @@ final class NotchPanelController: NSObject {
     static let surfaceMaterialKey = "com.myisland.surfaceMaterial"
     static let surfaceMaterialDefault = "black"
 
-    /// 07-08 (D-06 Wave 2, interim until plan 14): the Claude module has no data source yet, so it
-    /// stays out of the band regardless of the (future, plan 11) persisted enabled list — plans
-    /// 08-11 show four cells (988pt); plan 14 deletes this set and adds `ClaudePanelView`, and the
-    /// band reaches its final five-module 1166pt width. No plan before 14 should treat 988pt as
-    /// the band's final width.
-    static let modulesAwaitingDataSource: Set<BandModule> = [.claude]
-
-    /// `input` minus `modulesAwaitingDataSource`, falling back to `input` unfiltered when that
-    /// would leave nothing (T-07-05: the band can never be built with zero modules) — every call
-    /// site below now passes `enabledModules` (the persisted list, plan 11) instead of
-    /// `BandModule.allCases`; this filter applies uniformly regardless of what `input` already is.
-    static func bandModules(from input: [BandModule]) -> [BandModule] {
-        let filtered = input.filter { !modulesAwaitingDataSource.contains($0) }
-        return filtered.isEmpty ? input : filtered
-    }
-
     /// MOD-01 (07-11): persisted key for the Settings "Modules" toggles — Alcove-style per-module
     /// on/off, Settings-driven, same `com.myisland.*` reverse-DNS convention as every other
     /// persisted key above. Stored as a comma-joined list of `BandModule.rawValue`s: SwiftUI's
@@ -147,8 +137,8 @@ final class NotchPanelController: NSObject {
     static let enabledModulesKey = "com.myisland.enabledModules"
 
     /// WR-04 paired-constant convention: the default when nothing is persisted yet — every
-    /// module, including `.claude` (kept out of the band today only by
-    /// `modulesAwaitingDataSource` above, the separate interim filter plan 14 removes).
+    /// module, including `.claude` (07-14: the band's fifth module, now with a real data source;
+    /// the plan-08-through-11 interim that used to filter it back out of the drawn band is gone).
     static let enabledModulesDefault: [String] = BandModule.allCases.map(\.rawValue)
 
     /// The persisted enabled subset (MOD-01) — every set's `BandLayout`/window frame/droplet
@@ -539,7 +529,7 @@ final class NotchPanelController: NSObject {
         let motion = FluidMotion(rest: restParams)
         motion.startClock(on: screen)
 
-        let panel = Self.makePanel(notchFrame: anchorRect, screen: screen, isPhysical: mode.isPhysical, model: model, motion: motion, timer: timer, calendar: calendarProvider, nowPlaying: nowPlayingProvider, fullscreen: fullscreenObserver, displayKey: key, hud: hud, clipboard: clipboard)
+        let panel = Self.makePanel(notchFrame: anchorRect, screen: screen, isPhysical: mode.isPhysical, model: model, motion: motion, timer: timer, calendar: calendarProvider, nowPlaying: nowPlayingProvider, fullscreen: fullscreenObserver, displayKey: key, hud: hud, clipboard: clipboard, claudeSessions: claudeSessions)
         panel.displayID = screen.displayID
         // `makePanel`'s own window sizing is the static, non-fullscreen-aware
         // `collapsedSurfaceFrame(isPhysical:notchFrame:anchorMaxY:)` (it has no panel/displayID to
@@ -666,17 +656,15 @@ final class NotchPanelController: NSObject {
     /// independent computations (not a shared type) because they operate in two different
     /// coordinate spaces for two different callers (AppKit pointer math here, SwiftUI layout there).
     private func bandLayout(for panel: NotchPanel) -> BandLayout {
-        let modules = Self.bandModules(from: enabledModules)
         let contentTop: CGFloat = panel.isPhysical ? FluidShapeGeometry.bandContentTopPhysical : FluidShapeGeometry.bandContentTopSynthetic
-        return BandLayout(moduleCount: modules.count, contentTop: contentTop, cx: panel.notchFrame.midX)
+        return BandLayout(moduleCount: enabledModules.count, contentTop: contentTop, cx: panel.notchFrame.midX)
     }
 
     /// The open window's own frame — the band's bounding box plus droplet room, `openFrameSize`'s
     /// single source. Replaces the old fixed `expandedFrame`.
     private func openFrame(for panel: NotchPanel) -> NSRect {
-        let modules = Self.bandModules(from: enabledModules)
         let contentTop: CGFloat = panel.isPhysical ? FluidShapeGeometry.bandContentTopPhysical : FluidShapeGeometry.bandContentTopSynthetic
-        let size = Self.openFrameSize(moduleCount: modules.count, contentTop: contentTop)
+        let size = Self.openFrameSize(moduleCount: enabledModules.count, contentTop: contentTop)
         return NSRect(
             x: panel.notchFrame.midX - size.width / 2,
             y: panel.anchorMaxY - size.height,
@@ -691,6 +679,9 @@ final class NotchPanelController: NSObject {
     /// the box growth. `hud.dismissNow()` (any drop) is already called by the `onOpenChange` wiring
     /// above before this runs.
     private func openBand(on panel: NotchPanel, motion: FluidMotion) {
+        // 07-14: an immediate refresh (not waiting up to 3s for the next poll tick) so the Claude
+        // cell/droplet never opens on stale data.
+        claudeSessions.refreshNow()
         let layout = bandLayout(for: panel)
         motion.goTo(layout.params, preset: .open, stagger: FluidStagger.pour)
         motion.set(.belly, to: 0, preset: .open)
@@ -724,7 +715,7 @@ final class NotchPanelController: NSObject {
     /// rises at response 0.5 (first) or 0.32 (slide).
     private func showDroplet(_ index: Int, on panel: NotchPanel, motion: FluidMotion) {
         guard let model = panel.viewModel else { return }
-        let modules = Self.bandModules(from: enabledModules)
+        let modules = enabledModules
         guard index >= 0, index < modules.count else { return }
         let layout = bandLayout(for: panel)
         let target = layout.droplet(forCell: index, halfWidth: modules[index].dropletWidth / 2)
@@ -850,7 +841,7 @@ final class NotchPanelController: NSObject {
         logger.notice("clickProbe surface=\(name, privacy: .public) mode=toggle display=\(key, privacy: .public) insideHit=\(insideHit, privacy: .public)/\(probes.count, privacy: .public) outsidePass=\(outsidePass, privacy: .public)/\(probes.count, privacy: .public)")
     }
 
-    private static func makePanel(notchFrame: NSRect, screen: NSScreen, isPhysical: Bool, model: NotchViewModel, motion: FluidMotion, timer: TimerViewModel, calendar: CalendarProvider, nowPlaying: NowPlayingProvider, fullscreen: FullscreenObserver, displayKey: String, hud: HUDViewModel, clipboard: ClipboardViewModel) -> NotchPanel {
+    private static func makePanel(notchFrame: NSRect, screen: NSScreen, isPhysical: Bool, model: NotchViewModel, motion: FluidMotion, timer: TimerViewModel, calendar: CalendarProvider, nowPlaying: NowPlayingProvider, fullscreen: FullscreenObserver, displayKey: String, hud: HUDViewModel, clipboard: ClipboardViewModel, claudeSessions: ClaudeSessionsProvider) -> NotchPanel {
         let anchorMaxY = screen.frame.maxY
         let collapsedFrame = Self.collapsedSurfaceFrame(isPhysical: isPhysical, notchFrame: notchFrame, anchorMaxY: anchorMaxY, menuBarHeight: screen.menuBarHeight)
         let styleMask: NSWindow.StyleMask = [.borderless, .nonactivatingPanel, .utilityWindow]
@@ -873,7 +864,7 @@ final class NotchPanelController: NSObject {
         panel.motion = motion
         panel.displayKey = displayKey
 
-        let hostingView = NonKeyHostingView(rootView: NotchContentView(model: model, motion: motion, timer: timer, calendar: calendar, nowPlaying: nowPlaying, fullscreen: fullscreen, displayID: screen.displayID, hud: hud, clipboard: clipboard, isPhysical: isPhysical))
+        let hostingView = NonKeyHostingView(rootView: NotchContentView(model: model, motion: motion, timer: timer, calendar: calendar, nowPlaying: nowPlaying, fullscreen: fullscreen, displayID: screen.displayID, hud: hud, clipboard: clipboard, claudeSessions: claudeSessions, isPhysical: isPhysical))
         // Decouple from the window's Auto Layout / constraint-update cycle:
         // `applyFrame` resizes the panel manually via `setFrame`, and letting
         // the hosting view participate in constraint-based sizing causes an
@@ -895,9 +886,8 @@ final class NotchPanelController: NSObject {
         // 07-08 (D-06 Wave 2): the band's own bounding box plus droplet room — the single source
         // `NotchContentView`'s own `openSize` and `openFrame(for:)` both read, so the hosting
         // view's fixed content size can never disagree with either.
-        let modules = Self.bandModules(from: Self.enabledModulesFromDefaults())
         let contentTop: CGFloat = isPhysical ? FluidShapeGeometry.bandContentTopPhysical : FluidShapeGeometry.bandContentTopSynthetic
-        let openSize = Self.openFrameSize(moduleCount: modules.count, contentTop: contentTop)
+        let openSize = Self.openFrameSize(moduleCount: Self.enabledModulesFromDefaults().count, contentTop: contentTop)
         let hostingWidth = openSize.width
         let hostingHeight = openSize.height
 
@@ -1228,7 +1218,7 @@ final class NotchPanelController: NSObject {
                 // pointer leaves the whole window). `BandLayout.pointerOutside` ports the sketch's
                 // own stay/closeDroplet/closeBand pointer rule instead.
                 let layout = bandLayout(for: panel)
-                let modules = Self.bandModules(from: enabledModules)
+                let modules = enabledModules
 
                 // Task 2 (index.html:526-528 `if (i >= 0 && st.pinned < 0 ...)`): candidate-cell
                 // dwell tracking only runs while nothing is pinned — a pinned droplet stays put

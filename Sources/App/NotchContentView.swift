@@ -99,6 +99,10 @@ struct NotchContentView: View {
     /// `NotchPanelController` now owns once — replaces `ExpandedPanelView`'s retired local
     /// `@State private var clipboard`, so history survives every panel rebuild.
     let clipboard: ClipboardViewModel
+    /// 07-14 (CLAUDE-01/02/03, deviation — Rule 3, blocking: `BandView`'s own new required
+    /// parameter forces this call site to thread it through): the same instance
+    /// `NotchPanelController` owns once, threaded here exactly like every other provider above.
+    let claudeSessions: ClaudeSessionsProvider
     // Phase 6 SHELL-06: only the physical camera-cutout gets concave top
     // "ears" for the (retired) pre-fluid expanded-panel mask — kept as a field for the band's own
     // content-top choice below (the physical notch's band content starts lower than a synthetic
@@ -121,10 +125,10 @@ struct NotchContentView: View {
     /// (`NotchPanelController.enabledModulesFromDefaults()`) rather than every module — this view
     /// has no controller instance threaded to it, so it reads the same shared UserDefaults key the
     /// controller's own `enabledModules` reads, exactly like `surfaceMaterial` above reads its own
-    /// key live. Still filtered once more through `bandModules(from:)`'s interim
-    /// `modulesAwaitingDataSource` exclusion until plan 14 adds `ClaudePanelView`.
+    /// key live. 07-14: the plan-08-through-11 interim filter that kept `.claude` out of the
+    /// drawn band regardless of this list is gone — every persisted module now reaches the band.
     private var enabledModules: [BandModule] {
-        NotchPanelController.bandModules(from: NotchPanelController.enabledModulesFromDefaults())
+        NotchPanelController.enabledModulesFromDefaults()
     }
 
     /// The band's own outline parameters for the CURRENT enabled-module count — the single source
@@ -242,6 +246,7 @@ struct NotchContentView: View {
                     nowPlaying: nowPlaying,
                     calendar: calendar,
                     clipboard: clipboard,
+                    claudeSessions: claudeSessions,
                     onTapCell: { model.onCellTap?($0) }
                 )
                 .frame(width: bandLayout.cellsWidth, height: 50)
