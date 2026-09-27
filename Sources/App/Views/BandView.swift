@@ -110,7 +110,7 @@ struct BandView: View {
     private func actionGlyph(for module: BandModule) -> some View {
         switch module {
         case .nowPlaying:
-            if nowPlaying.currentModel != nil {
+            if Self.hasNowPlayingAction(nowPlaying) {
                 glyphButton(
                     systemName: nowPlaying.isPlayingForDisplay ? "pause.fill" : "play.fill",
                     tooltip: nowPlaying.isPlayingForDisplay ? "Pause" : "Play",
@@ -143,7 +143,7 @@ struct BandView: View {
             }
 
         case .clipboard:
-            if clipboard.entries.first != nil {
+            if Self.hasClipboardAction(clipboard) {
                 glyphButton(systemName: "doc.on.doc", tooltip: "Copy latest again") {
                     performPrimaryAction(for: .clipboard)
                 }
@@ -153,12 +153,32 @@ struct BandView: View {
         // nothing needs the user (edge PANEL-05 empty), matching every other module's glyph-absent
         // convention above.
         case .claude:
-            if claudeSessions.waiting.first != nil {
+            if Self.hasClaudeAction(claudeSessions) {
                 glyphButton(systemName: "arrow.up.right", tooltip: "Jump to pane", amber: true) {
                     performPrimaryAction(for: .claude)
                 }
             }
         }
+    }
+
+    /// Now Playing shows its play/pause glyph only when there's a current track to act on
+    /// (07-review IN-01, mirroring `shouldShowJoinGlyph`'s own doc comment): `static` so
+    /// `NotchPanelController.performPrimaryAction(for:on:)`'s guard reads the identical check
+    /// and the two can never drift apart.
+    static func hasNowPlayingAction(_ provider: NowPlayingProvider) -> Bool {
+        provider.currentModel != nil
+    }
+
+    /// Copy-latest-again shows only when clipboard history has an entry (07-review IN-01) —
+    /// `static` for the same reason as `hasNowPlayingAction`.
+    static func hasClipboardAction(_ provider: ClipboardViewModel) -> Bool {
+        provider.entries.first != nil
+    }
+
+    /// Jump-to-pane shows only when a session is actually waiting on the user (07-review IN-01)
+    /// — `static` for the same reason as `hasNowPlayingAction`.
+    static func hasClaudeAction(_ provider: ClaudeSessionsProvider) -> Bool {
+        provider.waiting.first != nil
     }
 
     /// 07-12 (PANEL-09): the one place a glyph click AND a keyboard Return (routed through

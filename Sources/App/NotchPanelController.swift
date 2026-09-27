@@ -1456,7 +1456,7 @@ final class NotchPanelController: NSObject {
         }
         switch module {
         case .nowPlaying:
-            guard nowPlayingProvider.currentModel != nil else { return }
+            guard BandView.hasNowPlayingAction(nowPlayingProvider) else { return }
             nowPlayingProvider.send(.togglePlayPause)
 
         case .timer:
@@ -1474,12 +1474,12 @@ final class NotchPanelController: NSObject {
             NSWorkspace.shared.open(joinURL)
 
         case .clipboard:
-            guard let entry = clipboard.entries.first else { return }
+            guard BandView.hasClipboardAction(clipboard), let entry = clipboard.entries.first else { return }
             clipboard.select(entry)
             panel.viewModel?.flash("Copied", for: .clipboard)
 
         case .claude:
-            guard let top = claudeSessions.waiting.first else { return }
+            guard BandView.hasClaudeAction(claudeSessions), let top = claudeSessions.waiting.first else { return }
             panel.viewModel?.flash("Jumping to iTerm2 pane\u{2026}", for: .claude)
             Task { @MainActor [weak panel] in
                 let succeeded = await ClaudePaneJumper.jump(to: top)
