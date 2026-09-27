@@ -63,9 +63,14 @@ final class FluidSpikeController: NSObject {
         let panel = FluidSpikePanel(contentRect: frame, styleMask: styleMask, backing: .buffered, defer: false)
 
         // Plain NSView container, never the window's own contentView as an NSHostingView — see
-        // NotchPanelController.makePanel's comment on the resize-abort this avoids.
+        // NotchPanelController.makePanel's comment on the resize-abort this avoids. Layer-backed
+        // exactly like that panel's own HoverTrackingView container — alpha-based click-through
+        // is a WindowServer compositing behavior, and a non-layer-backed container measured
+        // insideHit=24/24 outsidePass=0/24 (every outside probe still hit) before this fix.
         let container = NSView(frame: NSRect(origin: .zero, size: size))
         container.autoresizesSubviews = true
+        container.wantsLayer = true
+        container.layer?.masksToBounds = true
 
         let hosting = NSHostingView(rootView: AnyView(FluidSpikeContentView(params: restParams(for: screen, state: .pill))))
         hosting.sizingOptions = []
