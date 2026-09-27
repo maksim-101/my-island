@@ -18,6 +18,14 @@ final class FluidMotion: NSObject {
     private(set) var params: FluidParams
     private(set) var channels: [FluidChannel: CGFloat] = [:]
 
+    /// 07-05: the HUD/alert drop's attachment hysteresis (detached at `.dropOffset` >= 7,
+    /// reattached below -2), ported from the sketch's `st.detached` (index.html:550). Kept HERE —
+    /// not on the transient `AlertDropView` struct — so it survives that view being torn down and
+    /// recreated on every SwiftUI re-render. `g` (the drop's fall past its own floor, `yT - baseY`
+    /// in the sketch) is exactly the `.dropOffset` channel's own value once `baseY` cancels out, so
+    /// no geometry lookup is needed to update this.
+    private(set) var dropDetached: Bool = false
+
     private var springs: [FluidParamKey: FluidSpring] = [:]
     private var channelSprings: [FluidChannel: FluidSpring] = [:]
 
@@ -81,6 +89,7 @@ final class FluidMotion: NSObject {
     func jumpChannel(_ channel: FluidChannel, to value: CGFloat) {
         channelSprings[channel]?.jump(value)
         channels[channel] = value
+        if channel == .dropOffset { updateDropAttachment(g: value) }
     }
 
     func velocity(of key: FluidParamKey) -> CGFloat {
@@ -142,6 +151,11 @@ final class FluidMotion: NSObject {
             nextChannels[channel] = channelSprings[channel]?.x ?? 0
         }
         channels = nextChannels
+        if let g = nextChannels[.dropOffset] { updateDropAttachment(g: g) }
+    }
+
+    private func updateDropAttachment(g: CGFloat) {
+        if g >= 7 { dropDetached = true } else if g < -2 { dropDetached = false }
     }
 
     private var allSettled: Bool {

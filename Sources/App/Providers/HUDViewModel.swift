@@ -7,7 +7,7 @@ enum HUDGlyph {
     case volumeMuted
     /// The transient meeting-countdown bump (CAL-01/D-02) — a text-content
     /// glyph, not a level-bar one; see `HUDViewModel.text` and
-    /// `HUDPillView`'s text-branch.
+    /// `AlertDropView`'s text-branch.
     case meeting
 
     /// SF Symbol name for `Image(systemName:)`.
@@ -28,6 +28,12 @@ enum HUDGlyph {
 /// a cancel-then-reschedule `DispatchWorkItem`, mirroring
 /// `NotchPanelController`'s `pendingCollapse` idiom, so the HUD stays up
 /// until `NotchLayout.hudFadeDelay` after the LAST change.
+///
+/// 07-05: `isShowingHUD`'s flips are the sole trigger for the HUD/alert
+/// drop's own fall/rise (`onVisibilityChange`, wired in
+/// `NotchPanelController.init`) — this class owns none of that geometry
+/// itself, only the arbitration of WHICH content (level glyph+bar, or a
+/// meeting bump) is currently live.
 @MainActor
 @Observable
 final class HUDViewModel {
@@ -35,12 +41,13 @@ final class HUDViewModel {
     private(set) var level: Double = 0
     private(set) var glyph: HUDGlyph = .volume
     /// Non-nil only for the meeting bump (`showMeeting(text:)`) — nil for the
-    /// brightness/volume level-bar glyphs. `HUDPillView` branches its pill
+    /// brightness/volume level-bar glyphs. `AlertDropView` branches its drop
     /// content on this.
     private(set) var text: String?
 
     /// Fired synchronously whenever `isShowingHUD` flips — the controller
-    /// uses this to grow/shrink the collapsed window frame.
+    /// uses this to start/end the HUD/alert drop's fall and rise on every
+    /// collapsed panel's own `FluidMotion` clock.
     var onVisibilityChange: ((Bool) -> Void)?
 
     private var pendingFade: DispatchWorkItem?
@@ -54,7 +61,7 @@ final class HUDViewModel {
     }
 
     /// The meeting-bump entry point (CAL-01/D-02) — reuses this same arbiter
-    /// and the detached `HUDPillView` mechanism, but arms a longer
+    /// and the shared HUD/alert drop mechanism, but arms a longer
     /// `NotchLayout.meetingBumpFadeDelay` dwell (a full sentence needs more
     /// read time than the ~1.5s brightness/volume nudge) instead of
     /// `hudFadeDelay`.

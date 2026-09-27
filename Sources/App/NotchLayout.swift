@@ -38,11 +38,6 @@ enum NotchLayout {
     /// avoids flicker on momentary pointer blips.
     static let hoverCollapseGrace: TimeInterval = 0.1
 
-    /// Gap between the notch's bottom edge and the top of the detached Ambient
-    /// HUD glass pill that floats below it (HUDPillView) — kept tight so the
-    /// pill reads as hanging just under the notch.
-    static let hudPillGap: CGFloat = 2
-
     /// How long the HUD stays up after the LAST brightness/volume change
     /// before fading and reverting to the timer/idle collapsed content
     /// (D-05).

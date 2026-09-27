@@ -7,14 +7,14 @@ import MyIslandCore
 final class NotchPanelController: NSObject {
     // One entry per connected screen, keyed by `NSScreen.displayKey` (Phase 6
     // SHELL-07): the interactive notch panel (fill only), the click-through
-    // overlay (rim/glow/pulse/HUD-adjacent drawing — replaces the old
-    // non-interactive extended-pill bar, D-06 Wave 1), the detached Ambient
-    // HUD pill (HUDPillView), the per-display `NotchViewModel`, and the one
-    // `FluidMotion` clock driving both the panel's and overlay's geometry.
+    // overlay (rim/glow/pulse/HUD-and-alert-drop drawing — replaces the old
+    // non-interactive extended-pill bar, D-06 Wave 1, and 07-05's retired
+    // detached HUD pill window), the per-display `NotchViewModel`, and the
+    // one `FluidMotion` clock driving both the panel's and overlay's
+    // geometry.
     private struct PanelSet {
         let panel: NotchPanel
         let overlay: NSPanel
-        let hud: NSPanel
         let model: NotchViewModel
         let motion: FluidMotion
     }
@@ -142,14 +142,29 @@ final class NotchPanelController: NSObject {
                 self.hud.showBrightness(level: Double(BrightnessScale.barFraction(for: level)))
             }
         }
-        // The Ambient HUD is now a detached glass pill below the notch
-        // (HUDPillView in its own window), so it no longer resizes the notch
-        // window — the pill window is always present and shows/hides its content
-        // as SwiftUI observes `hud.isShowingHUD`.
+        // 07-05 (FLUID-02, closes Phase 6 gap G1): the HUD/alert is now a drop of the notch's own
+        // fluid family that swells out of, and recedes back into, whatever each display's own
+        // collapsed surface currently shows (pill, Dell pill or fullscreen bulge) — drawn by
+        // `FluidOverlayView`'s click-through window, never a separate detached pill/window. `hud`
+        // stays the single arbiter for content; this wiring only drives the drop's OWN geometry
+        // (`FluidMotion`'s `.dropOffset/.dropHeight/.dropHalfWidth/.dropAlpha` channels) on every
+        // panel set that is currently collapsed — an open (expanded) panel has no drop concept.
+        // The HUD already broadcast to every connected display before this plan (one detached
+        // pill per screen, all showing the same `hud` state); this preserves that.
+        hud.onVisibilityChange = { [weak self] visible in
+            guard let self else { return }
+            for set in self.panelSets.values where set.model.isOpen != true {
+                if visible {
+                    self.startAlertDrop(on: set.panel, motion: set.motion)
+                } else {
+                    self.endAlertDrop(on: set.panel, motion: set.motion)
+                }
+            }
+        }
 
         // Meeting bump (CAL-01/D-02): same [weak self] guard-let idiom as
-        // volumeProvider.onChange/brightnessProvider.onChange above — no new
-        // panel window, the bump reuses the existing detached hudPanels.
+        // volumeProvider.onChange/brightnessProvider.onChange above — the bump reuses the same
+        // `hud` arbiter and drop mechanism above, not a dedicated panel window.
         // calendarProvider's own init() already kicks off the initial
         // fetch/scheduling when authorization is already granted.
         calendarProvider.onThresholdCrossed = { [weak self] text in
@@ -357,12 +372,6 @@ final class NotchPanelController: NSObject {
             logger.notice("kept-reapplied key=\(key, privacy: .public) window=overlay before=\(NSStringFromRect(set.overlay.frame), privacy: .public) after=\(NSStringFromRect(overlayTarget), privacy: .public)")
             set.overlay.setFrame(overlayTarget, display: true)
         }
-
-        let hudTarget = Self.hudPanelFrame(notchFrame: set.panel.notchFrame, anchorMaxY: set.panel.anchorMaxY)
-        if set.hud.frame != hudTarget {
-            logger.notice("kept-reapplied key=\(key, privacy: .public) window=hud before=\(NSStringFromRect(set.hud.frame), privacy: .public) after=\(NSStringFromRect(hudTarget), privacy: .public)")
-            set.hud.setFrame(hudTarget, display: true)
-        }
     }
 
     /// 20260912 (hide-through-space-switch): sets `alphaValue = 0` on all three windows of the
@@ -398,7 +407,6 @@ final class NotchPanelController: NSObject {
         for set in targets {
             set.panel.alphaValue = 0
             set.overlay.alphaValue = 0
-            set.hud.alphaValue = 0
         }
         logger.notice("islandHide count=\(targets.count, privacy: .public)")
 
@@ -429,7 +437,6 @@ final class NotchPanelController: NSObject {
         for set in panelSets.values {
             set.panel.alphaValue = 1
             set.overlay.alphaValue = 1
-            set.hud.alphaValue = 1
         }
         logger.notice("islandRestore reason=\(reason, privacy: .public)")
     }
@@ -448,7 +455,6 @@ final class NotchPanelController: NSObject {
         set.motion.stopClock()
         set.panel.close()
         set.overlay.close()
-        set.hud.close()
     }
 
     /// Builds a fresh `PanelSet` for one screen — extracted from the old inline creation loop so
@@ -482,18 +488,53 @@ final class NotchPanelController: NSObject {
         }
         panel.orderFrontRegardless()
 
-        let overlay = Self.makeOverlayPanel(notchFrame: anchorRect, anchorMaxY: anchorMaxY, isPhysical: mode.isPhysical, motion: motion, model: model, timer: timer, fullscreen: fullscreenObserver, displayID: screen.displayID)
+        let overlay = Self.makeOverlayPanel(notchFrame: anchorRect, anchorMaxY: anchorMaxY, isPhysical: mode.isPhysical, motion: motion, model: model, timer: timer, fullscreen: fullscreenObserver, displayID: screen.displayID, hud: hud)
         overlay.orderFrontRegardless()
-
-        let hudPanel = Self.makeHudPanel(notchFrame: anchorRect, anchorMaxY: anchorMaxY, hud: hud)
-        hudPanel.orderFrontRegardless()
 
         // The printed height distinguishes the launched-app menu-bar value from the 22pt
         // status-bar fallback.
         logger.notice("panel set key=\(key, privacy: .public) mode=\(mode.isPhysical ? "physical" : "synthetic", privacy: .public) anchor=\(NSStringFromRect(anchorRect), privacy: .public) menuBar=\(screen.menuBarHeight, privacy: .public)")
         logClickProbeAfterDelay(key: key)
 
-        return PanelSet(panel: panel, overlay: overlay, hud: hudPanel, model: model, motion: motion)
+        return PanelSet(panel: panel, overlay: overlay, model: model, motion: motion)
+    }
+
+    /// 07-05 Task 1 (FLUID-02): the HUD/alert drop's rest half-width/height for a given panel —
+    /// until Task 2's `AlertDropLayout.hud` lands, the literal 80/70 × 22 the design agreement's
+    /// own HUD row states (07-DESIGN-AGREEMENT.md §6: 160pt MacBook / 140pt Dell wide, 22pt deep —
+    /// half-width is half of that).
+    private func dropSize(for panel: NotchPanel) -> (halfWidth: CGFloat, height: CGFloat) {
+        (panel.isPhysical ? 80 : 70, 22)
+    }
+
+    /// Starts the HUD/alert drop's fall on one panel's own `FluidMotion` clock — ported from the
+    /// sketch's `startExtra` (index.html:390-403): jumps to a small, narrow, fully-transparent
+    /// drop just below the floor, then springs it to full size while it falls, fading its content
+    /// in only once it has visibly separated (260ms). `hud.onVisibilityChange`'s wiring above calls
+    /// this on every currently-collapsed panel simultaneously.
+    private func startAlertDrop(on panel: NotchPanel, motion: FluidMotion) {
+        let (halfWidth, height) = dropSize(for: panel)
+        motion.jumpChannel(.dropOffset, to: -height * 0.6)
+        motion.jumpChannel(.dropHeight, to: height * 0.6)
+        motion.jumpChannel(.dropHalfWidth, to: min(halfWidth, 100) * 0.4)
+        motion.jumpChannel(.dropAlpha, to: 0)
+        motion.setChannel(.dropHeight, to: height, response: FluidMotionPreset.droplet.response * 1.2, damping: FluidMotionPreset.droplet.damping)
+        motion.setChannel(.dropHalfWidth, to: halfWidth, response: FluidMotionPreset.droplet.response * 1.6, damping: FluidMotionPreset.droplet.damping)
+        motion.setChannel(.dropOffset, to: 8, response: FluidMotionPreset.droplet.response * 1.5, damping: FluidMotionPreset.droplet.damping)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.26) { [weak motion] in
+            motion?.setChannel(.dropAlpha, to: 1, response: 0.4, damping: 1)
+        }
+    }
+
+    /// Ends the drop — ported from `endExtra` (index.html:404-410): fades its content out fast,
+    /// then it rises back into the floor and merges. `dropHeight` is deliberately left untouched
+    /// (the sketch's own `endExtra` never resets it either) — once `dropOffset` rises far enough,
+    /// `AlertDropView`'s own `dropVisible` gate hides the whole drop regardless of its height.
+    private func endAlertDrop(on panel: NotchPanel, motion: FluidMotion) {
+        let (halfWidth, height) = dropSize(for: panel)
+        motion.setChannel(.dropAlpha, to: 0, response: 0.14, damping: 1)
+        motion.setChannel(.dropOffset, to: -height - 4, response: FluidMotionPreset.close.response * 1.25, damping: FluidMotionPreset.close.damping)
+        motion.setChannel(.dropHalfWidth, to: halfWidth * 0.6, response: FluidMotionPreset.close.response * 1.3, damping: FluidMotionPreset.close.damping)
     }
 
     /// D-04 regression evidence for `scripts/clickthrough-probe.sh` (Task 1/2): only active when
@@ -700,8 +741,9 @@ final class NotchPanelController: NSObject {
     /// interactive panel's fill and never shadows that panel's own click-through toggling.
     /// `timer`/`fullscreen`/`displayID` (07-04 Task 2) let it draw the bulge's own outline timer
     /// line and the finished-timer pulse — the same providers/observer threaded to every other
-    /// per-display view.
-    private static func makeOverlayPanel(notchFrame: NSRect, anchorMaxY: CGFloat, isPhysical: Bool, motion: FluidMotion, model: NotchViewModel, timer: TimerViewModel, fullscreen: FullscreenObserver, displayID: CGDirectDisplayID?) -> NSPanel {
+    /// per-display view. `hud` (07-05 Task 1) lets it draw the HUD/alert drop — replaces the old
+    /// separate, always-detached `hud` panel window entirely.
+    private static func makeOverlayPanel(notchFrame: NSRect, anchorMaxY: CGFloat, isPhysical: Bool, motion: FluidMotion, model: NotchViewModel, timer: TimerViewModel, fullscreen: FullscreenObserver, displayID: CGDirectDisplayID?, hud: HUDViewModel) -> NSPanel {
         let q = collapsedParams(isPhysical: isPhysical, notchFrame: notchFrame)
         let frame = overlayPanelFrame(notchFrame: notchFrame, anchorMaxY: anchorMaxY, q: q)
 
@@ -709,48 +751,7 @@ final class NotchPanelController: NSObject {
 
         let container = NSView(frame: NSRect(origin: .zero, size: frame.size))
         container.autoresizesSubviews = true
-        let hosting = NSHostingView(rootView: FluidOverlayView(motion: motion, model: model, isPhysical: isPhysical, timer: timer, fullscreen: fullscreen, displayID: displayID))
-        hosting.frame = NSRect(origin: .zero, size: frame.size)
-        hosting.autoresizingMask = [.width, .height]
-        container.addSubview(hosting)
-        panel.contentView = container
-
-        panel.level = NSWindow.Level(rawValue: NSWindow.Level.mainMenu.rawValue + 3)
-        panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary, .ignoresCycle]
-        panel.isOpaque = false
-        panel.backgroundColor = .clear
-        panel.hasShadow = false
-        panel.ignoresMouseEvents = true
-        panel.isReleasedWhenClosed = false
-        return panel
-    }
-
-    /// The Ambient HUD pill window — floats centered just below the notch, sized
-    /// generously so the Liquid Glass capsule + its transition never clip. The
-    /// pill content shows/hides itself as SwiftUI observes `hud`.
-    /// 260912 kept-set-reposition fix: extracted from `makeHudPanel` so construction and the
-    /// reconcile's `kept`-branch reapply step share one source of truth for this window's frame.
-    private static func hudPanelFrame(notchFrame: NSRect, anchorMaxY: CGFloat) -> NSRect {
-        // Generous window so the pill's glow/shadow never clip; HUDPillView pins
-        // its capsule to the top so it hangs just under the notch, with the
-        // extra height below reserved for the glow.
-        let width: CGFloat = 220
-        let height: CGFloat = 56
-        return NSRect(
-            x: notchFrame.midX - width / 2,
-            y: anchorMaxY - notchFrame.height - NotchLayout.hudPillGap - height,
-            width: width,
-            height: height
-        )
-    }
-
-    private static func makeHudPanel(notchFrame: NSRect, anchorMaxY: CGFloat, hud: HUDViewModel) -> NSPanel {
-        let frame = hudPanelFrame(notchFrame: notchFrame, anchorMaxY: anchorMaxY)
-        let panel = NSPanel(contentRect: frame, styleMask: [.borderless, .nonactivatingPanel, .utilityWindow], backing: .buffered, defer: false)
-
-        let container = NSView(frame: NSRect(origin: .zero, size: frame.size))
-        container.autoresizesSubviews = true
-        let hosting = NSHostingView(rootView: HUDPillView(hud: hud))
+        let hosting = NSHostingView(rootView: FluidOverlayView(motion: motion, model: model, isPhysical: isPhysical, timer: timer, fullscreen: fullscreen, displayID: displayID, hud: hud))
         hosting.frame = NSRect(origin: .zero, size: frame.size)
         hosting.autoresizingMask = [.width, .height]
         container.addSubview(hosting)
@@ -931,7 +932,10 @@ final class NotchPanelController: NSObject {
                 continue
             }
 
-            let pull = FluidPointer.stickyPull(pointer: pointer, cx: cx, q: q, damped: false)
+            // 07-05 (agreement §6): while a HUD/alert drop shows, the sticky pull/lean is damped
+            // to 30% (index.html:519 `if (st.extra){ pull *= .3; lean *= .3; }`) — `hud` broadcasts
+            // to every panel, so this reads the same shared flag every panel's own drop drives off.
+            let pull = FluidPointer.stickyPull(pointer: pointer, cx: cx, q: q, damped: hud.isShowingHUD)
             motion.set(.belly, to: pull.pull, preset: .sticky)
             motion.set(.lean, to: pull.lean, preset: .sticky)
             motion.setChannel(.glow, to: 0.2 + pull.pull * 0.04, response: FluidMotionPreset.sticky.response, damping: FluidMotionPreset.sticky.damping)

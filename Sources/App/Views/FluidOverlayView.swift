@@ -24,6 +24,11 @@ struct FluidOverlayView: View {
     /// desktop pill and MacBook pill keep their wing clock-face instead (Task 1).
     let fullscreen: FullscreenObserver
     let displayID: CGDirectDisplayID?
+    /// 07-05 Task 1 (FLUID-02/PANEL-07): the same shared arbiter `NotchPanelController` already
+    /// threads everywhere else — this view reads `isShowingHUD`/`glyph`/`level` to draw the HUD
+    /// drop here (the click-through window); a linked meeting drop instead lives in the
+    /// interactive panel (Task 3) so its Join button can take clicks.
+    let hud: HUDViewModel
 
     /// Read live (like `NotchContentView`'s own copy) so switching in Settings drops/restores the
     /// glow with no panel rebuild.
@@ -123,6 +128,13 @@ struct FluidOverlayView: View {
                         }
                     }
                     .allowsHitTesting(false)
+                }
+
+                // 07-05 Task 1: the HUD drop — click-through, so it always draws here regardless
+                // of glyph. The linked-meeting variant (Task 3) draws in the interactive panel
+                // instead; a link-less meeting drop still draws here (unchanged this task).
+                if hud.isShowingHUD {
+                    AlertDropView(motion: motion, kind: .level(glyph: hud.glyph, level: hud.level), isPhysical: isPhysical)
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
