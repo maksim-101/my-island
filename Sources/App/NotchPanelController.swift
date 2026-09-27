@@ -548,6 +548,21 @@ final class NotchPanelController: NSObject {
                 self.openBand(on: panel, motion: motion)
             } else {
                 self.closeBand(on: panel, motion: motion)
+                // PANEL-09 (07-12 deviation — Rule 2, missing critical functionality): EVERY
+                // close funnels through here — hover dwell-close, a pointer-driven `.closeBand`
+                // (`handleMouseMoved`'s own `pendingBandClose`), the hotkey's own close branch,
+                // and Esc's `.closeBand` effect all end at `model.toggle()` eventually landing
+                // here — so this is the ONE place keyboard focus is handed back, not just the
+                // paths that happen to go through `closeBandAndRestoreFocus`. Without this, a
+                // hover-driven close (or the pointer just wandering off the band) left the panel
+                // key with `previousApp` still unset, silently swallowing every subsequent
+                // keystroke — T-07-16's own mitigation column says "Esc AND CLOSING return focus
+                // to the previous app," and this closure is the only path that actually covers
+                // every close, not a subset of them.
+                self.relinquishKeyFocus(on: panel)
+                panel.bandFocus = BandFocus(moduleCount: self.enabledModules.count)
+                panel.dropletFocus.reset()
+                self.syncKeyFocus(on: panel)
             }
             self.applyFrame(to: panel, isOpen: isOpen)
         }
@@ -1191,21 +1206,33 @@ final class NotchPanelController: NSObject {
     }
 
     /// PANEL-09: closes the band through the SAME `model.toggle()` path hover uses (never a direct
-    /// `closeBand` call — that would desync `HoverDwell`'s own state), resigns key status, and
-    /// hands focus back to whichever app was frontmost before `toggleFromHotkey` opened this panel
-    /// — the Esc chain's final step (`applyBandFocusEffect`'s `.closeBand` case) and the hotkey's
-    /// own close branch above both end here, so there is exactly one place this restore logic runs.
+    /// `closeBand` call — that would desync `HoverDwell`'s own state) — `model.onOpenChange`'s own
+    /// `isOpen == false` branch (above, in `makePanelSet`) is where the actual focus-restore now
+    /// lives (07-12 deviation, Rule 2), since THAT closure is the one place every close funnels
+    /// through, not just the Esc chain and the hotkey's own close branch. This wrapper exists so
+    /// `applyBandFocusEffect`'s `.closeBand` case and `toggleFromHotkey`'s close branch have a
+    /// single, guarded call site rather than each checking `isOpen` themselves.
     private func closeBandAndRestoreFocus(on panel: NotchPanel) {
-        if panel.viewModel?.isOpen == true {
-            panel.viewModel?.toggle()
+        guard panel.viewModel?.isOpen == true else { return }
+        panel.viewModel?.toggle()
+    }
+
+    /// PANEL-09 (07-12 deviation — Rule 2): gives real OS keyboard focus back to whichever app was
+    /// frontmost before `toggleFromHotkey` took it. Resigning key when the panel isn't currently
+    /// key (e.g. a mouse-only close that was never keyboard-driven) is a documented no-op, and
+    /// `previousApp` is `nil` on that same path, so `app?.activate()` is also a no-op — safe to
+    /// call unconditionally from every close. Deliberately does NOT touch `bandFocus`/
+    /// `dropletFocus` — a caller mid-open (the pointer-moved-ends-keyboard-mode path in
+    /// `handleMouseMoved`) needs ONLY this; a caller that's actually closing the band resets those
+    /// itself, since a still-open, still-registered droplet must not have its registry wiped out
+    /// from under it.
+    private func relinquishKeyFocus(on panel: NotchPanel) {
+        if panel.isKeyWindow {
+            panel.resignKey()
         }
-        panel.resignKey()
         let app = panel.previousApp
         panel.previousApp = nil
         app?.activate()
-        panel.bandFocus = BandFocus(moduleCount: enabledModules.count)
-        panel.dropletFocus.reset()
-        syncKeyFocus(on: panel)
     }
 
     /// PANEL-09: turns one `BandFocus.Effect` into the matching AppKit/SwiftUI action — the single
@@ -1262,7 +1289,12 @@ final class NotchPanelController: NSObject {
     /// (a recognized key while the band is open, the panel is key, and no text field is editing);
     /// every other key returns `false` so `sendEvent` falls through to `super`.
     fileprivate func handleBandKeyDown(_ event: NSEvent, on panel: NotchPanel) -> Bool {
-        guard panel.isKeyWindow, panel.viewModel?.isOpen == true else { return false }
+        // 07-12 deviation (Rule 1 — bug): `panel.bandFocus.zone != nil` is required too — without
+        // it, a recognized key code arriving AFTER `pointerMoved()` already set `zone = nil` (the
+        // pointer moved, ending keyboard mode, while the band stayed open under pointer control)
+        // still matched a key code below, computed `.none` from `BandFocus`, and returned `true`
+        // — silently swallowing every arrow/Tab/Return/Esc instead of falling through to `super`.
+        guard panel.isKeyWindow, panel.viewModel?.isOpen == true, panel.bandFocus.zone != nil else { return false }
         // The field editor for the minutes `NSTextField` is an `NSTextView` while editing is
         // active (AppKit's field-editor pattern) — this is what "first responder is not a text
         // view" actually detects; a click has already made the field first responder by the time
@@ -1377,9 +1409,15 @@ final class NotchPanelController: NSObject {
             // PANEL-09 (07-12, index.html:431): real pointer movement — every call here is one,
             // since this method only runs off the `.mouseMoved` monitors — ends keyboard mode.
             // `zone` is only ever non-nil while a hotkey-opened band is up, so this is a no-op the
-            // rest of the time.
+            // rest of the time. The band itself stays open under pointer control (this is NOT a
+            // close), so only `relinquishKeyFocus` runs — NOT a `bandFocus`/`dropletFocus` reset,
+            // which would wipe the still-mounted droplet's own control registry out from under it
+            // (07-12 deviation, Rule 1: keeps real OS keyboard focus in sync with the now-nil
+            // zone, closing the gap `handleBandKeyDown`'s own `zone != nil` guard, above, depends
+            // on — without this, the panel stayed key with nowhere for a keystroke to go).
             if panel.bandFocus.zone != nil {
                 _ = panel.bandFocus.pointerMoved()
+                relinquishKeyFocus(on: panel)
                 syncKeyFocus(on: panel)
             }
             let pointer = CGPoint(x: mouseGlobal.x, y: panel.anchorMaxY - mouseGlobal.y)

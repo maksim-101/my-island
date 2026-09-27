@@ -46,7 +46,17 @@ struct DropletView: View {
             // center-anchored `.position(_:_:)`.
             .position(x: cx + frame.mx, y: d + 4 + Self.contentHeight / 2)
             .environment(dropletFocus)
-            .onChange(of: module, initial: true) { _, _ in dropletFocus.reset() }
+            // 07-12 deviation (Rule 1 — bug, advisor-caught): deliberately NOT `initial: true`.
+            // SwiftUI does not guarantee this parent-level `onChange` runs before a freshly
+            // mounted child control's own `onAppear` — `initial: true` risked firing `reset()`
+            // AFTER the new droplet's controls had already registered, wiping them out and
+            // leaving `dropletFocus.count == 0`. The registry is already empty on first mount:
+            // `NotchPanelController`'s own close-time reset (`model.onOpenChange`'s `isOpen ==
+            // false` branch) clears it on every close, so by the time a fresh `DropletView`
+            // mounts, nothing stale is left to clean up — this `onChange` only needs to fire on a
+            // GENUINE module switch while the band stays open (arrow-left/right between modules),
+            // which is exactly what dropping `initial:` still guarantees.
+            .onChange(of: module) { _, _ in dropletFocus.reset() }
     }
 
     @ViewBuilder

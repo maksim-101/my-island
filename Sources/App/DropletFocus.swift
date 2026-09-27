@@ -10,9 +10,22 @@ import SwiftUI
 @MainActor
 @Observable
 final class DropletFocus {
+    /// 07-12 deviation (Rule 1 — bug, advisor-caught): SwiftUI does not guarantee that an
+    /// outgoing control's `onDisappear` runs before an incoming control's `onAppear` when a
+    /// state branch swaps two DIFFERENT controls onto the SAME index (e.g. the timer's idle→
+    /// running content swap: idle's preset chip at index 0 vs. running's Pause/Resume at index
+    /// 0). Without an identity check, an `onDisappear` that fires AFTER the new control's
+    /// `onAppear` would `unregister` the fresh registration by index alone, silently dropping it.
+    /// Each `Registration` carries the `UUID` token its OWN `dropletFocusable` instance minted, so
+    /// `unregister` only removes a registration that still belongs to the caller that's leaving.
+    private struct Registration {
+        let token: UUID
+        let action: () -> Void
+    }
+
     private(set) var focusedIndex: Int?
     private var order: [Int] = []
-    private var actions: [Int: () -> Void] = [:]
+    private var registrations: [Int: Registration] = [:]
 
     /// The current droplet's control count — `BandFocus.arrowDown/arrowUp/tab`'s own
     /// `controlCount:` parameter reads this live value on every key press.
@@ -21,24 +34,29 @@ final class DropletFocus {
     init() {}
 
     /// Registers (or updates) the action for a control at `index` — called from
-    /// `.dropletFocusable`'s `onAppear`. Safe to call more than once for the same index (a
-    /// re-render with a fresh action closure simply overwrites the stored one).
-    func register(index: Int, action: @escaping () -> Void) {
+    /// `.dropletFocusable`'s `onAppear`, tagged with that instance's own stable `token`. Safe to
+    /// call more than once for the same index (a re-render with a fresh action closure simply
+    /// overwrites the stored one, as long as the token matches or nothing was registered yet).
+    func register(index: Int, token: UUID, action: @escaping () -> Void) {
         if !order.contains(index) {
             order.append(index)
             order.sort()
         }
-        actions[index] = action
+        registrations[index] = Registration(token: token, action: action)
     }
 
     /// Un-registers a control — called from `.dropletFocusable`'s `onDisappear` (a state branch
     /// swap, e.g. the timer's idle→running content swap, removes and re-adds a different control
-    /// set without `DropletView` itself ever calling `reset()`). Clears `focusedIndex` if it
-    /// pointed at the control being removed, rather than leaving a ghost focus on a control that no
-    /// longer exists (PANEL-09's own index-bounds truth).
-    func unregister(index: Int) {
+    /// set without `DropletView` itself ever calling `reset()`). A no-op if `token` no longer
+    /// matches the CURRENT registration at `index` — that means a different, newer control has
+    /// already claimed this index (the out-of-order case the `Registration.token` field exists
+    /// for), and this stale call must not remove it. Clears `focusedIndex` only when the
+    /// registration it actually removed was the focused one, rather than leaving a ghost focus on
+    /// a control that no longer exists (PANEL-09's own index-bounds truth).
+    func unregister(index: Int, token: UUID) {
+        guard registrations[index]?.token == token else { return }
         order.removeAll { $0 == index }
-        actions.removeValue(forKey: index)
+        registrations.removeValue(forKey: index)
         if focusedIndex == index {
             focusedIndex = nil
         }
@@ -47,7 +65,7 @@ final class DropletFocus {
     /// `.pressControl(i)` — a no-op if nothing is registered at `index` (defensive: matches every
     /// other App-layer guard in this phase against a stale/out-of-range index).
     func perform(_ index: Int) {
-        actions[index]?()
+        registrations[index]?.action()
     }
 
     func setFocusedIndex(_ index: Int?) {
@@ -56,11 +74,13 @@ final class DropletFocus {
 
     /// Called by `DropletView` whenever the shown module changes — clears both the registry and
     /// the focused index so a fresh droplet never inherits a stale ring/registration from whatever
-    /// was showing before.
+    /// was showing before. Also called by `NotchPanelController` on every band close (07-12
+    /// deviation, Rule 2), so a subsequent reopen's `DropletView` always mounts against an
+    /// already-empty registry.
     func reset() {
         focusedIndex = nil
         order.removeAll()
-        actions.removeAll()
+        registrations.removeAll()
     }
 }
 
@@ -90,6 +110,10 @@ private struct DropletFocusableModifier: ViewModifier {
     let ring: DropletFocusRingShape
     let action: () -> Void
     @Environment(DropletFocus.self) private var focus
+    /// A stable per-modifier-instance identity (07-12 deviation, Rule 1) — see
+    /// `DropletFocus.Registration`'s own doc comment for why this exists: it lets `unregister`
+    /// tell "my own disappearance" apart from "a different control already claimed this index."
+    @State private var token = UUID()
 
     func body(content: Content) -> some View {
         content
@@ -98,8 +122,8 @@ private struct DropletFocusableModifier: ViewModifier {
                     ringShape.stroke(Tokens.Color.accent, lineWidth: 2)
                 }
             }
-            .onAppear { focus.register(index: index, action: action) }
-            .onDisappear { focus.unregister(index: index) }
+            .onAppear { focus.register(index: index, token: token, action: action) }
+            .onDisappear { focus.unregister(index: index, token: token) }
     }
 
     private var ringShape: AnyShape {
