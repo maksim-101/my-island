@@ -1980,6 +1980,16 @@ private final class NotchPanel: NSPanel {
                 Self.outsideClickLogger.notice("outsideClick display=\(self.displayKey, privacy: .public) x=\(localX, privacy: .public) y=\(localY, privacy: .public)")
             }
         }
+        if event.type == .rightMouseDown, let contentView {
+            let menu = NSMenu()
+            let settings = NSMenuItem(title: "Settings…", action: #selector(openSettingsFromMenu), keyEquivalent: ",")
+            settings.target = self
+            menu.addItem(settings)
+            menu.addItem(.separator())
+            menu.addItem(NSMenuItem(title: "Quit my-island", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
+            NSMenu.popUpContextMenu(menu, with: event, for: contentView)
+            return
+        }
         // PANEL-09 (07-12): only reachable at all while THIS panel is key, which only happens via
         // `NotchPanelController.toggleFromHotkey()` — every other open path leaves the panel
         // non-key, so this branch is simply never entered for a hover-opened or click-opened band.
@@ -1989,11 +1999,15 @@ private final class NotchPanel: NSPanel {
         super.sendEvent(event)
     }
 
+    @objc private func openSettingsFromMenu() {
+        NotificationCenter.default.post(name: .openMyIslandSettings, object: nil)
+    }
+
     // The notch overlay is a fixed, level-27 ambient window — it must never be
     // miniaturized or closed by the standard Window menu commands (⌘M / ⌘W),
     // which would otherwise reset its window level and position. Kept as a
     // defensive no-op even though the panel no longer becomes key.
     override func miniaturize(_ sender: Any?) { /* no-op: notch panel is not miniaturizable */ }
     override func performMiniaturize(_ sender: Any?) { /* no-op */ }
-    override func performClose(_ sender: Any?) { /* no-op: not user-closable; Quit lives in the status item (PANEL-03) */ }
+    override func performClose(_ sender: Any?) { /* no-op: not user-closable; Settings/Quit live in the right-click menu */ }
 }

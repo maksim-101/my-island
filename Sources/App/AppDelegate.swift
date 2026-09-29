@@ -11,15 +11,10 @@ extension Notification.Name {
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private var notchPanelController: NotchPanelController?
-    private var statusItemController: StatusItemController?
     private var settingsWindow: NSWindow?
     private let logger = AppLog.make("AppDelegate")
 
     func applicationDidFinishLaunching(_ notification: Notification) {
-        // PANEL-03: constructed first, so Quit is reachable even if the panel controller's own
-        // construction below were ever to fail.
-        statusItemController = StatusItemController()
-
         notchPanelController = NotchPanelController()
 
         // PANEL-09 (07-12): the dedicated hotkey entry point — takes key focus (the one
