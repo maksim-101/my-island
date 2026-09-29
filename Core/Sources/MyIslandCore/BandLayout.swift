@@ -55,7 +55,7 @@ public struct BandLayout {
     public func droplet(forCell cell: Int, halfWidth: CGFloat) -> (mx: CGFloat, m: CGFloat, s2: CGFloat, dip: CGFloat) {
         let s2 = FluidShapeGeometry.dropletFlank
         let dip = FluidShapeGeometry.dropletHeight
-        let lim = max(0, halfContent - halfWidth - s2 - 26)
+        let lim = max(0, halfContent - halfWidth - s2 - 6)
         let mx = n == 1 ? 0 : max(-lim, min(lim, centers[cell] - cx))
         return (mx, halfWidth, s2, dip)
     }

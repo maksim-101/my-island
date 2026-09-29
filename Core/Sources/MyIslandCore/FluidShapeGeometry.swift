@@ -169,8 +169,8 @@ public enum FluidShapeGeometry {
     public static let bandRun: CGFloat = 132
     /// index.html:272 `DROP_H`.
     public static let dropletHeight: CGFloat = 188
-    /// index.html:359 `s2 = 122` (the detail droplet's flank width at rest).
-    public static let dropletFlank: CGFloat = 122
+    /// The detail droplet's flank width at rest — narrower than the sketch's 122 so an edge droplet, whose flank must end inside the band, still sits clearly off-centre under its own cell.
+    public static let dropletFlank: CGFloat = 80
     /// index.html:234 `TOP.builtin`.
     public static let bandContentTopPhysical: CGFloat = 38
     /// index.html:234 `TOP.dell` / `TOP.dellfs`.

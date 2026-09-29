@@ -21,9 +21,9 @@ import CoreGraphics
     for (i, expected) in expectedCenters.enumerated() {
         #expect(abs(layout.centers[i] - expected) < 0.01, "center \(i)")
     }
-    // cell 3 (Claude, m 150): lim = 451 - 150 - 122 - 26 = 153, raw centre 178 clamps to 153.
+    // cell 3 (m 150): lim = 451 - 150 - 80 - 6 = 215, raw centre 178 stays unclamped.
     let d = layout.droplet(forCell: 3, halfWidth: 150)
-    #expect(abs(d.mx - 153) < 0.01)
+    #expect(abs(d.mx - 178) < 0.01)
 }
 
 @Test func cellAtBoundaries() {
@@ -37,24 +37,25 @@ import CoreGraphics
     #expect(layout.cellAt(CGPoint(x: 0, y: 96.1)) == nil)
 }
 
-@Test func dropletEdgeStaysInsideBand() {
-    let layout = BandLayout(moduleCount: 5, contentTop: 38)
-    let left = layout.droplet(forCell: 0, halfWidth: 125)
-    #expect(abs(left.mx - (-178)) < 0.01)
-    #expect(abs(left.dip - 188) < 0.01)
-    #expect(abs(left.s2 - 122) < 0.01)
+@Test func dropletsKeepBandWallsAndCellOrder() {
+    let layout = BandLayout(moduleCount: BandModule.allCases.count, contentTop: 38)
+    var previousMX = -CGFloat.infinity
+    for (cell, module) in BandModule.allCases.enumerated() {
+        let d = layout.droplet(forCell: cell, halfWidth: module.dropletWidth / 2)
+        // Distinct cells never share a droplet position: strictly ordered left to right, ≥ 40pt apart.
+        #expect(d.mx - previousMX >= 40, "cell \(cell)")
+        previousMX = d.mx
 
-    let right = layout.droplet(forCell: 4, halfWidth: 140)
-    #expect(abs(right.mx - 163) < 0.01)
-
-    var q = layout.params
-    q.dip = left.dip; q.m = left.m; q.s2 = left.s2; q.mx = left.mx
-    var base = layout.params
-    base.dip = 0
-    let wallX = layout.frame.x0
-    let drop = FluidShapeGeometry.floorY(x: wallX, q: q, cx: layout.cx)
-    let flat = FluidShapeGeometry.floorY(x: wallX, q: base, cx: layout.cx)
-    #expect(abs(drop - flat) < 8)
+        var q = layout.params
+        q.dip = d.dip; q.m = d.m; q.s2 = d.s2; q.mx = d.mx
+        var flat = layout.params
+        flat.dip = 0
+        for wallX in [layout.frame.x0, layout.frame.x1] {
+            let withDrop = FluidShapeGeometry.floorY(x: wallX, q: q, cx: layout.cx)
+            let without = FluidShapeGeometry.floorY(x: wallX, q: flat, cx: layout.cx)
+            #expect(abs(withDrop - without) < 8, "cell \(cell) wall \(wallX)")
+        }
+    }
 }
 
 @Test func dropletMiddleClamp() {
@@ -75,7 +76,7 @@ import CoreGraphics
     let layout = BandLayout(moduleCount: 3, contentTop: 38)
     #expect(abs(layout.params.half * 2 - 824) < 0.01)
     let cell0 = layout.droplet(forCell: 0, halfWidth: 125)
-    #expect(abs(cell0.mx - (-7)) < 0.01)
+    #expect(abs(cell0.mx - (-69)) < 0.01)
     let cell1 = layout.droplet(forCell: 1, halfWidth: 125)
     #expect(abs(cell1.mx - 0) < 0.01)
 }
