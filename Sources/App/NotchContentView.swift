@@ -85,7 +85,7 @@ final class NotchViewModel {
         keyFocusIndex = index
     }
 
-    /// 07-12 (PANEL-05/PANEL-09): the band cell's transient "Opening…"/"Copied"/"Jumping…"
+    /// 07-12 (PANEL-05/PANEL-09): the band cell's transient "Opening…"/"Copied"
     /// confirmation text — moved up from `BandView`'s own local `@State` so `performPrimaryAction`
     /// (now on `NotchPanelController`, driven by both a glyph click and a keyboard Return) can set
     /// the SAME flash regardless of which path triggered it.

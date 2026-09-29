@@ -2,8 +2,7 @@
 
 A native macOS notch app — an **actionable-first** companion for the camera-housing notch.
 The collapsed notch always shows live ambient state; it expands on hover or a global hotkey
-into a panel for timers, clipboard, now-playing, and calendar — plus a planned Claude Code
-"needs you" strip.
+into a panel for timers, clipboard, now-playing, and and calendar.
 
 Actionable, not decorative — the notch surfaces what needs your attention and lets you act
 on it (or jump straight to it) without switching windows.
@@ -30,7 +29,6 @@ on it (or jump straight to it) without switching windows.
 | Calendar next-meeting countdown + one-click join | ✅ Working |
 | Now Playing (Apple Music + browser audio) + live CoreAudio sound-wave | ✅ Working |
 | Downloads / transfers progress | Backlogged |
-| Claude Code "needs you" strip | Not built yet |
 
 ## Requirements
 

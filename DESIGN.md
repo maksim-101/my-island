@@ -73,8 +73,8 @@ as considered instrument, not decoration; information-dense but never loud.
 - **accent** (`#7C6BFF`, indigo) — the identity color and every interactive/active affordance: primary
   buttons, now-playing accent, the pane-jump arrow on hover, selection. Kept low-saturation on black so
   it feels premium, not neon.
-- **signal** (`#FFB338`, amber) — **reserved exclusively** for attention: the Claude "needs you" count,
-  permission-waiting dots, warnings. Never used decoratively; it must always mean "act on this."
+- **signal** (`#FFB338`, amber) — **reserved exclusively** for attention: warnings and anything that
+  needs the user to act. Never used decoratively; it must always mean "act on this."
 - **accent-warm** (`#FF6B5C`, coral) and **accent-cool** (`#3DDC97`, mint) — situational secondary
   accents for categorical distinctions only (e.g. timer states, session categories) when a second hue
   is genuinely needed. They never carry attention meaning (that is amber's alone) and never replace the
@@ -131,8 +131,8 @@ shape into the band.
 
 - **Notch strip** (collapsed) — the fluid pill/bulge above, wing items against the camera housing (which
   stays empty). Never blank; its footprint never resizes to fit content.
-- **Band** (hover-reveal) — a row of two-line module summaries (Now Playing, Timer, Next meeting, Claude,
-  Clipboard), each with one round action glyph; 1166pt for five modules, never under 824pt; re-flows when
+- **Band** (hover-reveal) — a row of two-line module summaries (Now Playing, Timer, Next meeting,
+  Clipboard), each with one round action glyph; 988pt for four modules, never under 824pt; re-flows when
   a module is switched off.
 - **Detail droplet** — always 188pt deep, 236–300pt wide; holds secondary detail and controls for the
   module the band is resting on or has pinned.
@@ -143,8 +143,6 @@ shape into the band.
   grouped rows under uppercase mono labels.
 - **Primary button** — indigo fill, sm rounding, used sparingly (e.g. "Join").
 - **Chip** — pill on `surface-raised` for clipboard/metadata; sharp only in the technical variant.
-- **Attention row** — amber dot + label for Claude sessions needing you, with an indigo jump arrow on
-  hover. Amber is strictly attention-only.
 
 ## Do's and Don'ts
 

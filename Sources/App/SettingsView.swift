@@ -105,20 +105,21 @@ struct SettingsView: View {
         }
         .formStyle(.grouped)
         .frame(width: 420, height: 700)
+        .onAppear(perform: refreshLoginItemState)
         .task {
             calendarGroups = await calendar.availableCalendarsGroupedBySource()
         }
         .onChange(of: launchAtLogin) {
+            let service = SMAppService.mainApp
+            guard (service.status == .enabled) != launchAtLogin else { return }
             do {
                 if launchAtLogin {
-                    try SMAppService.mainApp.register()
+                    try service.register()
                 } else {
-                    try SMAppService.mainApp.unregister()
+                    try service.unregister()
                 }
-            } catch {
-                launchAtLogin = SMAppService.mainApp.status == .enabled
-            }
-            loginItemNeedsApproval = SMAppService.mainApp.status == .requiresApproval
+            } catch {}
+            refreshLoginItemState()
         }
         .onChange(of: showOnNotchlessDisplays) {
             panels.rebuildPanels()
@@ -126,5 +127,11 @@ struct SettingsView: View {
         .onChange(of: enabledModulesRaw) {
             panels.modulesChanged()
         }
+    }
+
+    private func refreshLoginItemState() {
+        let status = SMAppService.mainApp.status
+        launchAtLogin = status == .enabled
+        loginItemNeedsApproval = status == .requiresApproval
     }
 }

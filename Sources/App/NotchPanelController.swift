@@ -1312,8 +1312,7 @@ final class NotchPanelController: NSObject {
     /// The one action exercised is always `.clipboard` — `ClipboardViewModel.select` re-copies
     /// whatever is ALREADY the top pasteboard entry (a safe, idempotent no-op; see that method's
     /// own doc comment), unlike every other module's primary action (driving real playback,
-    /// starting a real Pomodoro, opening a real meeting URL, or jumping the user's own window
-    /// focus to an iTerm2 pane) — none of which an unattended scripted run may ever trigger.
+    /// starting a real Pomodoro, or opening a real meeting URL) — none of which an unattended scripted run may ever trigger.
     private func runMotionSelfTest() {
         guard let mainScreen = NSScreen.main, let set = panelSets[mainScreen.displayKey] else {
             logger.notice("selfTest done")
@@ -1482,7 +1481,7 @@ final class NotchPanelController: NSObject {
     /// former inline glyph closures so a glyph click (via `NotchViewModel.onPerformPrimaryAction`)
     /// and a keyboard Return (via `applyBandFocusEffect`'s `.performGlyph` case) run the exact same
     /// code. Reads the SAME provider instances `BandView` itself reads (this controller owns all
-    /// of them once — `timer`/`nowPlayingProvider`/`calendarProvider`/`clipboard`/`claudeSessions`)
+    /// of them once — `timer`/`nowPlayingProvider`/`calendarProvider`/`clipboard`)
     /// so no data needs threading from the view; each case's own guard mirrors the corresponding
     /// glyph-visibility check in `BandView.actionGlyph(for:)` exactly, so a keyboard Return on a
     /// module with no applicable action is a safe no-op instead of a crash.
@@ -1953,7 +1952,8 @@ private final class NotchPanel: NSPanel {
                 Self.outsideClickLogger.notice("outsideClick display=\(self.displayKey, privacy: .public) x=\(localX, privacy: .public) y=\(localY, privacy: .public)")
             }
         }
-        if event.type == .rightMouseDown, let contentView {
+        if event.type == .rightMouseDown, let contentView, let motion,
+           FluidShapeGeometry.contains(CGPoint(x: NSEvent.mouseLocation.x - frame.minX, y: frame.maxY - NSEvent.mouseLocation.y), cx: frame.width / 2, q: motion.params) {
             let menu = NSMenu()
             let settings = NSMenuItem(title: "Settings…", action: #selector(openSettingsFromMenu), keyEquivalent: ",")
             settings.target = self

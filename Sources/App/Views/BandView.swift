@@ -24,7 +24,7 @@ struct BandView: View {
     let nowPlaying: NowPlayingProvider
     let calendar: CalendarProvider
     let clipboard: ClipboardViewModel
-    /// 07-12: transient "Opening…"/"Copied"/"Jumping…" confirmation text (sketch `say`, 1.3s) —
+    /// 07-12: transient "Opening…"/"Copied" confirmation text (sketch `say`, 1.3s) —
     /// moved up to `NotchViewModel.flashMessages` (from this view's own local `@State`) so
     /// `performPrimaryAction` sets the SAME flash regardless of whether a glyph click or a
     /// keyboard Return triggered it.
@@ -175,7 +175,6 @@ struct BandView: View {
         systemName: String,
         tooltip: String,
         primary: Bool = false,
-        amber: Bool = false,
         symbolReplace: Bool = false,
         action: @escaping () -> Void
     ) -> some View {
@@ -189,7 +188,7 @@ struct BandView: View {
                 }
             }
             .font(.system(size: 11, weight: .semibold))
-            .foregroundStyle(primary ? Tokens.Color.accentInk : (amber ? Tokens.Color.signal : Tokens.Color.text))
+            .foregroundStyle(primary ? Tokens.Color.accentInk : Tokens.Color.text)
             .frame(width: 24, height: 24)
             .background(primary ? Tokens.Color.accent : Tokens.Color.surfaceRaised)
             .clipShape(Circle())
@@ -347,7 +346,6 @@ struct BandView: View {
         primary: String,
         secondary: String,
         primaryMuted: Bool = false,
-        primaryColor: SwiftUI.Color? = nil,
         primaryFont: Font = .system(size: 12.5, weight: .semibold),
         primaryTransition: Bool = false
     ) -> some View {
@@ -362,7 +360,7 @@ struct BandView: View {
                 }
             }
             .font(primaryFont)
-            .foregroundStyle(primaryColor ?? (primaryMuted ? Tokens.Color.textMuted : Tokens.Color.text))
+            .foregroundStyle(primaryMuted ? Tokens.Color.textMuted : Tokens.Color.text)
             .lineLimit(1)
             .truncationMode(.tail)
 
