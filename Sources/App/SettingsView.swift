@@ -10,7 +10,6 @@ struct SettingsView: View {
     @State private var calendarGroups: [(sourceName: String, calendars: [(id: String, title: String)])] = []
     @AppStorage(NotchPanelController.showOnNotchlessDisplaysKey) private var showOnNotchlessDisplays = NotchPanelController.showOnNotchlessDisplaysDefault
     @AppStorage(NotchPanelController.wingLeftContentKey) private var wingLeftContent = NotchPanelController.wingLeftContentDefault
-    @AppStorage(NotchPanelController.surfaceMaterialKey) private var surfaceMaterial = NotchPanelController.surfaceMaterialDefault
     /// MOD-01 (07-11): the persisted enabled-module list — comma-joined `BandModule.rawValue`s,
     /// the same physical `String` representation `NotchPanelController.enabledModulesFromDefaults()`
     /// parses (SwiftUI's `AppStorage` has no native `Array<String>` support).
@@ -41,14 +40,6 @@ struct SettingsView: View {
                     Text("Sound wave").tag("wave")
                 }
                 Text("With no timer running, the left wing always shows artwork when music plays.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-
-                Picker("Surface", selection: $surfaceMaterial) {
-                    Text("Black").tag("black")
-                    Text("Liquid Glass").tag("glass")
-                }
-                Text("The MacBook pill stays black so it merges with the camera.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }

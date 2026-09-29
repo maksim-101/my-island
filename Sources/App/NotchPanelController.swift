@@ -80,12 +80,6 @@ final class NotchPanelController: NSObject {
     // panel rebuild, matching every other provider's convention above.
     let clipboard = ClipboardViewModel()
 
-    // Owned ONCE here too (07-14, CLAUDE-01/02/03 pulled forward from v2): the read-only 3s poll
-    // of `~/.claude/statusbar/state.d` and its decoded/sorted session list must survive every
-    // panel rebuild exactly like every other provider above — recreating it per-rebuild would
-    // restart its poll timer on every clamshell open/close or display change.
-    let claudeSessions = ClaudeSessionsProvider()
-
     // Owned ONCE here too (Phase 5, D-10/D-11): the fullscreen signal must
     // survive a screen-parameter rebuild exactly like the other providers
     // above — creating it inside `rebuildPanels` would tear down and restart
@@ -126,13 +120,6 @@ final class NotchPanelController: NSObject {
     static let wingLeftContentKey = "com.myisland.wingLeftContent"
     static let wingLeftContentDefault = "artwork"
 
-    /// 07-02 Task 3 (D-07, 07-01's decision `material_decision: option`): black and Liquid Glass
-    /// both ship as a Settings option, black default. The MacBook's collapsed pill stays black in
-    /// every option (it merges with the camera housing) — this key only ever affects the Dell's
-    /// collapsed pill and, later, other synthetic-display surfaces.
-    static let surfaceMaterialKey = "com.myisland.surfaceMaterial"
-    static let surfaceMaterialDefault = "black"
-
     /// MOD-01 (07-11): persisted key for the Settings "Modules" toggles — Alcove-style per-module
     /// on/off, Settings-driven, same `com.myisland.*` reverse-DNS convention as every other
     /// persisted key above. Stored as a comma-joined list of `BandModule.rawValue`s: SwiftUI's
@@ -143,8 +130,7 @@ final class NotchPanelController: NSObject {
     static let enabledModulesKey = "com.myisland.enabledModules"
 
     /// WR-04 paired-constant convention: the default when nothing is persisted yet — every
-    /// module, including `.claude` (07-14: the band's fifth module, now with a real data source;
-    /// the plan-08-through-11 interim that used to filter it back out of the drawn band is gone).
+    /// module.
     static let enabledModulesDefault: [String] = BandModule.allCases.map(\.rawValue)
 
     /// The persisted enabled subset (MOD-01) — every set's `BandLayout`/window frame/droplet
@@ -156,7 +142,7 @@ final class NotchPanelController: NSObject {
     /// Static form of `enabledModules` — `Self.makePanel` (a static factory, no instance to read
     /// from) and `NotchContentView`'s own SwiftUI-side module list (no controller instance is
     /// threaded to that view) both read this directly, the identical shared-UserDefaults-read
-    /// pattern `wingLeftContent`/`surfaceMaterial` already establish for a Settings-driven value
+    /// pattern `wingLeftContent` already establishes for a Settings-driven value
     /// consumed on both the AppKit and SwiftUI side of this app.
     static func enabledModulesFromDefaults() -> [BandModule] {
         let stored = UserDefaults.standard.string(forKey: enabledModulesKey)
@@ -569,7 +555,7 @@ final class NotchPanelController: NSObject {
         let motion = FluidMotion(rest: restParams)
         motion.startClock(on: screen)
 
-        let panel = Self.makePanel(notchFrame: anchorRect, screen: screen, isPhysical: mode.isPhysical, model: model, motion: motion, timer: timer, calendar: calendarProvider, nowPlaying: nowPlayingProvider, fullscreen: fullscreenObserver, displayKey: key, hud: hud, clipboard: clipboard, claudeSessions: claudeSessions)
+        let panel = Self.makePanel(notchFrame: anchorRect, screen: screen, isPhysical: mode.isPhysical, model: model, motion: motion, timer: timer, calendar: calendarProvider, nowPlaying: nowPlayingProvider, fullscreen: fullscreenObserver, displayKey: key, hud: hud, clipboard: clipboard)
         panel.displayID = screen.displayID
         // `makePanel`'s own window sizing is the static, non-fullscreen-aware
         // `collapsedSurfaceFrame(isPhysical:notchFrame:anchorMaxY:)` (it has no panel/displayID to
@@ -774,9 +760,6 @@ final class NotchPanelController: NSObject {
     /// the box growth. `hud.dismissNow()` (any drop) is already called by the `onOpenChange` wiring
     /// above before this runs.
     private func openBand(on panel: NotchPanel, motion: FluidMotion) {
-        // 07-14: an immediate refresh (not waiting up to 3s for the next poll tick) so the Claude
-        // cell/droplet never opens on stale data.
-        claudeSessions.refreshNow()
         let layout = bandLayout(for: panel)
         motion.goTo(layout.params, preset: .open, stagger: FluidStagger.pour)
         motion.set(.belly, to: 0, preset: .open)
@@ -940,7 +923,7 @@ final class NotchPanelController: NSObject {
         logger.notice("clickProbe surface=\(name, privacy: .public) mode=toggle display=\(key, privacy: .public) insideHit=\(insideHit, privacy: .public)/\(probes.count, privacy: .public) outsidePass=\(outsidePass, privacy: .public)/\(probes.count, privacy: .public)")
     }
 
-    private static func makePanel(notchFrame: NSRect, screen: NSScreen, isPhysical: Bool, model: NotchViewModel, motion: FluidMotion, timer: TimerViewModel, calendar: CalendarProvider, nowPlaying: NowPlayingProvider, fullscreen: FullscreenObserver, displayKey: String, hud: HUDViewModel, clipboard: ClipboardViewModel, claudeSessions: ClaudeSessionsProvider) -> NotchPanel {
+    private static func makePanel(notchFrame: NSRect, screen: NSScreen, isPhysical: Bool, model: NotchViewModel, motion: FluidMotion, timer: TimerViewModel, calendar: CalendarProvider, nowPlaying: NowPlayingProvider, fullscreen: FullscreenObserver, displayKey: String, hud: HUDViewModel, clipboard: ClipboardViewModel) -> NotchPanel {
         let anchorMaxY = screen.frame.maxY
         let collapsedFrame = Self.collapsedSurfaceFrame(isPhysical: isPhysical, notchFrame: notchFrame, anchorMaxY: anchorMaxY, menuBarHeight: screen.menuBarHeight)
         let styleMask: NSWindow.StyleMask = [.borderless, .nonactivatingPanel, .utilityWindow]
@@ -963,7 +946,7 @@ final class NotchPanelController: NSObject {
         panel.motion = motion
         panel.displayKey = displayKey
 
-        let hostingView = NonKeyHostingView(rootView: NotchContentView(model: model, motion: motion, timer: timer, calendar: calendar, nowPlaying: nowPlaying, fullscreen: fullscreen, displayID: screen.displayID, hud: hud, clipboard: clipboard, claudeSessions: claudeSessions, dropletFocus: panel.dropletFocus, isPhysical: isPhysical))
+        let hostingView = NonKeyHostingView(rootView: NotchContentView(model: model, motion: motion, timer: timer, calendar: calendar, nowPlaying: nowPlaying, fullscreen: fullscreen, displayID: screen.displayID, hud: hud, clipboard: clipboard, dropletFocus: panel.dropletFocus, isPhysical: isPhysical))
         // Decouple from the window's Auto Layout / constraint-update cycle:
         // `applyFrame` resizes the panel manually via `setFrame`, and letting
         // the hosting view participate in constraint-based sizing causes an
@@ -1533,16 +1516,6 @@ final class NotchPanelController: NSObject {
             guard BandView.hasClipboardAction(clipboard), let entry = clipboard.entries.first else { return }
             clipboard.select(entry)
             panel.viewModel?.flash("Copied", for: .clipboard)
-
-        case .claude:
-            guard BandView.hasClaudeAction(claudeSessions), let top = claudeSessions.waiting.first else { return }
-            panel.viewModel?.flash("Jumping to iTerm2 pane\u{2026}", for: .claude)
-            Task { @MainActor [weak panel] in
-                let succeeded = await ClaudePaneJumper.jump(to: top)
-                if !succeeded {
-                    panel?.viewModel?.flash("Pane not found", for: .claude)
-                }
-            }
         }
     }
 

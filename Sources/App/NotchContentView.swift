@@ -131,10 +131,6 @@ struct NotchContentView: View {
     /// `NotchPanelController` now owns once — replaces `ExpandedPanelView`'s retired local
     /// `@State private var clipboard`, so history survives every panel rebuild.
     let clipboard: ClipboardViewModel
-    /// 07-14 (CLAUDE-01/02/03, deviation — Rule 3, blocking: `BandView`'s own new required
-    /// parameter forces this call site to thread it through): the same instance
-    /// `NotchPanelController` owns once, threaded here exactly like every other provider above.
-    let claudeSessions: ClaudeSessionsProvider
     /// 07-12 (PANEL-09): the panel's own `DropletFocus` registry (`NotchPanel.dropletFocus`) —
     /// threaded straight through to `DropletView`, which injects it into the environment.
     let dropletFocus: DropletFocus
@@ -143,11 +139,6 @@ struct NotchContentView: View {
     // content-top choice below (the physical notch's band content starts lower than a synthetic
     // display's, `FluidShapeGeometry.bandContentTopPhysical`/`bandContentTopSynthetic`).
     let isPhysical: Bool
-
-    /// 07-02 Task 3 (D-07, 07-01's `material_decision: option`): read live so switching in
-    /// Settings needs no panel rebuild. The MacBook's collapsed pill stays black in every option
-    /// (`fillView` below) — this only ever changes a synthetic display's collapsed surface.
-    @AppStorage(NotchPanelController.surfaceMaterialKey) private var surfaceMaterial = NotchPanelController.surfaceMaterialDefault
 
     /// 07-08 (D-06 Wave 2): the band's own content-top — physical clears the measured 32pt camera
     /// housing/33pt menu bar (07-15 gap closure re-confirmed this against the hardware numbers,
@@ -159,9 +150,7 @@ struct NotchContentView: View {
     /// 07-11 (MOD-01): the band's own enabled-module list, now the persisted Settings list
     /// (`NotchPanelController.enabledModulesFromDefaults()`) rather than every module — this view
     /// has no controller instance threaded to it, so it reads the same shared UserDefaults key the
-    /// controller's own `enabledModules` reads, exactly like `surfaceMaterial` above reads its own
-    /// key live. 07-14: the plan-08-through-11 interim filter that kept `.claude` out of the
-    /// drawn band regardless of this list is gone — every persisted module now reaches the band.
+    /// controller's own `enabledModules` reads.
     private var enabledModules: [BandModule] {
         NotchPanelController.enabledModulesFromDefaults()
     }
@@ -229,24 +218,6 @@ struct NotchContentView: View {
         !isPhysical && fullscreen.isFrontmostFullscreen(on: displayID)
     }
 
-    /// D-07 (07-02 Task 3): black everywhere by default, and always on the MacBook regardless of
-    /// the Settings choice — glass only ever replaces a SYNTHETIC display's collapsed fill.
-    /// `GlassEffectContainer` wraps the single glass surface per 07-01's `glass_container: yes`
-    /// finding (required once more than one glass surface can be visible at once; harmless — a
-    /// documented no-op — with only one).
-    @ViewBuilder
-    private var fillView: some View {
-        if !isPhysical, surfaceMaterial == "glass" {
-            GlassEffectContainer {
-                Color.clear
-                    .glassEffect(.regular.tint(Color.black.opacity(0.12)), in: FluidOutlineShape(params: motion.params))
-            }
-        } else {
-            FluidOutlineShape(params: motion.params)
-                .fill(Color.black)
-        }
-    }
-
     var body: some View {
         // ONE surface for both states (D-06 Wave 2): the outer frame is a CONSTANT `openSize`
         // (never switches on `model.isOpen`) for the identical `NSHostingView.updateAnimatedWindowSize`
@@ -254,7 +225,8 @@ struct NotchContentView: View {
         // `FluidOutlineShape(params: motion.params)` draws whatever the LIVE, animating outline
         // currently is — collapsed pill through the fully open band — inside this fixed canvas.
         ZStack(alignment: .top) {
-            fillView
+            FluidOutlineShape(params: motion.params)
+                .fill(Color.black)
                 .frame(width: openSize.width, height: openSize.height)
 
             // 07-02 Task 2 (D-02/agreement §2): the 16pt wing items — now ALWAYS rendered (no
@@ -294,7 +266,6 @@ struct NotchContentView: View {
                     nowPlaying: nowPlaying,
                     calendar: calendar,
                     clipboard: clipboard,
-                    claudeSessions: claudeSessions,
                     flashMessages: model.flashMessages,
                     onTapCell: { model.onCellTap?($0) },
                     onPerformPrimaryAction: { model.onPerformPrimaryAction?($0) }
@@ -314,7 +285,6 @@ struct NotchContentView: View {
                         nowPlaying: nowPlaying,
                         calendar: calendar,
                         clipboard: clipboard,
-                        claudeSessions: claudeSessions.sessions,
                         dropletFocus: dropletFocus
                     )
                     .opacity(dropAlpha)

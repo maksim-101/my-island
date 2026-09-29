@@ -10,9 +10,6 @@ import MyIslandCore
 struct FluidOverlayView: View {
     let motion: FluidMotion
     let model: NotchViewModel
-    /// 07-02 Task 3 (D-07): whether this window's own display can ever render glass — always
-    /// `false` on the MacBook, mirroring `NotchContentView.fillView`'s `!isPhysical` gate exactly
-    /// so the two views can never disagree about which material is showing.
     let isPhysical: Bool
     /// 07-04 Task 2 (FEEL-02, PANEL-07 amended): the same `TimerViewModel` instance
     /// `NotchPanelController` threads everywhere else — this view reads `isRunning`/`isPaused`/
@@ -29,15 +26,6 @@ struct FluidOverlayView: View {
     /// drop here (the click-through window); a linked meeting drop instead lives in the
     /// interactive panel (Task 3) so its Join button can take clicks.
     let hud: HUDViewModel
-
-    /// Read live (like `NotchContentView`'s own copy) so switching in Settings drops/restores the
-    /// glow with no panel rebuild.
-    @AppStorage(NotchPanelController.surfaceMaterialKey) private var surfaceMaterial = NotchPanelController.surfaceMaterialDefault
-
-    /// The overlay keeps the rim but drops the glow for glass (07-02 Task 3, D-07) — the glass
-    /// material already carries its own specular highlight; stacking the accent glow on top read
-    /// as muddy.
-    private var isGlass: Bool { !isPhysical && surfaceMaterial == "glass" }
 
     /// Mirrors `NotchContentView.isBulge`/`NotchPanelController.isFullscreenBulge(for:)` exactly.
     private var isBulge: Bool { !isPhysical && fullscreen.isFrontmostFullscreen(on: displayID) }
@@ -77,13 +65,9 @@ struct FluidOverlayView: View {
         if !model.isOpen {
             let glow = max(0, motion.channels[.glow] ?? 0.2)
             ZStack {
-                // Dropped entirely for glass (D-07, Task 3) — the fill itself already reads as
-                // solid black from the interactive panel underneath.
-                if !isGlass {
-                    glowMask(color: Tokens.Color.accent, opacity: glow)
-                }
+                glowMask(color: Tokens.Color.accent, opacity: glow)
 
-                // The rim: a thin open-path stroke along the same outline — kept for every material.
+                // The rim: a thin open-path stroke along the same outline.
                 FluidOutlineShape(params: motion.params, closed: false)
                     .stroke(Tokens.Color.accent, lineWidth: 0.9)
                     .opacity(0.32 + max(0, glow - 0.2))

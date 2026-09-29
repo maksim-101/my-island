@@ -25,9 +25,6 @@ struct DropletView: View {
     let nowPlaying: NowPlayingProvider
     let calendar: CalendarProvider
     let clipboard: ClipboardViewModel
-    /// 07-14 (CLAUDE-01/02/03): the read-only, already-sorted session list — `ClaudePanelView`'s
-    /// own data source, replacing plan 08's `EmptyView()` placeholder.
-    let claudeSessions: [ClaudeSession]
     /// 07-12 (PANEL-09): the panel's own `DropletFocus` registry (`NotchPanel.dropletFocus`) —
     /// injected into the environment so every control inside `content` can register itself via
     /// `.dropletFocusable`, and reset whenever `module` changes so a fresh droplet never inherits a
@@ -66,7 +63,6 @@ struct DropletView: View {
         case .nowPlaying: NowPlayingPanelView(nowPlaying: nowPlaying)
         case .nextMeeting: CalendarPanelView(calendar: calendar)
         case .clipboard: ClipboardPanelView(clipboard: clipboard)
-        case .claude: ClaudePanelView(sessions: claudeSessions)
         }
     }
 }

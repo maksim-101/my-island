@@ -24,9 +24,6 @@ struct BandView: View {
     let nowPlaying: NowPlayingProvider
     let calendar: CalendarProvider
     let clipboard: ClipboardViewModel
-    /// 07-14 (CLAUDE-01/02/03): the read-only, 3s-polled session list — the Claude cell's own
-    /// data source, replacing plan 08's `EmptyView()` placeholder.
-    let claudeSessions: ClaudeSessionsProvider
     /// 07-12: transient "Opening…"/"Copied"/"Jumping…" confirmation text (sketch `say`, 1.3s) —
     /// moved up to `NotchViewModel.flashMessages` (from this view's own local `@State`) so
     /// `performPrimaryAction` sets the SAME flash regardless of whether a glyph click or a
@@ -97,7 +94,6 @@ struct BandView: View {
         case .timer: timerContent
         case .nextMeeting: nextMeetingContent
         case .clipboard: clipboardContent
-        case .claude: claudeContent
         }
     }
 
@@ -148,16 +144,6 @@ struct BandView: View {
                     performPrimaryAction(for: .clipboard)
                 }
             }
-
-        // 07-14 (CLAUDE-02, agreement §4): jump to the top waiting session's pane — absent when
-        // nothing needs the user (edge PANEL-05 empty), matching every other module's glyph-absent
-        // convention above.
-        case .claude:
-            if Self.hasClaudeAction(claudeSessions) {
-                glyphButton(systemName: "arrow.up.right", tooltip: "Jump to pane", amber: true) {
-                    performPrimaryAction(for: .claude)
-                }
-            }
         }
     }
 
@@ -173,12 +159,6 @@ struct BandView: View {
     /// `static` for the same reason as `hasNowPlayingAction`.
     static func hasClipboardAction(_ provider: ClipboardViewModel) -> Bool {
         provider.entries.first != nil
-    }
-
-    /// Jump-to-pane shows only when a session is actually waiting on the user (07-review IN-01)
-    /// — `static` for the same reason as `hasNowPlayingAction`.
-    static func hasClaudeAction(_ provider: ClaudeSessionsProvider) -> Bool {
-        provider.waiting.first != nil
     }
 
     /// 07-12 (PANEL-09): the one place a glyph click AND a keyboard Return (routed through
@@ -359,42 +339,6 @@ struct BandView: View {
                 }
             twoLine(primary: "Clipboard", secondary: flashMessages[.clipboard] ?? (clipboard.entries.first?.text ?? "Empty"))
         }
-    }
-
-    // MARK: - Claude
-
-    /// 07-14 (CLAUDE-01/03, sketch `CELL.claude`): a 30pt badge — amber with the waiting count
-    /// when a session needs the user, quiet with the total session count otherwise; line 1 is the
-    /// top waiting session's repo (amber) or "Claude"; line 2 is "Permission"/"Your turn", else
-    /// the total-session summary. Every session-supplied string (only `repo` here) passes through
-    /// `ClaudeSessions.displaySafe` (T-07-21).
-    private var claudeContent: some View {
-        let top = claudeSessions.waiting.first
-        let badgeCount = top != nil ? claudeSessions.waitingCount : claudeSessions.sessions.count
-        return Group {
-            Text("\(badgeCount)")
-                .font(.system(size: 12, weight: .bold).monospaced())
-                .foregroundStyle(top != nil ? Tokens.Color.signal : Tokens.Color.textMuted)
-                .frame(width: 30, height: 30)
-                .background(top != nil ? Tokens.Color.signal.opacity(0.14) : Tokens.Color.surfaceRaised)
-                .clipShape(Circle())
-            twoLine(
-                primary: top.map { ClaudeSessions.displaySafe($0.repo) } ?? "Claude",
-                secondary: flashMessages[.claude] ?? claudeSecondary(top: top),
-                primaryColor: top != nil ? Tokens.Color.signal : nil
-            )
-        }
-    }
-
-    /// "Permission" / "Your turn" while a session waits; otherwise the total-session summary
-    /// (edge: 0 sessions reads "No sessions", matching the must_haves empty-state truth exactly).
-    private func claudeSecondary(top: ClaudeSession?) -> String {
-        if let top {
-            return top.status == .awaitingPermission ? "Permission" : "Your turn"
-        }
-        let total = claudeSessions.sessions.count
-        guard total > 0 else { return "No sessions" }
-        return "\(total) session\(total == 1 ? "" : "s") working"
     }
 
     // MARK: - Shared two-line summary

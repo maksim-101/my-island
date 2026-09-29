@@ -4,7 +4,7 @@ import CoreGraphics
 /// rules Settings drives. Ported per D-02 from `.planning/sketches/006-design-round/index.html:242-248`
 /// (`MODS`) and `:355` (`DROP_W`) — no AppKit/SwiftUI import.
 public enum BandModule: String, CaseIterable, Sendable {
-    case nowPlaying, timer, nextMeeting, claude, clipboard
+    case nowPlaying, timer, nextMeeting, clipboard
 
     /// index.html:355 `DROP_W` — the detail droplet's own resting width for this module.
     public var dropletWidth: CGFloat {
@@ -12,7 +12,6 @@ public enum BandModule: String, CaseIterable, Sendable {
         case .nowPlaying: return 250
         case .timer: return 236
         case .nextMeeting: return 256
-        case .claude: return 300
         case .clipboard: return 280
         }
     }
@@ -23,7 +22,6 @@ public enum BandModule: String, CaseIterable, Sendable {
         case .nowPlaying: return "Now Playing"
         case .timer: return "Timer"
         case .nextMeeting: return "Next meeting"
-        case .claude: return "Claude"
         case .clipboard: return "Clipboard"
         }
     }

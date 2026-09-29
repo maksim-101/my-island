@@ -5,16 +5,14 @@ import Testing
 // :763-771 (module switch handler) — MOD-01, 07-DESIGN-AGREEMENT.md §3, §8.
 
 @Test func moduleOrderAndWidths() {
-    #expect(BandModule.allCases == [.nowPlaying, .timer, .nextMeeting, .claude, .clipboard])
+    #expect(BandModule.allCases == [.nowPlaying, .timer, .nextMeeting, .clipboard])
     #expect(BandModule.nowPlaying.dropletWidth == 250)
     #expect(BandModule.timer.dropletWidth == 236)
     #expect(BandModule.nextMeeting.dropletWidth == 256)
-    #expect(BandModule.claude.dropletWidth == 300)
     #expect(BandModule.clipboard.dropletWidth == 280)
     #expect(BandModule.nowPlaying.displayName == "Now Playing")
     #expect(BandModule.timer.displayName == "Timer")
     #expect(BandModule.nextMeeting.displayName == "Next meeting")
-    #expect(BandModule.claude.displayName == "Claude")
     #expect(BandModule.clipboard.displayName == "Clipboard")
 }
 
