@@ -76,7 +76,7 @@ import CoreGraphics
     let layout = BandLayout(moduleCount: 3, contentTop: 38)
     #expect(abs(layout.params.half * 2 - 824) < 0.01)
     let cell0 = layout.droplet(forCell: 0, halfWidth: 125)
-    #expect(abs(cell0.mx - (-69)) < 0.01)
+    #expect(abs(cell0.mx - (-54)) < 0.01)
     let cell1 = layout.droplet(forCell: 1, halfWidth: 125)
     #expect(abs(cell1.mx - 0) < 0.01)
 }
@@ -166,4 +166,12 @@ import CoreGraphics
             }
         }
     }
+}
+
+@Test func edgeDropletsMirrorEachOther() {
+    let layout = BandLayout(moduleCount: 4, contentTop: 38)
+    let modules = BandModule.allCases
+    let left = layout.droplet(forCell: 0, halfWidth: modules[0].dropletWidth / 2).mx
+    let right = layout.droplet(forCell: 3, halfWidth: modules[3].dropletWidth / 2).mx
+    #expect(abs(left + right) < 0.01)
 }
