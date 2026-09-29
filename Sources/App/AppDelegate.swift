@@ -15,6 +15,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private let logger = AppLog.make("AppDelegate")
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        Self.dropRemovedSettings()
+
         notchPanelController = NotchPanelController()
 
         // PANEL-09 (07-12): the dedicated hotkey entry point — takes key focus (the one
@@ -31,6 +33,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             name: .openMyIslandSettings,
             object: nil
         )
+    }
+
+    /// The app has no menu-bar item; launching it again (Spotlight, Finder) is the way in when no
+    /// notch panel is on screen.
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        showSettings()
+        return true
+    }
+
+    private static func dropRemovedSettings() {
+        let defaults = UserDefaults.standard
+        defaults.removeObject(forKey: "com.myisland.surfaceMaterial")
+        if let stored = defaults.string(forKey: NotchPanelController.enabledModulesKey) {
+            let kept = BandModules.enabled(from: stored.split(separator: ",").map(String.init)).map(\.rawValue).joined(separator: ",")
+            if kept != stored { defaults.set(kept, forKey: NotchPanelController.enabledModulesKey) }
+        }
     }
 
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {

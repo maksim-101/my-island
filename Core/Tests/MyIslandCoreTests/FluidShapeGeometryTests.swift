@@ -91,7 +91,7 @@ import CoreGraphics
     var q = FluidParams.band(moduleCount: 5, contentTop: 38)
     q.dip = 188
     q.m = 125
-    q.s2 = 122
+    q.s2 = FluidShapeGeometry.dropletFlank
     q.mx = 0
 
     let floor = FluidShapeGeometry.floorY(x: 0, q: q, cx: 0)

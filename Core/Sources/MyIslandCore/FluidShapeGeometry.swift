@@ -191,6 +191,19 @@ public enum FluidShapeGeometry {
         return FluidFrame(h: h, run: run, d: d, sd: sd, v: v, xs: xs, xe: xe, tp: tq, r: r, x0: xs + tq + r, x1: xe - tq - r)
     }
 
+    /// The droplet's `asym` widens one flank to `s2 * (1 ± asym)` while it slides. Limits `asym` so
+    /// neither flank reaches the band's walls (with the same 6pt margin the placement clamp keeps),
+    /// so a sliding droplet never bends the band's own shoulder.
+    public static func wallSafeAsym(_ asym: CGFloat, q: FluidParams) -> CGFloat {
+        guard q.dip >= 0.01, q.s2 > 0 else { return asym }
+        let f = frameOf(q, cx: 0)
+        let leftRoom = (q.mx - q.m) - f.x0 - 6
+        let rightRoom = f.x1 - (q.mx + q.m) - 6
+        let hi = leftRoom / q.s2 - 1
+        let lo = 1 - rightRoom / q.s2
+        return min(max(asym, lo), hi)
+    }
+
     /// Ported verbatim from index.html:273-285 `floorY` — the smootherstep flank, belly and
     /// drawdown terms for the detail droplet's depth, layered on top of the resting sag.
     public static func floorY(x: CGFloat, q: FluidParams, cx: CGFloat) -> CGFloat {

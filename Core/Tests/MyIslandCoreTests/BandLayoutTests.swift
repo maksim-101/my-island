@@ -60,7 +60,7 @@ import CoreGraphics
 
 @Test func dropletMiddleClamp() {
     let layout = BandLayout(moduleCount: 5, contentTop: 38)
-    // lim = 451 - 118 - 122 - 26 = 185; raw centre -178 stays inside, unclamped.
+    // lim = 451 - 118 - 80 - 6 = 247; raw centre -178 stays inside, unclamped.
     let cell1 = layout.droplet(forCell: 1, halfWidth: 118)
     #expect(abs(cell1.mx - (-178)) < 0.01)
 
@@ -132,4 +132,38 @@ import CoreGraphics
         CGPoint(x: 0, y: d + 100), currentHalf: currentHalf, droplet: dropletParams, pinned: true
     )
     #expect(insideDroplet == .stay)
+}
+
+@Test func dropletsStayDistinctForEveryModuleSubset() {
+    let all = BandModule.allCases
+    for mask in 1..<(1 << all.count) {
+        let modules = all.enumerated().filter { mask & (1 << $0.offset) != 0 }.map(\.element)
+        guard modules.count > 1 else { continue }
+        let layout = BandLayout(moduleCount: modules.count, contentTop: 38)
+        var previous = -CGFloat.infinity
+        for (cell, module) in modules.enumerated() {
+            let mx = layout.droplet(forCell: cell, halfWidth: module.dropletWidth / 2).mx
+            #expect(mx - previous >= 40, "mask \(mask) cell \(cell)")
+            previous = mx
+        }
+    }
+}
+
+@Test func slidingAsymNeverReachesTheWalls() {
+    let layout = BandLayout(moduleCount: BandModule.allCases.count, contentTop: 38)
+    for (cell, module) in BandModule.allCases.enumerated() {
+        let d = layout.droplet(forCell: cell, halfWidth: module.dropletWidth / 2)
+        for requested: CGFloat in [-0.45, 0.45] {
+            var q = layout.params
+            q.dip = d.dip; q.m = d.m; q.s2 = d.s2; q.mx = d.mx
+            q.asym = FluidShapeGeometry.wallSafeAsym(requested, q: q)
+            var flat = layout.params
+            flat.dip = 0
+            for wallX in [layout.frame.x0, layout.frame.x1] {
+                let withDrop = FluidShapeGeometry.floorY(x: wallX, q: q, cx: layout.cx)
+                let without = FluidShapeGeometry.floorY(x: wallX, q: flat, cx: layout.cx)
+                #expect(abs(withDrop - without) < 8, "cell \(cell) asym \(requested) wall \(wallX)")
+            }
+        }
+    }
 }

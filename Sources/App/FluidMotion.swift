@@ -291,7 +291,7 @@ final class FluidMotion: NSObject {
         }
         // Ported from index.html:502-503 `q()`'s asym derivation.
         let mxVelocity = velocity(of: .mx)
-        next.asym = max(-0.45, min(0.45, mxVelocity / 1400))
+        next.asym = FluidShapeGeometry.wallSafeAsym(max(-0.45, min(0.45, mxVelocity / 1400)), q: next)
         params = next
 
         var nextChannels: [FluidChannel: CGFloat] = [:]
