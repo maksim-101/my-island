@@ -186,6 +186,14 @@ public enum ClaudePaneJump {
         return "/dev/" + withoutPrefix
     }
 
+    /// The native Claude Code binary reports its version (`2.1.284`) as its process name, not
+    /// `claude`; both forms identify a Claude Code process.
+    public static func isClaudeProcessName(_ name: String) -> Bool {
+        if name == "claude" { return true }
+        let parts = name.split(separator: ".", omittingEmptySubsequences: false)
+        return parts.count == 3 && parts.allSatisfy { !$0.isEmpty && $0.allSatisfy(\.isASCII) && $0.allSatisfy(\.isNumber) }
+    }
+
     /// `/bin/ps -o tty= -p <pid>` — `pid` must be a real, non-init process (>1); the forged-pid
     /// case (T-07-19) is caught downstream by `ClaudePaneJumper`'s own `proc_name(pid) == "claude"`
     /// check, not here.

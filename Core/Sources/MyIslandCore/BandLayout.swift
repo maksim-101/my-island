@@ -47,23 +47,16 @@ public struct BandLayout {
         self.centers = (0..<count).map { cellsX + cellWidth * (CGFloat($0) + 0.5) }
     }
 
-    /// index.html:355-362 `DROP_W`/`setHot`'s `mx`/`lim` — outer modules continue the band's own
-    /// end curve (agreement §3), a middle module's droplet clamps to stay inside the band.
+    /// index.html:355-362 `DROP_W`/`setHot`'s `lim` — every module's droplet, edge cells included,
+    /// clamps so its whole flank ends inside the band. The sketch let outer droplets continue the
+    /// band's end curve (agreement §3), which dragged the band's own shoulder down with them and
+    /// visibly changed the band's width whenever an edge droplet opened; clamping keeps the band's
+    /// walls identical whether or not a droplet is showing.
     public func droplet(forCell cell: Int, halfWidth: CGFloat) -> (mx: CGFloat, m: CGFloat, s2: CGFloat, dip: CGFloat) {
         let s2 = FluidShapeGeometry.dropletFlank
         let dip = FluidShapeGeometry.dropletHeight
         let lim = max(0, halfContent - halfWidth - s2 - 26)
-        let mx: CGFloat
-        if n == 1 {
-            mx = 0
-        } else if cell == 0 {
-            mx = frame.x0 - cx + halfWidth - 1
-        } else if cell == n - 1 {
-            mx = frame.x1 - cx - halfWidth + 1
-        } else {
-            let raw = centers[cell] - cx
-            mx = max(-lim, min(lim, raw))
-        }
+        let mx = n == 1 ? 0 : max(-lim, min(lim, centers[cell] - cx))
         return (mx, halfWidth, s2, dip)
     }
 

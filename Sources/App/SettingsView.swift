@@ -1,4 +1,5 @@
 import SwiftUI
+import ServiceManagement
 import KeyboardShortcuts
 import MyIslandCore
 
@@ -14,6 +15,9 @@ struct SettingsView: View {
     /// the same physical `String` representation `NotchPanelController.enabledModulesFromDefaults()`
     /// parses (SwiftUI's `AppStorage` has no native `Array<String>` support).
     @AppStorage(NotchPanelController.enabledModulesKey) private var enabledModulesRaw = NotchPanelController.enabledModulesDefault.joined(separator: ",")
+
+    @State private var launchAtLogin = SMAppService.mainApp.status == .enabled
+    @State private var loginItemNeedsApproval = SMAppService.mainApp.status == .requiresApproval
 
     private var enabledModules: [BandModule] {
         BandModules.enabled(from: enabledModulesRaw.split(separator: ",").map(String.init))
@@ -49,11 +53,8 @@ struct SettingsView: View {
                     .foregroundStyle(.secondary)
             }
 
-            // 07-11 (MOD-01, agreement §8): one switch per band module in fixed order — no
-            // reordering in Phase 7. The stored raw-value list is the band's only module source
-            // (NotchPanelController.enabledModules/NotchContentView's own copy) as of this plan;
-            // Claude already persists here but stays out of the drawn band until plan 14 removes
-            // modulesAwaitingDataSource.
+            // MOD-01 (agreement §8): one switch per band module in fixed order, no reordering. The
+            // stored raw-value list is the band's only module source.
             Section("Modules") {
                 ForEach(BandModule.allCases, id: \.self) { module in
                     let enabled = enabledModules
@@ -69,6 +70,15 @@ struct SettingsView: View {
                 Text("The band needs at least one module. Reordering is not available.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
+            }
+
+            Section("General") {
+                Toggle("Launch at login", isOn: $launchAtLogin)
+                if loginItemNeedsApproval {
+                    Text("Approve my-island under System Settings › General › Login Items.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
             }
 
             Section("Displays") {
@@ -103,9 +113,21 @@ struct SettingsView: View {
             }
         }
         .formStyle(.grouped)
-        .frame(width: 420, height: 640)
+        .frame(width: 420, height: 700)
         .task {
             calendarGroups = await calendar.availableCalendarsGroupedBySource()
+        }
+        .onChange(of: launchAtLogin) {
+            do {
+                if launchAtLogin {
+                    try SMAppService.mainApp.register()
+                } else {
+                    try SMAppService.mainApp.unregister()
+                }
+            } catch {
+                launchAtLogin = SMAppService.mainApp.status == .enabled
+            }
+            loginItemNeedsApproval = SMAppService.mainApp.status == .requiresApproval
         }
         .onChange(of: showOnNotchlessDisplays) {
             panels.rebuildPanels()

@@ -226,4 +226,12 @@ import Testing
     @Test func osascriptArgumentsRejectsInvalidTTY() {
         #expect(ClaudePaneJump.osascriptArguments(tty: "??") == nil)
     }
+
+    @Test func claudeProcessNameAcceptsBinaryNameAndVersionForm() {
+        #expect(ClaudePaneJump.isClaudeProcessName("claude"))
+        #expect(ClaudePaneJump.isClaudeProcessName("2.1.284"))
+        #expect(!ClaudePaneJump.isClaudeProcessName("zsh"))
+        #expect(!ClaudePaneJump.isClaudeProcessName("2.1"))
+        #expect(!ClaudePaneJump.isClaudeProcessName("2.1.x"))
+    }
 }

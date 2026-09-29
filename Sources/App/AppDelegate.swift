@@ -1,6 +1,5 @@
 import AppKit
 import SwiftUI
-import ServiceManagement
 import OSLog
 import MyIslandCore
 import KeyboardShortcuts
@@ -37,12 +36,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             name: .openMyIslandSettings,
             object: nil
         )
-
-        do {
-            try SMAppService.mainApp.register()
-        } catch {
-            logger.error("Login item registration failed: \(error.localizedDescription, privacy: .public)")
-        }
     }
 
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {

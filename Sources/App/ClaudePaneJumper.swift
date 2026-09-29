@@ -39,7 +39,7 @@ enum ClaudePaneJumper {
         guard !NSRunningApplication.runningApplications(withBundleIdentifier: iTermBundleID).isEmpty else {
             return .noITerm
         }
-        guard let pid = session.pid, processName(of: pid) == "claude" else {
+        guard let pid = session.pid, let name = processName(of: pid), ClaudePaneJump.isClaudeProcessName(name) else {
             return .notClaude
         }
         guard let psArguments = ClaudePaneJump.psArguments(pid: pid) else {

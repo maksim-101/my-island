@@ -37,15 +37,24 @@ import CoreGraphics
     #expect(layout.cellAt(CGPoint(x: 0, y: 96.1)) == nil)
 }
 
-@Test func dropletEdgeContinuity() {
+@Test func dropletEdgeStaysInsideBand() {
     let layout = BandLayout(moduleCount: 5, contentTop: 38)
     let left = layout.droplet(forCell: 0, halfWidth: 125)
-    #expect(abs(left.mx - (-327)) < 0.01)
+    #expect(abs(left.mx - (-178)) < 0.01)
     #expect(abs(left.dip - 188) < 0.01)
     #expect(abs(left.s2 - 122) < 0.01)
 
     let right = layout.droplet(forCell: 4, halfWidth: 140)
-    #expect(abs(right.mx - 312) < 0.01)
+    #expect(abs(right.mx - 163) < 0.01)
+
+    var q = layout.params
+    q.dip = left.dip; q.m = left.m; q.s2 = left.s2; q.mx = left.mx
+    var base = layout.params
+    base.dip = 0
+    let wallX = layout.frame.x0
+    let drop = FluidShapeGeometry.floorY(x: wallX, q: q, cx: layout.cx)
+    let flat = FluidShapeGeometry.floorY(x: wallX, q: base, cx: layout.cx)
+    #expect(abs(drop - flat) < 8)
 }
 
 @Test func dropletMiddleClamp() {
@@ -66,7 +75,7 @@ import CoreGraphics
     let layout = BandLayout(moduleCount: 3, contentTop: 38)
     #expect(abs(layout.params.half * 2 - 824) < 0.01)
     let cell0 = layout.droplet(forCell: 0, halfWidth: 125)
-    #expect(abs(cell0.mx - (-156)) < 0.01)
+    #expect(abs(cell0.mx - (-7)) < 0.01)
     let cell1 = layout.droplet(forCell: 1, halfWidth: 125)
     #expect(abs(cell1.mx - 0) < 0.01)
 }
