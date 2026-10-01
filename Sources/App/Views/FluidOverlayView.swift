@@ -113,7 +113,7 @@ struct FluidOverlayView: View {
 
                                 ForEach(0..<3, id: \.self) { n in
                                     if let ring = FluidPulse.ring(n: n, elapsed: elapsed, depth: motion.params.d) {
-                                        FluidOutlineShape(params: motion.params, closed: true)
+                                        FluidOutlineShape(params: motion.params, closed: false)
                                             .stroke(pulseColor, lineWidth: ring.lineWidth)
                                             .opacity(ring.opacity)
                                             .scaleEffect(x: ring.sx, y: ring.sy, anchor: .top)
