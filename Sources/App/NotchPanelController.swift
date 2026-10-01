@@ -598,6 +598,7 @@ final class NotchPanelController: NSObject {
                 // every close, not a subset of them.
                 self.relinquishKeyFocus(on: panel)
                 panel.bandFocus = BandFocus(moduleCount: self.enabledModules.count)
+                panel.keyboardPointerAnchor = nil
                 panel.dropletFocus.reset()
                 self.syncKeyFocus(on: panel)
                 // Same funnel, same reasoning as the keyboard-focus fix above: `applyHover`
@@ -1294,6 +1295,7 @@ final class NotchPanelController: NSObject {
         model.toggle()
         // The ONE forced-key call in this file — see `NotchPanel.canBecomeKey`'s own doc comment.
         panel.makeKey()
+        panel.keyboardPointerAnchor = NSEvent.mouseLocation
         panel.bandFocus = BandFocus(moduleCount: enabledModules.count)
         _ = panel.bandFocus.hotkeyOpened()
         model.setPinnedModule(0)
@@ -1568,8 +1570,10 @@ final class NotchPanelController: NSObject {
         let mouseGlobal = NSEvent.mouseLocation
         for panel in panels {
             guard let motion = panel.motion else { continue }
-            // PANEL-09 (07-12, index.html:431): real pointer movement — every call here is one,
-            // since this method only runs off the `.mouseMoved` monitors — ends keyboard mode.
+            // PANEL-09 (07-12, index.html:431): real pointer movement ends keyboard mode. The
+            // `.mouseMoved` monitors can also fire without movement (seen once in five ⌥Space
+            // opens in the 2026-10-01 UAT), so while keyboard mode is on, an event with the pointer
+            // still at `keyboardPointerAnchor` is skipped for that panel entirely.
             // `zone` is only ever non-nil while a hotkey-opened band is up, so this is a no-op the
             // rest of the time. The band itself stays open under pointer control (this is NOT a
             // close), so only `relinquishKeyFocus` runs — NOT a `bandFocus`/`dropletFocus` reset,
@@ -1578,6 +1582,11 @@ final class NotchPanelController: NSObject {
             // zone, closing the gap `handleBandKeyDown`'s own `zone != nil` guard, above, depends
             // on — without this, the panel stayed key with nowhere for a keystroke to go).
             if panel.bandFocus.zone != nil {
+                if mouseGlobal == panel.keyboardPointerAnchor {
+                    logger.notice("keyFocus kept: mouseMoved without pointer movement")
+                    continue
+                }
+                panel.keyboardPointerAnchor = nil
                 _ = panel.bandFocus.pointerMoved()
                 relinquishKeyFocus(on: panel)
                 syncKeyFocus(on: panel)
@@ -1895,6 +1904,8 @@ private final class NotchPanel: NSPanel {
     /// `BandFocus(moduleCount:)` on every `toggleFromHotkey` open/close and every Esc-driven close,
     /// mutated in place by `NotchPanelController.handleBandKeyDown(_:on:)` on every recognized key.
     var bandFocus = BandFocus(moduleCount: 0)
+    /// Pointer location when ⌥Space opened the band: `handleMouseMoved` ends keyboard mode only once the pointer has left it, because AppKit can deliver `.mouseMoved` without movement.
+    var keyboardPointerAnchor: NSPoint?
     /// PANEL-09: this panel's own droplet control registry (07-12) — one instance for the panel's
     /// whole lifetime (not recreated per droplet open), reset by `DropletView` whenever the shown
     /// module changes.
