@@ -408,8 +408,7 @@ actor NowPlayingService {
 
 /// `Sendable` projection crossing the actor boundary — artwork as raw bytes only, never `NSImage`
 /// (RESEARCH.md Pitfall 3, D-17). String fields are empty-string-normalised (never optional) since
-/// `NowPlayingFormatting.earText` already treats empty/nil identically and the view layer only ever
-/// needs a concrete `String` to render.
+/// the view layer only ever needs a concrete `String` to render.
 struct NowPlayingModel: Sendable, Equatable {
     let title: String
     let artist: String
@@ -427,7 +426,7 @@ struct NowPlayingModel: Sendable, Equatable {
 
 /// Mirrors `CalendarProvider`'s `@MainActor @Observable` shape. Owns the grace/stale rules
 /// (D-06/D-07/D-12): every model update — including the adapter's own empty state — is classified by
-/// `NowPlayingSessionClassifier`, and `displayEar`/`displayPanel`/`isPausedInGrace` read the result.
+/// `NowPlayingSessionClassifier`, and `displayEar`/`isPausedInGrace` read the result.
 @MainActor
 @Observable
 final class NowPlayingProvider {
@@ -441,8 +440,8 @@ final class NowPlayingProvider {
     /// between the adapter's own (non-per-second) events rather than sitting still and jumping.
     private(set) var elapsedFraction: Double?
 
-    /// The classifier's current verdict (D-06/D-07/D-12) — the single source of truth `displayEar`,
-    /// `displayPanel` and `isPausedInGrace` all read from.
+    /// The classifier's current verdict (D-06/D-07/D-12) — the single source of truth `displayEar`
+    /// and `isPausedInGrace` both read from.
     private(set) var classification = NowPlayingClassification(visibility: .hidden, graceDeadline: nil)
     /// The identity the current `classification` was computed against — passed back into `classify`
     /// on the next update so a different session never inherits this one's grace deadline.
@@ -466,11 +465,6 @@ final class NowPlayingProvider {
     var displayEar: Bool {
         classification.visibility != .hidden
     }
-
-    /// The expanded panel group follows the SAME grace as the ear (assumptions block: fullscreen
-    /// suppression is ear-only and layered on in plan 05-05, not here) — derived directly from
-    /// `displayEar` so the invariant can't silently diverge if only one of the two is edited later.
-    var displayPanel: Bool { displayEar }
 
     /// Drives the ear's 55% opacity dim and frozen scroll (UI-SPEC "Paused-in-grace visual
     /// distinction").

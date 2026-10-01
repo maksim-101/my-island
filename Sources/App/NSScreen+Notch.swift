@@ -2,19 +2,6 @@ import AppKit
 import MyIslandCore
 
 extension NSScreen {
-    var hasNotch: Bool {
-        notchFrame != nil
-    }
-
-    var notchFrame: NSRect? {
-        NotchGeometry.notchFrame(
-            screenFrame: frame,
-            auxiliaryTopLeftMaxX: auxiliaryTopLeftArea?.maxX,
-            auxiliaryTopRightMinX: auxiliaryTopRightArea?.minX,
-            safeAreaTop: safeAreaInsets.top
-        )
-    }
-
     /// The menu-bar strip height on THIS screen — `frame` includes it,
     /// `visibleFrame` doesn't (Pitfall 3: reads 0 from a bare process before
     /// `NSApplication` finishes launching; only meaningful once launched).

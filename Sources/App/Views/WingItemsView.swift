@@ -6,8 +6,8 @@ import MyIslandCore
 /// `NotchBarView`'s ear renderers. Positions are the sketch's `WING` table
 /// (`.planning/sketches/006-design-round/index.html:699`): physical ±103.5pt at y 18, synthetic
 /// ±56pt at y 15, both measured from the pill's own center (`cx`) — this view is given the SAME
-/// frame the collapsed fill draws in (`NotchContentView`'s `collapsedSize`), so its own local
-/// center lines up with that `cx` for free.
+/// frame the fluid fill draws in (`NotchContentView`'s `openSize`), so its own local center lines
+/// up with that `cx` for free.
 ///
 /// Slot rule (agreement §2): music alone → left artwork, right sound wave; a running timer alone →
 /// right clock-face only; both together → right clock-face (the timer always wins the right wing),

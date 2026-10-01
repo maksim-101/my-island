@@ -170,27 +170,3 @@ public enum NowPlayingDiffMerger {
         let artworkDataBase64: String?
     }
 }
-
-/// The ear's "Title — Artist" text formatter (D-02, UI-SPEC Copywriting Contract).
-public enum NowPlayingFormatting {
-    /// Joins title and artist with a literal em dash surrounded by single spaces, omitting the
-    /// separator (and never leaving it dangling) when either side is `nil` or empty. Handles a
-    /// `nil` artist identically to an empty one — spike 002 observed `artist: null` (not `""`) for
-    /// both Infuse and the Apple TV app, so a formatter that only special-cased empty strings would
-    /// render a bare title correctly for Music/Safari but silently regress for video sources.
-    public static func earText(title: String?, artist: String?) -> String {
-        let trimmedTitle = title?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        let trimmedArtist = artist?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-
-        switch (trimmedTitle.isEmpty, trimmedArtist.isEmpty) {
-        case (false, false):
-            return "\(trimmedTitle) — \(trimmedArtist)"
-        case (false, true):
-            return trimmedTitle
-        case (true, false):
-            return trimmedArtist
-        case (true, true):
-            return ""
-        }
-    }
-}

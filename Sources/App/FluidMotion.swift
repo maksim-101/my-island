@@ -72,10 +72,6 @@ final class FluidMotion: NSObject {
     private var settledCallback: (() -> Void)?
     private var settledBackstop: DispatchWorkItem?
 
-    // Frame-timing ring buffer for `frameStats()` (D-03(a)/FEEL-05 measurement).
-    private var intervalsMs: [Double] = []
-    private let maxSamples = 3600
-
     init(rest: FluidParams) {
         params = rest
         super.init()
@@ -265,7 +261,6 @@ final class FluidMotion: NSObject {
             for channel in FluidChannel.allCases { channelSprings[channel]?.step(subDt) }
         }
         syncParams()
-        recordInterval(frameDuration: link.duration, elapsed: now - last)
 
         if !nextFrameCallbacks.isEmpty {
             let callbacks = nextFrameCallbacks
@@ -308,30 +303,5 @@ final class FluidMotion: NSObject {
 
     private var allSettled: Bool {
         springs.values.allSatisfy(\.isSettled) && channelSprings.values.allSatisfy(\.isSettled)
-    }
-
-    // MARK: - Frame stats (D-03(a)/FEEL-05)
-
-    private func recordInterval(frameDuration: CFTimeInterval, elapsed: CFTimeInterval) {
-        intervalsMs.append(elapsed * 1000)
-        if intervalsMs.count > maxSamples { intervalsMs.removeFirst() }
-        lastFrameDurationMs = frameDuration * 1000
-    }
-
-    private var lastFrameDurationMs: Double = 1000.0 / 60.0
-
-    /// A dropped frame is an interval above 1.5× the link's own frame duration.
-    func frameStats() -> (p50Ms: Double, p99Ms: Double, maxMs: Double, dropped: Int, total: Int) {
-        guard !intervalsMs.isEmpty else { return (0, 0, 0, 0, 0) }
-        let sorted = intervalsMs.sorted()
-        let p50 = sorted[sorted.count / 2]
-        let p99 = sorted[Int(Double(sorted.count - 1) * 0.99)]
-        let maxMs = sorted.last ?? 0
-        let dropped = intervalsMs.filter { $0 > lastFrameDurationMs * 1.5 }.count
-        return (p50, p99, maxMs, dropped, intervalsMs.count)
-    }
-
-    func resetFrameStats() {
-        intervalsMs.removeAll()
     }
 }

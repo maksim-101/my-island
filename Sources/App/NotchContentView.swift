@@ -163,16 +163,6 @@ struct NotchContentView: View {
         BandLayout(moduleCount: enabledModules.count, contentTop: contentTop, cx: openSize.width / 2)
     }
 
-    /// D-06 Wave 1: the collapsed footprint is the fluid outline's own bounding box (`2·half`
-    /// wide), plus room for the sticky belly's live pull — mirrors
-    /// `NotchPanelController.collapsedSurfaceFrame(for:)`'s window sizing exactly, so the mask
-    /// used below never clips the pill mid-nudge. No longer read for the outer hosting frame
-    /// (`openSize` below is now constant regardless of `model.isOpen` — see that property's own
-    /// comment) but still the true collapsed-rest bounding box other call sites may want.
-    private var collapsedSize: CGSize {
-        CGSize(width: motion.params.half * 2, height: motion.params.d + motion.params.sag + 6)
-    }
-
     /// 07-08 (D-06 Wave 2): the CONSTANT hosting frame — the band's own bounding box plus droplet
     /// room, `NotchPanelController.openFrameSize`'s single source. Load-bearing for the SAME reason
     /// the old fixed `expandedSize` was (see `NotchPanelController.makePanel`'s hosting-view
