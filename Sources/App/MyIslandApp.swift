@@ -12,5 +12,13 @@ struct MyIslandApp: App {
 
     var body: some Scene {
         Settings { EmptyView() }
+            .commands {
+                CommandGroup(replacing: .appSettings) {
+                    Button("Settings…") {
+                        NotificationCenter.default.post(name: .openMyIslandSettings, object: nil)
+                    }
+                    .keyboardShortcut(",")
+                }
+            }
     }
 }

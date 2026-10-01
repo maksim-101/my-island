@@ -46,6 +46,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         let defaults = UserDefaults.standard
         defaults.removeObject(forKey: "com.myisland.surfaceMaterial")
         defaults.removeObject(forKey: "NSStatusItem Preferred Position Item-0")
+        defaults.removeObject(forKey: "NSWindow Frame com_apple_SwiftUI_Settings_window")
         if let stored = defaults.string(forKey: NotchPanelController.enabledModulesKey) {
             let kept = BandModules.enabled(from: stored.split(separator: ",").map(String.init)).map(\.rawValue).joined(separator: ",")
             if kept != stored { defaults.set(kept, forKey: NotchPanelController.enabledModulesKey) }
