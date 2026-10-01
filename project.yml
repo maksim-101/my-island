@@ -57,6 +57,6 @@ targets:
         CFBundleName: my-island
         CFBundleShortVersionString: "$(MARKETING_VERSION)"
         CFBundleVersion: "$(CURRENT_PROJECT_VERSION)"
-        NSAppleEventsUsageDescription: my-island sends Apple Events to verify Automation permission.
+        NSAppleEventsUsageDescription: my-island sends Apple Events to Calendar to show the day of a meeting, or today, when you open Calendar from the notch.
         NSCalendarsFullAccessUsageDescription: my-island reads your calendar to show a countdown to your next meeting and a one-click join link.
         NSAudioCaptureUsageDescription: my-island samples the system audio output level to animate the collapsed-notch sound-wave while music is playing. Audio is never recorded, stored, or transmitted — only a live loudness value drives the bars.

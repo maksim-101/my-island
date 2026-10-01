@@ -45,6 +45,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private static func dropRemovedSettings() {
         let defaults = UserDefaults.standard
         defaults.removeObject(forKey: "com.myisland.surfaceMaterial")
+        defaults.removeObject(forKey: "NSStatusItem Preferred Position Item-0")
         if let stored = defaults.string(forKey: NotchPanelController.enabledModulesKey) {
             let kept = BandModules.enabled(from: stored.split(separator: ",").map(String.init)).map(\.rawValue).joined(separator: ",")
             if kept != stored { defaults.set(kept, forKey: NotchPanelController.enabledModulesKey) }
@@ -83,7 +84,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             win.styleMask = [.titled, .closable]
             win.isReleasedWhenClosed = false
             win.delegate = self
-            win.setContentSize(NSSize(width: 420, height: 460))
             win.center()
             settingsWindow = win
         }

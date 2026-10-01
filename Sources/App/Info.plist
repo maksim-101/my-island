@@ -23,7 +23,7 @@
 	<key>LSUIElement</key>
 	<true/>
 	<key>NSAppleEventsUsageDescription</key>
-	<string>my-island sends Apple Events to verify Automation permission.</string>
+	<string>my-island sends Apple Events to Calendar to show the day of a meeting, or today, when you open Calendar from the notch.</string>
 	<key>NSAudioCaptureUsageDescription</key>
 	<string>my-island samples the system audio output level to animate the collapsed-notch sound-wave while music is playing. Audio is never recorded, stored, or transmitted — only a live loudness value drives the bars.</string>
 	<key>NSCalendarsFullAccessUsageDescription</key>
