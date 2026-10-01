@@ -1389,11 +1389,20 @@ final class NotchPanelController: NSObject {
     /// itself, since a still-open, still-registered droplet must not have its registry wiped out
     /// from under it.
     private func relinquishKeyFocus(on panel: NotchPanel) {
+        let app = panel.previousApp
+        panel.previousApp = nil
+        // When my-island's own Settings window was frontmost, activating "the previous app" moves
+        // no focus and a bare `resignKey()` left the AX focus on the panel, so the next ⌥Space's
+        // keys never reached `handleBandKeyDown` (2026-10-01 UAT: 1 of 10 runs worked). Hand key
+        // status to that window instead.
+        if app?.processIdentifier == NSRunningApplication.current.processIdentifier, panel.isKeyWindow,
+           let window = NSApp.orderedWindows.first(where: { !($0 is NotchPanel) && $0.isVisible && $0.canBecomeKey }) {
+            window.makeKey()
+            return
+        }
         if panel.isKeyWindow {
             panel.resignKey()
         }
-        let app = panel.previousApp
-        panel.previousApp = nil
         app?.activate()
     }
 
