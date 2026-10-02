@@ -9,7 +9,6 @@ struct SettingsView: View {
 
     @State private var calendarGroups: [(sourceName: String, calendars: [(id: String, title: String)])] = []
     @AppStorage(NotchPanelController.showOnNotchlessDisplaysKey) private var showOnNotchlessDisplays = NotchPanelController.showOnNotchlessDisplaysDefault
-    @AppStorage(NotchPanelController.wingLeftContentKey) private var wingLeftContent = NotchPanelController.wingLeftContentDefault
     /// MOD-01 (07-11): the persisted enabled-module list — comma-joined `BandModule.rawValue`s,
     /// the same physical `String` representation `NotchPanelController.enabledModulesFromDefaults()`
     /// parses (SwiftUI's `AppStorage` has no native `Array<String>` support).
@@ -27,19 +26,6 @@ struct SettingsView: View {
             Section("Toggle shortcut") {
                 KeyboardShortcuts.Recorder(for: .toggleNotchPanel)
                 Text("Requires ⌘, ⌃, or ⌥ (not ⇧ alone). System-reserved keys (e.g. ⌘M, ⌃Space) won't take.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-
-            // 07-02 Task 3: the two Fluid-redesign settings — the left wing's content while a
-            // timer runs (agreement §2's promoted assumption-delta decision) and, since 07-01
-            // recorded `material_decision: option`, the collapsed-surface material (D-07).
-            Section("Notch") {
-                Picker("With a timer running, the left wing shows", selection: $wingLeftContent) {
-                    Text("Artwork").tag("artwork")
-                    Text("Sound wave").tag("wave")
-                }
-                Text("With no timer running, the left wing always shows artwork when music plays.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }

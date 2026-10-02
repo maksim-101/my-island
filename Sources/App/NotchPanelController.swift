@@ -112,14 +112,6 @@ final class NotchPanelController: NSObject {
     /// interaction to record against, and logs `selfTest done` when it finishes.
     static let motionSelfTestKey = "MyIslandMotionSelfTest"
 
-    /// 07-02 Task 3 (WR-04 paired-constant convention): which content the left wing shows when a
-    /// timer runs WITH music (the only slot the assumption-delta decision promoted to a setting —
-    /// music alone always shows artwork, a timer alone shows no left content at all). Read live via
-    /// `@AppStorage` by both `SettingsView`'s picker and `WingItemsView`'s left-slot renderer, so
-    /// switching needs no panel rebuild. An unknown stored value degrades to the default (T-06-08).
-    static let wingLeftContentKey = "com.myisland.wingLeftContent"
-    static let wingLeftContentDefault = "artwork"
-
     /// MOD-01 (07-11): persisted key for the Settings "Modules" toggles — Alcove-style per-module
     /// on/off, Settings-driven, same `com.myisland.*` reverse-DNS convention as every other
     /// persisted key above. Stored as a comma-joined list of `BandModule.rawValue`s: SwiftUI's
@@ -141,8 +133,7 @@ final class NotchPanelController: NSObject {
 
     /// Static form of `enabledModules` — `Self.makePanel` (a static factory, no instance to read
     /// from) and `NotchContentView`'s own SwiftUI-side module list (no controller instance is
-    /// threaded to that view) both read this directly, the identical shared-UserDefaults-read
-    /// pattern `wingLeftContent` already establishes for a Settings-driven value
+    /// threaded to that view) both read this directly — one shared UserDefaults read for a Settings-driven value
     /// consumed on both the AppKit and SwiftUI side of this app.
     static func enabledModulesFromDefaults() -> [BandModule] {
         let stored = UserDefaults.standard.string(forKey: enabledModulesKey)
