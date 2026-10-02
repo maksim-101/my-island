@@ -59,6 +59,10 @@ final class NotchPanelController: NSObject {
     private let brightnessProvider = BrightnessProvider()
     private let hud = HUDViewModel()
 
+    // Owned ONCE here too (HUD-04): the tap must survive every screen-parameter rebuild. Internal,
+    // not private, so plan 08-02's Settings row can read its state.
+    let brightnessTap = BrightnessKeyTap()
+
     // Owned ONCE here too, alongside the other providers above — the
     // Calendar auth state (and the fetched next event) must persist across a
     // screen-parameter rebuild and later feed the HUD. No HUD/threshold
@@ -97,6 +101,11 @@ final class NotchPanelController: NSObject {
     /// both this controller's own fallback below AND `SettingsView`'s `@AppStorage` default read
     /// from this constant, so the two can no longer silently desync.
     static let showOnNotchlessDisplaysDefault = true
+
+    /// HUD-03/04: persisted key for the opt-in "replace the system brightness bezel" setting.
+    /// Same reverse-DNS convention; renaming it after shipping silently resets every install.
+    static let replaceBrightnessBezelKey = "com.myisland.replaceBrightnessBezel"
+    static let replaceBrightnessBezelDefault = false
 
     /// Debug-only UserDefaults flag (never a Settings toggle — mirrors `MyIslandVerboseLogging`'s
     /// convention): when set, `makePanelSet` and every completed collapse log a `clickProbe` line
@@ -157,8 +166,21 @@ final class NotchPanelController: NSObject {
         UserDefaults.standard.object(forKey: Self.showOnNotchlessDisplaysKey) as? Bool ?? Self.showOnNotchlessDisplaysDefault
     }
 
+    private var replaceBrightnessBezel: Bool {
+        UserDefaults.standard.object(forKey: Self.replaceBrightnessBezelKey) as? Bool ?? Self.replaceBrightnessBezelDefault
+    }
+
+    /// A press at a rail fires no change notification (A7), so the drop is shown explicitly.
+    private func applyBrightnessKey(_ press: BrightnessKey.Event) -> Bool {
+        guard let level = brightnessProvider.step(up: press.up, fine: press.fine) else { return false }
+        hud.showBrightness(level: Double(BrightnessScale.barFraction(for: level)))
+        return true
+    }
+
     override init() {
         super.init()
+
+        brightnessTap.apply = { [weak self] press in self?.applyBrightnessKey(press) ?? false }
 
         // `level` is now `Float?` (T-7h2 §1.3): a device with no readable volume property hides
         // the row rather than showing the previous device's stale value, mirroring how
@@ -254,6 +276,7 @@ final class NotchPanelController: NSObject {
         }
 
         rebuildPanels()
+        brightnessTap.reconcile(enabled: replaceBrightnessBezel)
 
         // 07-13 (FEEL-05): the scripted self-test only ever runs when a human/script opted in via
         // `motionSelfTestKey` at launch — never on a normal run. `rebuildPanels()` above must have

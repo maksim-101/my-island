@@ -48,6 +48,12 @@ final class BrightnessProvider {
     private typealias GetBrightnessFn = @convention(c) (CGDirectDisplayID, UnsafeMutablePointer<Float>) -> Int32
     private var getBrightness: GetBrightnessFn?
 
+    /// The one validated setter signature (RESEARCH Security Domain; MonitorControl
+    /// `Bridging-Header.h`). The smoothing variant is never resolved: its signature is unvalidated
+    /// and a wrong `@convention(c)` signature on a private symbol is a SIGSEGV (Pitfall 1).
+    private typealias SetBrightnessFn = @convention(c) (CGDirectDisplayID, Float) -> Int32
+    private var setBrightness: SetBrightnessFn?
+
     private typealias RegisterFn = @convention(c) (CGDirectDisplayID, UInt64, BrightnessChangeCallback) -> Int32
 
     // Accessed from `deinit`, which runs nonisolated — safe because
@@ -79,6 +85,9 @@ final class BrightnessProvider {
             return
         }
         getBrightness = unsafeBitCast(sym, to: GetBrightnessFn.self)
+        if let setSym = dlsym(handle, "DisplayServicesSetBrightness") {
+            setBrightness = unsafeBitCast(setSym, to: SetBrightnessFn.self)
+        }
         refresh()
 
         if !registerForChangeNotifications(handle: handle) {
@@ -100,7 +109,10 @@ final class BrightnessProvider {
             }
         }
 
-        let displayID = CGMainDisplayID()
+        guard let displayID = Self.builtInDisplayID(requireActive: false) else {
+            brightnessSink = nil
+            return false
+        }
         let status = register(displayID, UInt64(displayID), brightnessChangeCallback)
         guard status == 0 else {
             brightnessSink = nil
@@ -115,14 +127,39 @@ final class BrightnessProvider {
             return
         }
         var value: Float = 0
-        // CGMainDisplayID() resolves to the built-in panel on this
-        // single-machine target hardware (Assumption A2).
-        let displayID = CGMainDisplayID()
+        // The built-in panel, never whichever display is main: the external is often main
+        // (RESEARCH Pitfall 2).
+        guard let displayID = Self.builtInDisplayID(requireActive: false) else { return }
         let status = getBrightness(displayID, &value)
         guard status == 0 else {
             return
         }
         publish(value)
+    }
+
+    /// The built-in display found by `CGDisplayIsBuiltin`, re-resolved on every call because display
+    /// ids change across reconfiguration. `requireActive` excludes a built-in that is online but
+    /// not drawing (clamshell), where the setter cannot work.
+    static func builtInDisplayID(requireActive: Bool) -> CGDirectDisplayID? {
+        var ids = [CGDirectDisplayID](repeating: 0, count: 16)
+        var count: UInt32 = 0
+        guard CGGetOnlineDisplayList(UInt32(ids.count), &ids, &count) == .success else { return nil }
+        return ids.prefix(Int(count)).first {
+            CGDisplayIsBuiltin($0) != 0 && (!requireActive || CGDisplayIsActive($0) != 0)
+        }
+    }
+
+    /// One key step on the built-in display, read fresh from the hardware rather than from the
+    /// coalesced `level`. Returns the new level only when the setter reported success, so the tap
+    /// swallows a press only when this ran (HUD-04: the key never goes dead).
+    func step(up: Bool, fine: Bool) -> Float? {
+        guard let getBrightness, let setBrightness,
+              let displayID = Self.builtInDisplayID(requireActive: true) else { return nil }
+        var current: Float = 0
+        guard getBrightness(displayID, &current) == 0 else { return nil }
+        let next = BrightnessKey.nextLevel(current: current, up: up, fine: fine)
+        guard setBrightness(displayID, next) == 0 else { return nil }
+        return next
     }
 
     private func publish(_ value: Float) {
