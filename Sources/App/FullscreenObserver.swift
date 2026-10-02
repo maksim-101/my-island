@@ -134,6 +134,10 @@ final class FullscreenObserver {
     /// tracks for existing (pre-D-06) callers.
     private(set) var fullscreenDisplayID: CGDirectDisplayID?
     var onChange: (() -> Void)?
+    /// Fired from the existing ~1 s poll when the Accessibility grant flips (HUD-03). Never fires on
+    /// the first read; this observer only reads trust, it never prompts (T-05-16).
+    var onAccessibilityTrustChange: ((Bool) -> Void)?
+    private var lastAccessibilityTrusted: Bool?
     /// `false` only when the very first query returned no usable window
     /// information at all — lets callers distinguish "definitely not
     /// fullscreen" from "this signal never worked" (RESEARCH Assumption A3).
@@ -458,6 +462,10 @@ final class FullscreenObserver {
         watchedDisplayIDs = Self.notchlessDisplaysWithFullscreenSpace()
 
         let axTrusted = AXIsProcessTrusted()
+        if let previous = lastAccessibilityTrusted, previous != axTrusted {
+            onAccessibilityTrustChange?(axTrusted)
+        }
+        lastAccessibilityTrusted = axTrusted
         let result = Self.classify(axTrusted: axTrusted)
 
         // 20260912-menubar-coverage-rule (Task 2): unconditional — logged BEFORE the change-guard

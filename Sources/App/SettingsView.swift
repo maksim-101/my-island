@@ -1,4 +1,5 @@
 import SwiftUI
+import ApplicationServices
 import ServiceManagement
 import KeyboardShortcuts
 import MyIslandCore
@@ -13,6 +14,8 @@ struct SettingsView: View {
     /// the same physical `String` representation `NotchPanelController.enabledModulesFromDefaults()`
     /// parses (SwiftUI's `AppStorage` has no native `Array<String>` support).
     @AppStorage(NotchPanelController.enabledModulesKey) private var enabledModulesRaw = NotchPanelController.enabledModulesDefault.joined(separator: ",")
+
+    @AppStorage(NotchPanelController.replaceBrightnessBezelKey) private var replaceBrightnessBezel = NotchPanelController.replaceBrightnessBezelDefault
 
     @State private var launchAtLogin = SMAppService.mainApp.status == .enabled
     @State private var loginItemNeedsApproval = SMAppService.mainApp.status == .requiresApproval
@@ -65,6 +68,37 @@ struct SettingsView: View {
                     .foregroundStyle(.secondary)
             }
 
+            Section("HUD") {
+                Toggle("Replace the system brightness bezel", isOn: Binding(
+                    get: { replaceBrightnessBezel },
+                    set: { newValue in
+                        replaceBrightnessBezel = newValue
+                        if newValue && !AXIsProcessTrusted() { requestAccessibility() }
+                        panels.brightnessBezelSettingChanged()
+                    }
+                ))
+                Text("Brightness keys show only my-island's drop, and my-island changes the brightness itself. Needs Accessibility access, which is asked for when you turn this on. The same access also lets my-island recognise Safari fullscreen video.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                switch panels.brightnessTap.state {
+                case .needsAccessibility:
+                    Text("my-island does not have Accessibility access, so the brightness keys work as before.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    Button("Open Privacy & Security › Accessibility") {
+                        if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility") {
+                            NSWorkspace.shared.open(url)
+                        }
+                    }
+                case .failed:
+                    Text("The brightness keys could not be taken over, so they work as before.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                case .off, .active:
+                    EmptyView()
+                }
+            }
+
             Section("Calendars") {
                 if calendarGroups.isEmpty {
                     Text("No calendars found.")
@@ -113,6 +147,13 @@ struct SettingsView: View {
         .onChange(of: enabledModulesRaw) {
             panels.modulesChanged()
         }
+    }
+
+    /// The only place in the app that may raise the Accessibility dialog (HUD-03); called solely from
+    /// the HUD toggle's setter, and only when the grant is missing.
+    private func requestAccessibility() {
+        let options = ["AXTrustedCheckOptionPrompt": true] as CFDictionary
+        _ = AXIsProcessTrustedWithOptions(options)
     }
 
     private func refreshLoginItemState() {

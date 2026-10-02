@@ -238,6 +238,11 @@ final class NotchPanelController: NSObject {
         // coincide with other pending frame work, and a synthetic panel's `pendingCollapse == nil`
         // guard still applies) and keeps logging the raw per-display detection signal for
         // on-hardware correlation, under a name that no longer implies a visual sliver exists.
+        fullscreenObserver.onAccessibilityTrustChange = { [weak self] trusted in
+            guard let self else { return }
+            self.logger.notice("accessibility trusted=\(trusted, privacy: .public)")
+            self.brightnessTap.reconcile(enabled: self.replaceBrightnessBezel)
+        }
         fullscreenObserver.onChange = { [weak self] in
             guard let self else { return }
             for (key, set) in self.panelSets {
@@ -351,6 +356,10 @@ final class NotchPanelController: NSObject {
     /// next notification removes, never a crash or full-app teardown. Not `private` —
     /// `SettingsView`'s "Show on displays without a notch" toggle (SHELL-10) calls this directly
     /// so flipping it reconciles live, without a restart.
+    func brightnessBezelSettingChanged() {
+        brightnessTap.reconcile(enabled: replaceBrightnessBezel)
+    }
+
     func rebuildPanels() {
         // Every screen resolves to a Mode — physical cutout or synthetic top-center pill (Phase 6
         // SHELL-06/07) — except a synthetic-mode screen while the toggle is off, which is skipped
