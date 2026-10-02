@@ -245,8 +245,13 @@ final class NotchPanelController: NSObject {
         // pill per screen, all showing the same `hud` state); this preserves that.
         hud.onVisibilityChange = { [weak self] visible in
             guard let self else { return }
-            for set in self.panelSets.values where set.model.isOpen != true {
+            for (key, set) in self.panelSets {
+                if set.model.isOpen == true {
+                    if visible { self.logger.notice("hudDrop skip key=\(key, privacy: .public) reason=open") }
+                    continue
+                }
                 if visible {
+                    self.logHUDDropStart(key: key, set: set)
                     self.startAlertDrop(on: set.panel, motion: set.motion)
                 } else {
                     self.endAlertDrop(on: set.panel, motion: set.motion)
@@ -727,6 +732,17 @@ final class NotchPanelController: NSObject {
         }
         let (halfWidth, height) = AlertDropLayout.hud(isPhysical: panel.isPhysical)
         return (halfWidth, height, false)
+    }
+
+    /// FLUID-02 evidence (08-04): which surface the drop grows from on this display and whether
+    /// its settled bottom (floor at the centre + the 8 pt rest offset + drop height) fits the
+    /// overlay window. Observation only; the drop geometry is not touched.
+    private func logHUDDropStart(key: String, set: PanelSet) {
+        let surface = set.panel.isPhysical ? "physical" : (isFullscreenBulge(for: set.panel) ? "bulge" : "pill")
+        let floor = FluidShapeGeometry.floorY(x: 0, q: collapsedParams(for: set.panel), cx: 0)
+        let dropBottom = ((floor + 8 + dropSize(for: set.panel).height) * 2).rounded() / 2
+        let overlayHeight = set.overlay.frame.height
+        logger.notice("hudDrop start key=\(key, privacy: .public) surface=\(surface, privacy: .public) dropBottom=\(dropBottom, privacy: .public) overlayHeight=\(overlayHeight, privacy: .public) fits=\(dropBottom <= overlayHeight, privacy: .public)")
     }
 
     /// Starts the HUD/alert drop's fall on one panel's own `FluidMotion` clock — ported from the
