@@ -2,8 +2,7 @@ import CoreGraphics
 
 /// Ported (D-02) from `.planning/sketches/005-band-droplet/index.html:134-143`'s `Spring` class —
 /// identical semi-implicit Euler integrator (`k = (2π/resp)²`, `c = 4π·damp/resp`, velocity
-/// updated before position), identical field names. RED-phase stub: signatures final, bodies are
-/// placeholders that intentionally fail the behavior tests.
+/// updated before position), identical field names.
 public final class FluidSpring {
     public var x: CGFloat
     public var v: CGFloat = 0

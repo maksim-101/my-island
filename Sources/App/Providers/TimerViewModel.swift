@@ -62,7 +62,7 @@ final class TimerViewModel {
 
     /// Elapsed-fraction of the current run, clamped 0...1 — the single source both the expanded
     /// panel's progress axis (`TimerPanelView.axisRow`) and the collapsed notch's right-wing
-    /// progress ring (`NotchBarView`, quick 260925-osd) read, so the two views can never disagree
+    /// progress ring (pre-fluid renderer, quick 260925-osd) read, so the two views can never disagree
     /// about how far along the timer is. 0 when `startedDuration` is not yet set (before a timer
     /// starts, or right after `reset()`).
     var progressFraction: Double {

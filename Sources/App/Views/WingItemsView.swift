@@ -3,7 +3,7 @@ import MyIslandCore
 
 /// The collapsed fluid pill's 16pt wing items (07-02 Task 2, D-02/agreement §2): a left and a
 /// right slot sitting against the camera housing, ported unchanged in behaviour from the retired
-/// `NotchBarView`'s ear renderers. Positions are the sketch's `WING` table
+/// pre-fluid ear renderers. Positions are the sketch's `WING` table
 /// (`.planning/sketches/006-design-round/index.html:699`): physical ±103.5pt at y 18, synthetic
 /// ±56pt at y 15, both measured from the pill's own center (`cx`) — this view is given the SAME
 /// frame the fluid fill draws in (`NotchContentView`'s `openSize`), so its own local center lines
@@ -32,7 +32,7 @@ struct WingItemsView: View {
     private var wingX: CGFloat { isPhysical ? Self.builtinX : Self.dellX }
     private var wingY: CGFloat { isPhysical ? Self.builtinY : Self.dellY }
 
-    /// Mirrors `NotchBarView.pill`'s music-visible gate exactly (T-7h2 Task 2 idiom): suppressed —
+    /// Mirrors the pre-fluid pill's music-visible gate exactly (T-7h2 Task 2 idiom): suppressed —
     /// absent, not dimmed — during content-fullscreen.
     private var musicVisible: Bool {
         nowPlaying.displayEar && !fullscreen.isAmbientSuppressed(on: displayID)
@@ -59,7 +59,7 @@ struct WingItemsView: View {
     }
 }
 
-/// Ported from `NotchBarView.SoundWaveView` (07-02 Task 2, "unchanged in behaviour"): five thin
+/// Ported from the pre-fluid SoundWaveView (07-02 Task 2, "unchanged in behaviour"): five thin
 /// bars whose amplitude tracks the real system-audio output level via `SystemAudioLevelProvider`,
 /// fitted into the 16pt wing slot.
 private struct WingSoundWaveView: View {

@@ -1,6 +1,6 @@
 import CoreGraphics
 
-/// D-06 Wave 2 (MOD-01, PANEL-04): the band's five modules in fixed order, and the enabled-set
+/// D-06 Wave 2 (MOD-01, PANEL-04): the band's four modules in fixed order, and the enabled-set
 /// rules Settings drives. Ported per D-02 from `.planning/sketches/006-design-round/index.html:242-248`
 /// (`MODS`) and `:355` (`DROP_W`) — no AppKit/SwiftUI import.
 public enum BandModule: String, CaseIterable, Sendable {

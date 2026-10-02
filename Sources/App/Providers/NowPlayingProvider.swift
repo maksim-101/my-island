@@ -460,7 +460,7 @@ final class NowPlayingProvider {
     /// mirrors `CalendarProvider`'s `tickTimer` convention.
     nonisolated(unsafe) private var progressTickTimer: Timer?
 
-    /// Drives `NotchBarView`'s D-05 disjunction gate — true while the session is playing or within
+    /// Drives the pre-fluid D-05 disjunction gate — true while the session is playing or within
     /// its post-stop grace window (D-06/D-07), false once it is hidden.
     var displayEar: Bool {
         classification.visibility != .hidden

@@ -3,8 +3,7 @@ import CoreGraphics
 /// D-02: the fluid outline parameter vector — every notch surface on every display (pill,
 /// desktop pill, fullscreen bulge, band, detail droplet, alert/HUD drop) is one value of this
 /// type. Fields and their idle values (`Z` in the sketch) are ported verbatim from
-/// `.planning/sketches/006-design-round/index.html:226-227`. This is a RED-phase stub: fields
-/// and signatures are final, bodies are placeholders that intentionally fail the behavior tests.
+/// `.planning/sketches/006-design-round/index.html:226-227`.
 public struct FluidParams: Equatable, Sendable {
     public var half: CGFloat
     public var run: CGFloat

@@ -104,11 +104,11 @@ import MyIslandCore
 /// screen frame — the same `topInset: 0` match fires correctly with zero new code. This is the rule
 /// behaving as intended under auto-hide, not an exception that needs a setting or a special case.
 // 260801-7h2-regressions round 3 (SUPPRESSION-STALENESS): this class was never marked
-// `@Observable`, unlike every sibling provider `NotchBarView` reads (`NowPlayingProvider`,
+// `@Observable`, unlike every sibling provider the pre-fluid ear renderer read (`NowPlayingProvider`,
 // `TimerViewModel`, `NotchViewModel` are all `@MainActor @Observable`) — and `onChange` (below) is
 // declared but never wired up by `NotchPanelController`. `refresh()` DOES recompute
 // `isFrontmostFullscreen`/`isAmbientSuppressed` correctly on every ~1s poll, unconditionally, but
-// with no observation mechanism SwiftUI has no way to know a re-render is needed: `NotchBarView`
+// with no observation mechanism SwiftUI has no way to know a re-render is needed: the pre-fluid ear renderer
 // only picks up the fresh values opportunistically, when some OTHER `@Observable` dependency it
 // also reads (`nowPlaying`, `timer`, `model.isOpen`) happens to force a body re-evaluation around
 // the same moment. When nothing else changes — e.g. switching directly between two already-
@@ -124,7 +124,7 @@ import MyIslandCore
 @Observable
 final class FullscreenObserver {
     private(set) var isFrontmostFullscreen: Bool = false
-    /// T-7h2 Task 2: the finer "content takeover" signal `NotchBarView`'s ambient row (and its
+    /// T-7h2 Task 2: the finer "content takeover" signal the pre-fluid ambient row (and its
     /// wing-hover region) should gate on, per `FullscreenClassifier.decide`. Independent of
     /// `isFrontmostFullscreen`, which Task 3's notch-locator glow still consumes directly.
     private(set) var isAmbientSuppressed: Bool = false
