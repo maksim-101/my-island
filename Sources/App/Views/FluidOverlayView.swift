@@ -73,10 +73,15 @@ struct FluidOverlayView: View {
                 // never steps it directly (RESEARCH.md Pitfall 2).
                 if showsTimerLine {
                     let channel = max(0, min(1, motion.channels[.timerProgress] ?? 0))
-                    FluidOutlineShape(params: motion.params, closed: false)
-                        .trim(from: 0, to: channel)
-                        .stroke(Tokens.timerColor(for: lineTokenState), style: StrokeStyle(lineWidth: 2, lineCap: .round))
-                        .opacity((timer.isPaused ? 0.45 : 0.9) * max(0, 1 - (motion.channels[.bandAlpha] ?? 0) * 3))
+                    let line = FluidOutlineShape(params: motion.params, closed: false).trim(from: 0, to: channel)
+                    // A 3pt black stroke under the 2pt orange one leaves a 0.5pt dark edge on each
+                    // side, so the line stays legible on bright or orange-toned wallpaper (user
+                    // choice 2026-10-02; the pill reaches 0.5pt lower only while a timer runs).
+                    ZStack {
+                        line.stroke(Color.black, style: StrokeStyle(lineWidth: 3, lineCap: .round))
+                        line.stroke(Tokens.timerColor(for: lineTokenState), style: StrokeStyle(lineWidth: 2, lineCap: .round))
+                    }
+                    .opacity((timer.isPaused ? 0.45 : 1) * max(0, 1 - (motion.channels[.bandAlpha] ?? 0) * 3))
                 }
 
                 // 07-04 Task 2 (PANEL-07 amended, agreement §6): the finished-timer pulse — three

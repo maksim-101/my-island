@@ -83,7 +83,9 @@ as considered instrument, not decoration; information-dense but never loud.
 ### Timer state colors (locked)
 
 Color on a timer always **means** which timer/state is running, and the collapsed outline line and the expanded
-axis/chip use the **same** color so the two views read as one:
+axis/chip use the **same** color so the two views read as one. The collapsed line is 2pt, fully opaque,
+over a 3pt black stroke (a 0.5pt dark edge each side) so it stays legible on bright or orange-toned
+wallpaper (2026-10-02):
 
 - **Countdown → orange** (`accent-countdown`, `#FF9500`) — amended 2026-09-27: the original indigo
   choice collided visually with the collapsed pill's always-present indigo rim, which draws on the
