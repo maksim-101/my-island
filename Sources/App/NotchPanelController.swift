@@ -306,9 +306,11 @@ final class NotchPanelController: NSObject {
         //
         // The monitor below is therefore kept, with the trade-off made explicit: it is
         // observe-only and non-consuming — it reads mouse-movement position only, never a
-        // keystroke event mask, and never a low-level event-tap creation/enable call — so it
-        // needs no TCC grant of any kind, and neither Info.plist nor MyIsland.entitlements
-        // declares an input-monitoring or accessibility usage key. It lets a hover over a timer
+        // keystroke event mask, and never a low-level event-tap creation/enable call — so this
+        // monitor needs no grant. The app's only event tap is the opt-in brightness tap in
+        // BrightnessKeyTap.swift (HUD-03), created only after the user turns on the Settings
+        // toggle and grants Accessibility; Info.plist and MyIsland.entitlements still declare no
+        // input-monitoring or accessibility usage key. It lets a hover over a timer
         // wing expand the notch like a hover over the notch itself. Global fires while another
         // app is active (the usual case for this accessory app); local fires while our own
         // Settings window is key.

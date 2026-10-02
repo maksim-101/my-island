@@ -69,10 +69,11 @@ there), Gatekeeper will quarantine it. Clear the quarantine flag before first la
 xattr -dr com.apple.quarantine /Applications/my-island.app
 ```
 
-Accessibility is **optional** — it's used only to detect Safari fullscreen video (see "Known
-Limitations" below) and, like the other grants, is forgotten on every ad-hoc rebuild. my-island
-will never prompt for it; grant it manually in System Settings -> Privacy & Security ->
-Accessibility if you want the Safari fullscreen-video discrimination.
+Accessibility stays **optional**. my-island asks for it only when you turn on Settings -> HUD ->
+"Replace the system brightness bezel": the brightness keys then show only my-island's drop, and
+my-island changes the brightness itself. The same grant also lets it tell Safari fullscreen video
+apart (see "Known Limitations" below). Like the other grants it is forgotten on every ad-hoc
+rebuild; you can also grant it by hand in System Settings -> Privacy & Security -> Accessibility.
 
 ### Diagnostic logging
 

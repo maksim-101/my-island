@@ -25,3 +25,4 @@ tccutil reset ListenEvent "$BUNDLE_ID"
 echo "    Reset: ListenEvent (Input Monitoring)"
 
 echo "==> Done. All grants for $BUNDLE_ID cleared — re-grant on next use."
+echo "    Quit and relaunch my-island now: a running process can keep reporting the old Accessibility grant until it restarts."
