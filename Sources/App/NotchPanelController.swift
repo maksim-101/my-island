@@ -424,18 +424,12 @@ final class NotchPanelController: NSObject {
         var kept = 0
         for key in diff.kept {
             guard let set = panelSets[key], let (screen, mode) = desired[key] else { continue }
-            // 2026-09-27 (regression found live): `screen.menuBarHeight` is `frame.maxY -
-            // visibleFrame.maxY`, which reads `0` whenever ANY app — including one on the
-            // built-in display itself — goes native fullscreen and the menu bar auto-hides.
-            // `NSApplication.didChangeScreenParametersNotification` (this method's own caller)
-            // fires on exactly that transition. Comparing against the live value unconditionally
-            // meant every fullscreen toggle tore down and rebuilt the physical panel set — a
-            // brand-new `FluidMotion` with every channel (including the running timer's own
-            // outline-progress spring) reset to 0, needing to visibly re-animate from empty each
-            // time. `FluidParams.macBookPill(menuBarHeight:notchHeight:)` already floors depth at
-            // the notch height (07-15), so a transient 0 changes nothing about the drawn geometry
-            // — only a genuine, currently-visible menu-bar reading is worth rebuilding for.
-            if set.panel.notchFrame != mode.anchorRect || set.panel.anchorMaxY != screen.frame.maxY || set.panel.isPhysical != mode.isPhysical || (screen.menuBarHeight > 0 && set.panel.menuBarHeight != screen.menuBarHeight) {
+            // The decision lives in DisplayReconcilePolicy (relative geometry; its doc comment
+            // carries the 2026-09-27 transient-zero menu-bar rationale).
+            let previousGeometry = DisplayGeometry(screenFrame: set.panel.screenFrame, anchorRect: set.panel.notchFrame, isPhysical: set.panel.isPhysical, menuBarHeight: set.panel.menuBarHeight)
+            let currentGeometry = DisplayGeometry(screenFrame: screen.frame, anchorRect: mode.anchorRect, isPhysical: mode.isPhysical, menuBarHeight: screen.menuBarHeight)
+            if case .rebuild(let reason) = DisplayReconcilePolicy.decide(previous: previousGeometry, current: currentGeometry) {
+                logger.notice("reconcile key=\(key, privacy: .public) decision=rebuilt reason=\(reason.rawValue, privacy: .public)")
                 // WR-02 (06-REVIEW.md): a fresh `NotchViewModel` always starts collapsed — carry
                 // the torn-down set's open state forward through the SAME code path a hover/hotkey
                 // open uses (`toggle()`), rather than reaching into the new model's private dwell
@@ -453,6 +447,7 @@ final class NotchPanelController: NSObject {
                 }
                 rebuilt += 1
             } else {
+                logger.notice("reconcile key=\(key, privacy: .public) decision=kept")
                 reapplyFrames(to: set, screen: screen, mode: mode, key: key)
                 kept += 1
             }
