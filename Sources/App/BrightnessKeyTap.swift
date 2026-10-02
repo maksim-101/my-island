@@ -25,6 +25,7 @@ final class BrightnessKeyTap {
     static let productionMask = CGEventMask(1 << 14)
     static let probeMask = productionMask | CGEventMask(1 << 10)
     static let probeKey = "MyIslandKeyProbe"
+    static let timeoutSelfTestKey = "MyIslandTapTimeoutSelfTest"
 
     private(set) var state: BrightnessBezelState = .off
 
@@ -34,9 +35,16 @@ final class BrightnessKeyTap {
     @ObservationIgnored private var probeEnabled = false
     @ObservationIgnored private var installFailedLogged = false
     @ObservationIgnored private var lastLoggedState: BrightnessBezelState?
+    @ObservationIgnored private var lastEnabled = false
+    @ObservationIgnored private var lastApplied: TimeInterval?
+    /// Directions (`up`) whose latest key-down this tap swallowed; their key-up is swallowed too.
+    @ObservationIgnored private var swallowedDirections: Set<Bool> = []
+    @ObservationIgnored private var selfTestArmed = false
+    @ObservationIgnored private var selfTestConsumed = false
     private let logger = AppLog.make("BrightnessKeyTap")
 
     func reconcile(enabled: Bool) {
+        lastEnabled = enabled
         let trusted = AXIsProcessTrusted()
         if enabled && trusted && tap == nil { install() }
         if (!enabled || !trusted) && tap != nil { remove() }
@@ -51,6 +59,9 @@ final class BrightnessKeyTap {
 
     private func install() {
         probeEnabled = UserDefaults.standard.bool(forKey: Self.probeKey)
+        selfTestArmed = !selfTestConsumed && UserDefaults.standard.bool(forKey: Self.timeoutSelfTestKey)
+        lastApplied = nil
+        swallowedDirections = []
         let mask = probeEnabled ? Self.probeMask : Self.productionMask
         guard let created = CGEvent.tapCreate(
             tap: .cgSessionEventTap,
@@ -93,6 +104,10 @@ final class BrightnessKeyTap {
 
     private func handle(type: CGEventType, event: CGEvent) -> Unmanaged<CGEvent>? {
         let passThrough = Unmanaged.passUnretained(event)
+        if type == .tapDisabledByTimeout || type == .tapDisabledByUserInput {
+            reArm(reason: type == .tapDisabledByTimeout ? "timeout" : "userInput")
+            return passThrough
+        }
         guard type.rawValue == UInt32(Self.systemDefinedType) else {
             if probeEnabled, type == .keyDown {
                 let code = event.getIntegerValueField(.keyboardEventKeycode)
@@ -112,11 +127,47 @@ final class BrightnessKeyTap {
             }
         }
 
-        guard let press = BrightnessKey.decode(subtype: subtype, data1: data1, flags: event.flags.rawValue),
-              press.isDown else { return passThrough }
+        guard let press = BrightnessKey.decode(subtype: subtype, data1: data1, flags: event.flags.rawValue) else { return passThrough }
+        guard press.isDown else {
+            return swallowedDirections.remove(press.up) != nil ? nil : passThrough
+        }
+
+        let now = ProcessInfo.processInfo.systemUptime
+        if swallowedDirections.contains(press.up),
+           BrightnessKey.isThrottled(isRepeat: press.isRepeat, now: now, lastApplied: lastApplied) {
+            return nil
+        }
+        if selfTestArmed {
+            selfTestArmed = false
+            selfTestConsumed = true
+            Thread.sleep(forTimeInterval: 2.0)
+            logger.notice("brightnessTap selfTest stalled=2.0s")
+        }
         let applied = apply?(press) == true
         logger.notice("brightnessTap press up=\(press.up, privacy: .public) fine=\(press.fine, privacy: .public) applied=\(applied, privacy: .public)")
-        return applied ? nil : passThrough
+        if applied {
+            lastApplied = now
+            swallowedDirections.insert(press.up)
+            return nil
+        }
+        swallowedDirections.remove(press.up)
+        return passThrough
+    }
+
+    /// The system disables a tap whose callback stalled or that was displaced by user input; a
+    /// disabled-but-registered tap would leave the keys dead (RESEARCH Pitfall 3).
+    private func reArm(reason: String) {
+        guard AXIsProcessTrusted() else {
+            logger.notice("brightnessTap removed reason=untrusted")
+            let enabled = lastEnabled
+            DispatchQueue.main.async { [weak self] in
+                MainActor.assumeIsolated { self?.reconcile(enabled: enabled) }
+            }
+            return
+        }
+        if let tap { CGEvent.tapEnable(tap: tap, enable: true) }
+        let enabled = tap.map { CGEvent.tapIsEnabled(tap: $0) } ?? false
+        logger.notice("brightnessTap reArmed reason=\(reason, privacy: .public) enabled=\(enabled, privacy: .public)")
     }
 
     private func logTapOwners() {

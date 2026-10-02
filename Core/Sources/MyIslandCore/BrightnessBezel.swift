@@ -37,6 +37,16 @@ public enum BrightnessKey {
     public static let standardStep: Float = 1.0 / 16.0
     public static let fineStep: Float = 1.0 / 64.0
 
+    /// About 16 steps per second while a key is held (BrightBoi's value, RESEARCH A13); tune here.
+    public static let repeatInterval: TimeInterval = 0.06
+
+    /// A held key's auto-repeats apply at most one step per `repeatInterval`; the first press is
+    /// never throttled.
+    public static func isThrottled(isRepeat: Bool, now: TimeInterval, lastApplied: TimeInterval?) -> Bool {
+        guard isRepeat, let lastApplied else { return false }
+        return now - lastApplied < repeatInterval
+    }
+
     /// `nil` unless this is a brightness key press my-island should handle. Command, Control or
     /// Option alone keep their system meaning (external display, Displays settings, mirroring) and
     /// pass through; Shift is accepted as a plain press and Option+Shift selects the fine step.
