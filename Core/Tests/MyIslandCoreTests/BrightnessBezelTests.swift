@@ -99,3 +99,20 @@ private let command: UInt64 = 0x100000
     #expect(BrightnessBezelState.resolve(enabled: true, trusted: true, tapActive: true) == .active)
     #expect(BrightnessBezelState.resolve(enabled: true, trusted: true, tapActive: false) == .failed)
 }
+
+/// HUD-04: held-key throttle (RESEARCH A13).
+@Test func throttleFirstPressNeverThrottled() {
+    #expect(BrightnessKey.isThrottled(isRepeat: false, now: 10, lastApplied: 9.99) == false)
+}
+
+@Test func throttleRepeatInsideInterval() {
+    #expect(BrightnessKey.isThrottled(isRepeat: true, now: 10.05, lastApplied: 10.0) == true)
+}
+
+@Test func throttleRepeatAfterInterval() {
+    #expect(BrightnessKey.isThrottled(isRepeat: true, now: 10.07, lastApplied: 10.0) == false)
+}
+
+@Test func throttleRepeatWithoutHistory() {
+    #expect(BrightnessKey.isThrottled(isRepeat: true, now: 10, lastApplied: nil) == false)
+}
