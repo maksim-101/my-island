@@ -202,8 +202,8 @@ struct NotchContentView: View {
     /// 07-04 Task 1 (FLUID-01, agreement §1/§5): whether this display's collapsed surface is
     /// currently the fullscreen bulge — mirrors `NotchPanelController`'s own
     /// `isFullscreenBulge(for:)` gate exactly (a synthetic display whose frontmost window is
-    /// fullscreen). Gates `WingItemsView` to empty: the bulge shows no artwork, wave or
-    /// clock-face, only the outline timer line `FluidOverlayView` draws.
+    /// fullscreen). Gates `WingItemsView` to empty: the bulge shows no artwork or wave, only
+    /// the outline timer line `FluidOverlayView` draws.
     private var isBulge: Bool {
         !isPhysical && fullscreen.isFrontmostFullscreen(on: displayID)
     }
@@ -224,7 +224,7 @@ struct NotchContentView: View {
             // of popping out the instant the band starts pouring. `isOpen: false` here is
             // deliberate — see `wingFade`'s own doc comment for why the internal binary gate is
             // routed around rather than driven from `model.isOpen`.
-            WingItemsView(timer: timer, nowPlaying: nowPlaying, fullscreen: fullscreen, displayID: displayID, isPhysical: isPhysical, isOpen: false, isBulge: isBulge)
+            WingItemsView(nowPlaying: nowPlaying, fullscreen: fullscreen, displayID: displayID, isPhysical: isPhysical, isOpen: false, isBulge: isBulge)
                 .frame(width: openSize.width, height: openSize.height)
                 .opacity(wingFade)
                 .animation(reduceMotionCrossFade, value: wingFade)

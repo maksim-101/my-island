@@ -82,7 +82,7 @@ as considered instrument, not decoration; information-dense but never loud.
 
 ### Timer state colors (locked)
 
-Color on a timer always **means** which timer/state is running, and the collapsed ring and the expanded
+Color on a timer always **means** which timer/state is running, and the collapsed outline line and the expanded
 axis/chip use the **same** color so the two views read as one:
 
 - **Countdown → orange** (`accent-countdown`, `#FF9500`) — amended 2026-09-27: the original indigo
@@ -123,9 +123,11 @@ they are no longer part of the notch once they've separated, so they may even be
 **opening the band is the only thing that widens the notch itself** — this replaces and resolves the old
 "never widens" rule, which read as a contradiction once the HUD/alert drops and the wing items shipped.
 
-Wing items (artwork, live sound wave, running-timer clock-face) sit 16pt, against the camera housing at a
-3pt gap, which stays **empty** — nothing is ever drawn over it. Expansion (hover / hotkey) pours the same
-shape into the band.
+Wing items (artwork left, live sound wave right, shown only while music is visible) sit 16pt, against the
+camera housing at a 3pt gap, which stays **empty** — nothing is ever drawn over it.
+A timer never takes a wing: on every collapsed surface (MacBook pill, Dell desktop pill, fullscreen bulge)
+a running timer is a line in its state color along the outline, reaching the right end at 100%, and a
+finished one pulses as rings of that outline. Expansion (hover / hotkey) pours the same shape into the band.
 
 ## Components
 

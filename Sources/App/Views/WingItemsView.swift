@@ -9,31 +9,20 @@ import MyIslandCore
 /// frame the fluid fill draws in (`NotchContentView`'s `openSize`), so its own local center lines
 /// up with that `cx` for free.
 ///
-/// Slot rule (agreement §2): music alone → left artwork, right sound wave; a running timer alone →
-/// right clock-face only; both together → right clock-face (the timer always wins the right wing),
-/// left = the Settings-picked choice below (07-02 Task 3, default artwork — with no timer running
-/// this setting has no visible effect, per its own invariant test). The timer disjunct for the
-/// right slot sits OUTSIDE the fullscreen suppression — a running timer keeps showing in every
-/// fullscreen state, mirroring the physical wing's pre-fluid gate exactly.
+/// Slot rule, amended 2026-10-02 (user decision). The wings show music only: artwork left and
+/// sound wave right, whenever music is visible. A running or just-finished timer never takes a
+/// wing; on every display it is `FluidOverlayView`'s outline timer line.
 @MainActor
 struct WingItemsView: View {
-    let timer: TimerViewModel
     let nowPlaying: NowPlayingProvider
     let fullscreen: FullscreenObserver
     let displayID: CGDirectDisplayID?
     let isPhysical: Bool
     let isOpen: Bool
     /// 07-04 Task 1 (FLUID-01, agreement §5): whether this display's collapsed surface is
-    /// currently the fullscreen bulge — while true, neither slot ever shows, overriding the
-    /// timer disjunct's own "shows in every fullscreen state" rule below. Only the bulge's own
-    /// outline timer line (`FluidOverlayView`, Task 2) and, from plan 05, the meeting alert draw
-    /// on the bulge.
+    /// currently the fullscreen bulge — while true neither wing shows, and only the outline
+    /// timer line (`FluidOverlayView`) and the alert drops draw on the bulge.
     let isBulge: Bool
-
-    /// 07-02 Task 3: read live so flipping the Settings picker updates the wing immediately with
-    /// no panel rebuild. An unknown stored value (T-06-08) degrades to `.artwork` in `leftSlot`
-    /// below, never crashes and never silently reads as `.wave`.
-    @AppStorage(NotchPanelController.wingLeftContentKey) private var wingLeftContent = NotchPanelController.wingLeftContentDefault
 
     private static let builtinX: CGFloat = 92.5 + 3 + 8
     private static let builtinY: CGFloat = 18
@@ -44,73 +33,29 @@ struct WingItemsView: View {
     private var wingY: CGFloat { isPhysical ? Self.builtinY : Self.dellY }
 
     /// Mirrors `NotchBarView.pill`'s music-visible gate exactly (T-7h2 Task 2 idiom): suppressed —
-    /// absent, not dimmed — during content-fullscreen, never gated by the plain app-fullscreen
-    /// signal the timer disjunct below deliberately ignores.
+    /// absent, not dimmed — during content-fullscreen.
     private var musicVisible: Bool {
         nowPlaying.displayEar && !fullscreen.isAmbientSuppressed(on: displayID)
     }
 
-    private enum Slot {
-        case artwork
-        case wave
-        case timerFace
-    }
-
-    private var leftSlot: Slot? {
-        guard !isBulge else { return nil }
-        guard musicVisible else { return nil }
-        // The Settings choice only ever matters when the timer ALSO runs — with no timer, music
-        // alone is always artwork (agreement §2), so this branch is the setting's one visible
-        // effect, and the invariant test (no timer → no visible effect) holds by construction.
-        guard timer.isRunning else { return .artwork }
-        return wingLeftContent == "wave" ? .wave : .artwork
-    }
-
-    private var rightSlot: Slot? {
-        guard !isBulge else { return nil }
-        // The timer disjunct sits OUTSIDE `musicVisible`'s fullscreen suppression — a running (or
-        // just-finished, 07-04 Task 2) timer still shows in every OTHER fullscreen state, same as
-        // the pre-fluid physical wing. The bulge (guarded above) and, since 2026-09-27, the
-        // MacBook pill both replace this clock-face with `FluidOverlayView`'s outline timer line
-        // instead (its own `showsTimerLine` mirrors this exact condition) — only the Dell desktop
-        // pill still shows the clock-face here.
-        if timer.isRunning || timer.finishedAt != nil {
-            return isPhysical ? nil : .timerFace
-        }
-        if musicVisible { return .wave }
-        return nil
-    }
+    private var showsMusic: Bool { !isBulge && musicVisible }
 
     var body: some View {
         GeometryReader { proxy in
             let cx = proxy.size.width / 2
             ZStack(alignment: .topLeading) {
-                if let leftSlot {
-                    slotView(leftSlot)
+                if showsMusic {
+                    ArtworkTile(artwork: nowPlaying.artwork, size: 16, cornerRadius: 4)
+                        .opacity(nowPlaying.isPausedInGrace ? 0.55 : 1)
                         .position(x: cx - wingX, y: wingY)
-                }
-                if let rightSlot {
-                    slotView(rightSlot)
+                    WingSoundWaveView()
+                        .opacity(nowPlaying.isPausedInGrace ? 0.55 : 1)
                         .position(x: cx + wingX, y: wingY)
                 }
             }
         }
         .opacity(isOpen ? 0 : 1)
         .allowsHitTesting(false)
-    }
-
-    @ViewBuilder
-    private func slotView(_ slot: Slot) -> some View {
-        switch slot {
-        case .artwork:
-            ArtworkTile(artwork: nowPlaying.artwork, size: 16, cornerRadius: 4)
-                .opacity(nowPlaying.isPausedInGrace ? 0.55 : 1)
-        case .wave:
-            WingSoundWaveView()
-                .opacity(nowPlaying.isPausedInGrace ? 0.55 : 1)
-        case .timerFace:
-            WingTimerClockFace(timer: timer)
-        }
     }
 }
 
@@ -159,46 +104,5 @@ private struct WingSoundWaveView: View {
         guard !reduceMotion else { return Self.minHeight + level * (Self.maxHeight - Self.minHeight) }
         let shape = (sin(time * 6 + Double(index) * 0.9) + 1) / 2 * 0.6 + 0.4
         return Self.minHeight + level * (Self.maxHeight - Self.minHeight) * CGFloat(shape)
-    }
-}
-
-/// Ported from `NotchBarView.timerRing` (07-02 Task 2, "unchanged in behaviour"): a 16pt clock-face
-/// whose wedge sweeps from 12 o'clock over `timer.progressFraction`, in the timer's own state
-/// color, with the same accessibility label/value.
-private struct WingTimerClockFace: View {
-    let timer: TimerViewModel
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-
-    /// 07-04 Task 2: `tokenState` reads nil once a timer has ended (`engine.mode` is already
-    /// cleared) — while `finishedAt` is set, `finishedTokenState` (captured right before
-    /// completion) is the only source that still knows the finished colour, so the clock-face
-    /// stays lit "full, in the finished colour" instead of dropping to `textFaint`.
-    private var displayedTokenState: Tokens.TimerState? {
-        timer.finishedAt != nil ? timer.finishedTokenState : timer.tokenState
-    }
-
-    var body: some View {
-        ZStack {
-            let color = Tokens.timerColor(for: displayedTokenState)
-            Circle()
-                .fill(color.opacity(0.18))
-            Circle()
-                .inset(by: 4)
-                .trim(from: 0, to: timer.progressFraction)
-                .stroke(color.opacity(0.65), style: StrokeStyle(lineWidth: 8, lineCap: .butt))
-                .rotationEffect(.degrees(-90))
-                .animation(reduceMotion ? nil : .linear(duration: 1), value: timer.progressFraction)
-            Circle()
-                .strokeBorder(color.opacity(0.35), lineWidth: 0.5)
-        }
-        .frame(width: Tokens.Spacing.lg, height: Tokens.Spacing.lg)
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel("Timer")
-        .accessibilityValue("\(formatted(timer.remaining)) remaining")
-    }
-
-    private func formatted(_ interval: TimeInterval) -> String {
-        let total = max(0, Int(interval.rounded()))
-        return String(format: "%d:%02d", total / 60, total % 60)
     }
 }

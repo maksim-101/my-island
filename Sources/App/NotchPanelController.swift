@@ -646,7 +646,7 @@ final class NotchPanelController: NSObject {
         panel.controller = self
         panel.orderFrontRegardless()
 
-        let overlay = Self.makeOverlayPanel(notchFrame: anchorRect, anchorMaxY: anchorMaxY, isPhysical: mode.isPhysical, menuBarHeight: screen.menuBarHeight, motion: motion, model: model, timer: timer, fullscreen: fullscreenObserver, displayID: screen.displayID, hud: hud)
+        let overlay = Self.makeOverlayPanel(notchFrame: anchorRect, anchorMaxY: anchorMaxY, isPhysical: mode.isPhysical, menuBarHeight: screen.menuBarHeight, motion: motion, model: model, timer: timer, hud: hud)
         overlay.orderFrontRegardless()
 
         // The printed height distinguishes the launched-app menu-bar value from the 22pt
@@ -1115,11 +1115,10 @@ final class NotchPanelController: NSObject {
     /// The click-through overlay window (replaces the old non-interactive "extended pill" bar):
     /// `ignoresMouseEvents = true` always — it draws rim/glow (`FluidOverlayView`) over the
     /// interactive panel's fill and never shadows that panel's own click-through toggling.
-    /// `timer`/`fullscreen`/`displayID` (07-04 Task 2) let it draw the bulge's own outline timer
-    /// line and the finished-timer pulse — the same providers/observer threaded to every other
-    /// per-display view. `hud` (07-05 Task 1) lets it draw the HUD/alert drop — replaces the old
+    /// `timer` (07-04 Task 2) lets it draw the outline timer line and the finished-timer pulse —
+    /// the same provider threaded to every other per-display view. `hud` (07-05 Task 1) lets it draw the HUD/alert drop — replaces the old
     /// separate, always-detached `hud` panel window entirely.
-    private static func makeOverlayPanel(notchFrame: NSRect, anchorMaxY: CGFloat, isPhysical: Bool, menuBarHeight: CGFloat, motion: FluidMotion, model: NotchViewModel, timer: TimerViewModel, fullscreen: FullscreenObserver, displayID: CGDirectDisplayID?, hud: HUDViewModel) -> NSPanel {
+    private static func makeOverlayPanel(notchFrame: NSRect, anchorMaxY: CGFloat, isPhysical: Bool, menuBarHeight: CGFloat, motion: FluidMotion, model: NotchViewModel, timer: TimerViewModel, hud: HUDViewModel) -> NSPanel {
         let q = collapsedParams(isPhysical: isPhysical, notchFrame: notchFrame, menuBarHeight: menuBarHeight)
         let frame = overlayPanelFrame(notchFrame: notchFrame, anchorMaxY: anchorMaxY, q: q)
 
@@ -1127,7 +1126,7 @@ final class NotchPanelController: NSObject {
 
         let container = NSView(frame: NSRect(origin: .zero, size: frame.size))
         container.autoresizesSubviews = true
-        let hosting = NSHostingView(rootView: FluidOverlayView(motion: motion, model: model, isPhysical: isPhysical, timer: timer, fullscreen: fullscreen, displayID: displayID, hud: hud))
+        let hosting = NSHostingView(rootView: FluidOverlayView(motion: motion, model: model, isPhysical: isPhysical, timer: timer, hud: hud))
         hosting.frame = NSRect(origin: .zero, size: frame.size)
         hosting.autoresizingMask = [.width, .height]
         container.addSubview(hosting)

@@ -13,30 +13,22 @@ struct FluidOverlayView: View {
     let isPhysical: Bool
     /// 07-04 Task 2 (FEEL-02, PANEL-07 amended): the same `TimerViewModel` instance
     /// `NotchPanelController` threads everywhere else — this view reads `isRunning`/`isPaused`/
-    /// `progressFraction`/`finishedAt`/`finishedTokenState` to drive the bulge's outline timer
-    /// line and the three-ring finished pulse.
+    /// `progressFraction`/`finishedAt`/`finishedTokenState` to drive the outline timer line and
+    /// the three-ring finished pulse.
     let timer: TimerViewModel
-    /// Threaded through for the SAME `isFullscreenBulge` computation `NotchContentView`/
-    /// `WingItemsView` already do — the outline timer line draws on the bulge and the MacBook
-    /// pill (user decision 2026-09-27); the Dell desktop pill keeps its wing clock-face.
-    let fullscreen: FullscreenObserver
-    let displayID: CGDirectDisplayID?
     /// 07-05 Task 1 (FLUID-02/PANEL-07): the same shared arbiter `NotchPanelController` already
     /// threads everywhere else — this view reads `isShowingHUD`/`glyph`/`level` to draw the HUD
     /// drop here (the click-through window); a linked meeting drop instead lives in the
     /// interactive panel (Task 3) so its Join button can take clicks.
     let hud: HUDViewModel
 
-    /// Mirrors `NotchContentView.isBulge`/`NotchPanelController.isFullscreenBulge(for:)` exactly.
-    private var isBulge: Bool { !isPhysical && fullscreen.isFrontmostFullscreen(on: displayID) }
+    /// Agreement §5, amended 2026-10-02 (user decision). Every collapsed surface (MacBook pill,
+    /// Dell desktop pill, fullscreen bulge) carries the timer as a line along its own outline
+    /// while it runs or has JUST finished (the line reaches 100% right as the pulse starts). No
+    /// timer ever occupies a wing.
+    private var showsTimerLine: Bool { timer.isRunning || timer.finishedAt != nil }
 
-    /// Agreement §5, amended 2026-09-27 (user decision): the bulge's outline AND the MacBook
-    /// pill's own outline carry the timer line — while collapsed, running or JUST finished (the
-    /// line reaches 100% right as the pulse starts). The Dell desktop pill (`!isPhysical &&
-    /// !isBulge`) is unchanged — it keeps `WingItemsView`'s clock-face.
-    private var showsTimerLine: Bool { (isBulge || isPhysical) && (timer.isRunning || timer.finishedAt != nil) }
-
-    /// The colour the timer line (and, while finished, the clock-face) draws in — `tokenState`
+    /// The colour the timer line draws in — `tokenState`
     /// reads nil once `engine.mode` clears at completion, so `finishedTokenState` (captured right
     /// before) is the only source left that still knows which colour just finished.
     private var lineTokenState: Tokens.TimerState? {
@@ -72,11 +64,11 @@ struct FluidOverlayView: View {
                     .stroke(Tokens.Color.accent, lineWidth: 0.9)
                     .opacity(0.32 + max(0, glow - 0.2))
 
-                // 07-04 Task 2 (FLUID-01/FEEL-02, agreement §5): the bulge's own outline IS the
-                // timer — a line in the timer's colour runs from the outline's left end and
-                // reaches the right end at 100%, dims to 45% while paused, and fades out while the
-                // band is open (`bandAlpha` — unset before plan 08, so this is full-strength
-                // today). `motion.channels[.timerProgress]` is driven toward the live target by
+                // 07-04 Task 2 (FLUID-01/FEEL-02, agreement §5): the collapsed outline IS the
+                // timer, on every display (amended 2026-10-02) — a line in the timer's colour runs
+                // from the outline's left end and reaches the right end at 100%, dims to 45%
+                // while paused, and fades out while the band is open (`bandAlpha` — unset before
+                // plan 08, so this is full-strength today). `motion.channels[.timerProgress]` is driven toward the live target by
                 // `updateTimerLine()` below; this view only ever READS the spring's current value,
                 // never steps it directly (RESEARCH.md Pitfall 2).
                 if showsTimerLine {
@@ -90,10 +82,9 @@ struct FluidOverlayView: View {
                 // 07-04 Task 2 (PANEL-07 amended, agreement §6): the finished-timer pulse — three
                 // rings of the current collapsed outline expanding outward in the finished colour
                 // while the glow tints to match, ~3.2s in all (`FluidPulse.duration`), then gone.
-                // Drawn on whichever collapsed surface is showing (pill OR bulge) — unlike the
-                // timer line above, this is NOT gated on `isBulge`. `TimelineView(.animation)`
-                // only exists while `finishedAt` is set, so this costs nothing the other 99% of
-                // the time an island sits collapsed and idle.
+                // Drawn on whichever collapsed surface is showing (pill OR bulge).
+                // `TimelineView(.animation)` only exists while `finishedAt` is set, so this costs
+                // nothing the other 99% of the time an island sits collapsed and idle.
                 if let finishedAt = timer.finishedAt {
                     let pulseColor = Tokens.timerColor(for: timer.finishedTokenState)
                     if motion.reduceMotion {
@@ -143,14 +134,13 @@ struct FluidOverlayView: View {
             .onChange(of: timer.remaining) { updateTimerLine() }
             .onChange(of: timer.finishedAt) { updateTimerLine() }
             .onChange(of: timer.isRunning) { updateTimerLine() }
-            .onChange(of: isBulge) { updateTimerLine() }
             .onAppear { updateTimerLine() }
         }
     }
 
     /// Ported from index.html:566-567 `P.tprog.to(...)`: toward the live progress (or, once
     /// finished, toward 1) at response 1.1/damping 1, or toward 1 at response 0.5 while ending —
-    /// toward 0, same response, whenever the bulge isn't showing a timer at all. The spring itself
+    /// toward 0, same response, whenever no timer is running or just finished. The spring itself
     /// (`FluidMotion`'s own clock) does the interpolating; this only ever sets its TARGET.
     private func updateTimerLine() {
         let finished = timer.finishedAt != nil
