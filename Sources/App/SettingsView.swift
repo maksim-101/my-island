@@ -16,6 +16,7 @@ struct SettingsView: View {
     @AppStorage(NotchPanelController.enabledModulesKey) private var enabledModulesRaw = NotchPanelController.enabledModulesDefault.joined(separator: ",")
 
     @AppStorage(NotchPanelController.replaceBrightnessBezelKey) private var replaceBrightnessBezel = NotchPanelController.replaceBrightnessBezelDefault
+    @AppStorage(NotchPanelController.showVolumeHUDKey) private var showVolumeHUDOverride: Bool?
 
     @State private var launchAtLogin = SMAppService.mainApp.status == .enabled
     @State private var loginItemNeedsApproval = SMAppService.mainApp.status == .requiresApproval
@@ -97,6 +98,13 @@ struct SettingsView: View {
                 case .off, .active:
                     EmptyView()
                 }
+                Toggle("Show volume HUD", isOn: Binding(
+                    get: { showVolumeHUDOverride ?? !panels.fineTuneMonitor.isRunning },
+                    set: { showVolumeHUDOverride = $0 }
+                ))
+                Text("Automatic: hidden while FineTune is running, because FineTune shows its own volume HUD. Flipping this switch replaces the automatic choice.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             }
 
             Section("Calendars") {
@@ -143,6 +151,9 @@ struct SettingsView: View {
         }
         .onChange(of: showOnNotchlessDisplays) {
             panels.rebuildPanels()
+        }
+        .onChange(of: showVolumeHUDOverride) {
+            panels.volumeHUDSettingChanged()
         }
         .onChange(of: enabledModulesRaw) {
             panels.modulesChanged()

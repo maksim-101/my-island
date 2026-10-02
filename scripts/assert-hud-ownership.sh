@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# HUD ownership guard (HUD-03, HUD-04, HUD-06) — re-runnable after any change.
+# HUD ownership guard (HUD-03, HUD-04, HUD-05, HUD-06) — re-runnable after any change.
 #
 # Static checks for the invariants that keep the brightness tap opt-in and narrow: one
 # Accessibility prompt call site, one event tap, a type-14-only production mask, a built-in-only
@@ -93,6 +93,22 @@ check_dev_reset_accessibility() {
   else fail dev-reset-accessibility "scripts/dev-reset.sh no longer resets Accessibility"; fi
 }
 
+check_volume_gate() {
+  local hits
+  hits=$(count_lines "$(code_hits 'VolumeHUDPolicy.shouldShow(' Sources/App/NotchPanelController.swift)")
+  if [[ "$hits" -eq 1 ]]; then pass volume-gate
+  else fail volume-gate "expected one VolumeHUDPolicy.shouldShow( in NotchPanelController.swift, found $hits"; fi
+}
+
+check_finetune_read_only() {
+  local file=Sources/App/FineTuneMonitor.swift hits="" p
+  for p in forceTerminate '.terminate(' '.hide(' '.activate(' openApplication; do
+    hits+=$(code_hits "$p" "$file")
+  done
+  if [[ -z "$hits" ]]; then pass finetune-read-only
+  else fail finetune-read-only "FineTuneMonitor acts on FineTune: $hits"; fi
+}
+
 check_prompt_call_site
 check_prompt_option
 check_prompt_entry
@@ -101,6 +117,8 @@ check_production_mask
 check_built_in_only
 check_debug_flags_read_only
 check_dev_reset_accessibility
+check_volume_gate
+check_finetune_read_only
 
 echo "assert-hud-ownership: $passed passed, $failed failed"
 [[ "$failed" -eq 0 ]]

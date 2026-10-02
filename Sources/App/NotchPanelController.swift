@@ -180,10 +180,14 @@ final class NotchPanelController: NSObject {
         UserDefaults.standard.object(forKey: Self.showVolumeHUDKey) as? Bool
     }
 
+    private func volumeHUDShouldShow() -> Bool {
+        VolumeHUDPolicy.shouldShow(override: volumeHUDOverride, fineTuneRunning: fineTuneMonitor.isRunning)
+    }
+
     private func logVolumeHUDPolicy() {
         let override = volumeHUDOverride
         let running = fineTuneMonitor.isRunning
-        let show = VolumeHUDPolicy.shouldShow(override: override, fineTuneRunning: running)
+        let show = volumeHUDShouldShow()
         let overrideText = override.map { String($0) } ?? "nil"
         logger.notice("volumeHUD policy override=\(overrideText, privacy: .public) fineTuneRunning=\(running, privacy: .public) show=\(show, privacy: .public)")
     }
@@ -211,7 +215,7 @@ final class NotchPanelController: NSObject {
             guard let self, let level = self.volumeProvider.level else { return }
             self.fineTuneMonitor.rescan()
             let override = self.volumeHUDOverride
-            guard VolumeHUDPolicy.shouldShow(override: override, fineTuneRunning: self.fineTuneMonitor.isRunning) else {
+            guard self.volumeHUDShouldShow() else {
                 self.logger.notice("volumeHUD suppressed reason=\(override == nil ? "fineTune" : "override", privacy: .public)")
                 return
             }
