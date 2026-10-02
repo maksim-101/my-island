@@ -58,6 +58,7 @@ final class NotchPanelController: NSObject {
     private let volumeProvider = VolumeProvider()
     private let brightnessProvider = BrightnessProvider()
     private let hud = HUDViewModel()
+    let fineTuneMonitor = FineTuneMonitor()
 
     // Owned ONCE here too (HUD-04): the tap must survive every screen-parameter rebuild. Internal,
     // not private, so plan 08-02's Settings row can read its state.
@@ -106,6 +107,11 @@ final class NotchPanelController: NSObject {
     /// Same reverse-DNS convention; renaming it after shipping silently resets every install.
     static let replaceBrightnessBezelKey = "com.myisland.replaceBrightnessBezel"
     static let replaceBrightnessBezelDefault = false
+
+    /// HUD-05: persisted override for "Show volume HUD". There is deliberately no paired default
+    /// constant: an absent value means automatic (hidden while FineTune runs). Never rename it —
+    /// that silently drops every stored override.
+    static let showVolumeHUDKey = "com.myisland.showVolumeHUD"
 
     /// Debug-only UserDefaults flag (never a Settings toggle — mirrors `MyIslandVerboseLogging`'s
     /// convention): when set, `makePanelSet` and every completed collapse log a `clickProbe` line
@@ -170,6 +176,22 @@ final class NotchPanelController: NSObject {
         UserDefaults.standard.object(forKey: Self.replaceBrightnessBezelKey) as? Bool ?? Self.replaceBrightnessBezelDefault
     }
 
+    private var volumeHUDOverride: Bool? {
+        UserDefaults.standard.object(forKey: Self.showVolumeHUDKey) as? Bool
+    }
+
+    private func logVolumeHUDPolicy() {
+        let override = volumeHUDOverride
+        let running = fineTuneMonitor.isRunning
+        let show = VolumeHUDPolicy.shouldShow(override: override, fineTuneRunning: running)
+        let overrideText = override.map { String($0) } ?? "nil"
+        logger.notice("volumeHUD policy override=\(overrideText, privacy: .public) fineTuneRunning=\(running, privacy: .public) show=\(show, privacy: .public)")
+    }
+
+    func volumeHUDSettingChanged() {
+        logVolumeHUDPolicy()
+    }
+
     /// A press at a rail fires no change notification (A7), so the drop is shown explicitly.
     private func applyBrightnessKey(_ press: BrightnessKey.Event) -> Bool {
         guard let level = brightnessProvider.step(up: press.up, fine: press.fine) else { return false }
@@ -187,6 +209,15 @@ final class NotchPanelController: NSObject {
         // `brightnessProvider.onChange` already guards below.
         volumeProvider.onChange = { [weak self] in
             guard let self, let level = self.volumeProvider.level else { return }
+            self.fineTuneMonitor.rescan()
+            let override = self.volumeHUDOverride
+            guard VolumeHUDPolicy.shouldShow(override: override, fineTuneRunning: self.fineTuneMonitor.isRunning) else {
+                self.logger.notice("volumeHUD suppressed reason=\(override == nil ? "fineTune" : "override", privacy: .public)")
+                return
+            }
+            if override == true, self.fineTuneMonitor.isRunning {
+                self.logger.notice("volumeHUD shown reason=override")
+            }
             self.hud.showVolume(level: Double(level), muted: self.volumeProvider.isMuted)
         }
         // Only wired when the private brightness bridge actually resolved —
@@ -331,6 +362,9 @@ final class NotchPanelController: NSObject {
                 self?.rebuildPanels()
             }
         }
+
+        fineTuneMonitor.onChange = { [weak self] in self?.logVolumeHUDPolicy() }
+        logVolumeHUDPolicy()
     }
 
     deinit {
