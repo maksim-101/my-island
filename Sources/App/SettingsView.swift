@@ -98,11 +98,12 @@ struct SettingsView: View {
                 case .off, .active:
                     EmptyView()
                 }
-                Toggle("Show volume HUD", isOn: Binding(
-                    get: { showVolumeHUDOverride ?? !panels.fineTuneMonitor.isRunning },
-                    set: { showVolumeHUDOverride = $0 }
-                ))
-                Text("Automatic: hidden while FineTune is running, because FineTune shows its own volume HUD. Flipping this switch replaces the automatic choice.")
+                Picker("Volume HUD", selection: $showVolumeHUDOverride) {
+                    Text("Automatic").tag(Bool?.none)
+                    Text("Always show").tag(Bool?.some(true))
+                    Text("Never show").tag(Bool?.some(false))
+                }
+                Text("Automatic hides the volume HUD while FineTune is running, because FineTune shows its own. Always show and Never show ignore FineTune.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }

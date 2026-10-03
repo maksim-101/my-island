@@ -75,6 +75,10 @@ my-island changes the brightness itself. The same grant also lets it tell Safari
 apart (see "Known Limitations" below). Like the other grants it is forgotten on every ad-hoc
 rebuild; you can also grant it by hand in System Settings -> Privacy & Security -> Accessibility.
 
+The volume HUD follows FineTune by default: while FineTune is running my-island hides its own
+volume HUD. Settings -> HUD -> "Volume HUD" overrides that with "Always show" or "Never show"
+(stored in the `com.myisland.showVolumeHUD` default); "Automatic" removes the override again.
+
 ### Diagnostic logging
 
 The installed app writes nothing to the system log by default — that's deliberate, a
