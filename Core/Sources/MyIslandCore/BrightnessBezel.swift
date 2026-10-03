@@ -47,16 +47,22 @@ public enum BrightnessKey {
         return now - lastApplied < repeatInterval
     }
 
-    /// `nil` unless this is a brightness key press my-island should handle. Command, Control or
-    /// Option alone keep their system meaning (external display, Displays settings, mirroring) and
-    /// pass through; Shift is accepted as a plain press and Option+Shift selects the fine step.
-    public static func decode(subtype: Int16, data1: Int, flags: UInt64) -> Event? {
+    /// `nil` unless this is a brightness key event. Ignores modifiers, so a key-up or auto-repeat
+    /// whose modifiers changed mid-hold still pairs with the key-down that started it.
+    public static func decodeIgnoringModifiers(subtype: Int16, data1: Int) -> Event? {
         guard subtype == auxControlButtonsSubtype else { return nil }
         let code = (data1 & 0xFFFF0000) >> 16
         guard code == brightnessUpCode || code == brightnessDownCode else { return nil }
         let state = (data1 & 0xFF00) >> 8
         guard state == keyDownState || state == keyUpState else { return nil }
+        return Event(up: code == brightnessUpCode, isDown: state == keyDownState, isRepeat: data1 & 1 != 0, fine: false)
+    }
 
+    /// `nil` unless this is a brightness key press my-island should handle. Command, Control or
+    /// Option alone keep their system meaning (external display, Displays settings, mirroring) and
+    /// pass through; Shift is accepted as a plain press and Option+Shift selects the fine step.
+    public static func decode(subtype: Int16, data1: Int, flags: UInt64) -> Event? {
+        guard let raw = decodeIgnoringModifiers(subtype: subtype, data1: data1) else { return nil }
         let held = flags & (shiftMask | controlMask | optionMask | commandMask)
         let fine: Bool
         switch held {
@@ -64,7 +70,7 @@ public enum BrightnessKey {
         case optionMask | shiftMask: fine = true
         default: return nil
         }
-        return Event(up: code == brightnessUpCode, isDown: state == keyDownState, isRepeat: data1 & 1 != 0, fine: fine)
+        return Event(up: raw.up, isDown: raw.isDown, isRepeat: raw.isRepeat, fine: fine)
     }
 
     /// Grid-snapped so repeated presses land on clean values; clamped to 0...1.

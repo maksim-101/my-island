@@ -27,6 +27,27 @@ private let command: UInt64 = 0x100000
     #expect(event?.isDown == false)
 }
 
+@Test(arguments: [option, command, control, option | command])
+func brightnessKeyDecodeIgnoringModifiersKeyUpKeepsDirection(flags: UInt64) {
+    let up = BrightnessKey.decodeIgnoringModifiers(subtype: 8, data1: data1(code: 2, state: 0x0B))
+    let down = BrightnessKey.decodeIgnoringModifiers(subtype: 8, data1: data1(code: 3, state: 0x0B))
+    #expect(up?.up == true)
+    #expect(up?.isDown == false)
+    #expect(down?.up == false)
+    #expect(down?.isDown == false)
+    #expect(BrightnessKey.decode(subtype: 8, data1: data1(code: 2, state: 0x0B), flags: flags) == nil)
+}
+
+@Test func brightnessKeyDecodeIgnoringModifiersKeepsRepeatBit() {
+    let event = BrightnessKey.decodeIgnoringModifiers(subtype: 8, data1: data1(code: 2, state: 0x0A, repeatBit: 1))
+    #expect(event == BrightnessKey.Event(up: true, isDown: true, isRepeat: true, fine: false))
+}
+
+@Test func brightnessKeyDecodeIgnoringModifiersRejectsOtherKeys() {
+    #expect(BrightnessKey.decodeIgnoringModifiers(subtype: 7, data1: data1(code: 2, state: 0x0A)) == nil)
+    #expect(BrightnessKey.decodeIgnoringModifiers(subtype: 8, data1: data1(code: 5, state: 0x0A)) == nil)
+}
+
 @Test func brightnessKeyDecodeRepeatBit() {
     let event = BrightnessKey.decode(subtype: 8, data1: data1(code: 3, state: 0x0A, repeatBit: 1), flags: 0)
     #expect(event?.isRepeat == true)

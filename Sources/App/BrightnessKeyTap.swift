@@ -127,9 +127,12 @@ final class BrightnessKeyTap {
             }
         }
 
-        guard let press = BrightnessKey.decode(subtype: subtype, data1: data1, flags: event.flags.rawValue) else { return passThrough }
-        guard press.isDown else {
-            return swallowedDirections.remove(press.up) != nil ? nil : passThrough
+        guard let raw = BrightnessKey.decodeIgnoringModifiers(subtype: subtype, data1: data1) else { return passThrough }
+        guard raw.isDown else {
+            return swallowedDirections.remove(raw.up) != nil ? nil : passThrough
+        }
+        guard let press = BrightnessKey.decode(subtype: subtype, data1: data1, flags: event.flags.rawValue) else {
+            return raw.isRepeat && swallowedDirections.contains(raw.up) ? nil : passThrough
         }
 
         let now = ProcessInfo.processInfo.systemUptime
