@@ -69,6 +69,7 @@ final class BrightnessProvider {
     private let logger = AppLog.make("BrightnessProvider")
 
     var isAvailable: Bool { getBrightness != nil }
+    var canSetBrightness: Bool { getBrightness != nil && setBrightness != nil }
 
     init() {
         // Hardcoded absolute path — never relative or user-influenced

@@ -30,6 +30,7 @@ final class BrightnessKeyTap {
     private(set) var state: BrightnessBezelState = .off
 
     @ObservationIgnored var apply: ((BrightnessKey.Event) -> Bool)?
+    @ObservationIgnored var canApply = true
     @ObservationIgnored private var tap: CFMachPort?
     @ObservationIgnored private var source: CFRunLoopSource?
     @ObservationIgnored private var probeEnabled = false
@@ -46,10 +47,14 @@ final class BrightnessKeyTap {
     func reconcile(enabled: Bool) {
         lastEnabled = enabled
         let trusted = AXIsProcessTrusted()
-        if enabled && trusted && tap == nil { install() }
+        if let tap, !CGEvent.tapIsEnabled(tap: tap) { remove() }
+        if enabled && trusted && canApply && tap == nil { install() }
         if (!enabled || !trusted) && tap != nil { remove() }
+        refreshState(enabled: enabled, trusted: trusted)
+    }
 
-        let tapActive = tap.map { CGEvent.tapIsEnabled(tap: $0) } ?? false
+    private func refreshState(enabled: Bool, trusted: Bool) {
+        let tapActive = canApply && (tap.map { CGEvent.tapIsEnabled(tap: $0) } ?? false)
         state = BrightnessBezelState.resolve(enabled: enabled, trusted: trusted, tapActive: tapActive)
         if state != lastLoggedState {
             lastLoggedState = state
@@ -171,6 +176,13 @@ final class BrightnessKeyTap {
         if let tap { CGEvent.tapEnable(tap: tap, enable: true) }
         let enabled = tap.map { CGEvent.tapIsEnabled(tap: $0) } ?? false
         logger.notice("brightnessTap reArmed reason=\(reason, privacy: .public) enabled=\(enabled, privacy: .public)")
+        refreshState(enabled: lastEnabled, trusted: true)
+        if !enabled {
+            let wanted = lastEnabled
+            DispatchQueue.main.async { [weak self] in
+                MainActor.assumeIsolated { self?.reconcile(enabled: wanted) }
+            }
+        }
     }
 
     private func logTapOwners() {

@@ -207,6 +207,7 @@ final class NotchPanelController: NSObject {
         super.init()
 
         brightnessTap.apply = { [weak self] press in self?.applyBrightnessKey(press) ?? false }
+        brightnessTap.canApply = brightnessProvider.canSetBrightness
 
         // `level` is now `Float?` (T-7h2 §1.3): a device with no readable volume property hides
         // the row rather than showing the previous device's stale value, mirroring how
