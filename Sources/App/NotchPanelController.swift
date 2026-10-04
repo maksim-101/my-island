@@ -1883,7 +1883,6 @@ final class NotchPanelController: NSObject {
 private final class HoverTrackingView: NSView {
     var onHoverChange: ((Bool) -> Void)?
     var hoverTargetSize: CGSize? { didSet { updateTrackingAreas() } }
-    private static let logger = AppLog.make("HoverTracking")
 
     /// Keeps the (wider-than-container) hosting subview horizontally centered
     /// and top-pinned on every window resize, replacing the `autoresizingMask`
@@ -1902,7 +1901,6 @@ private final class HoverTrackingView: NSView {
     override func updateTrackingAreas() {
         super.updateTrackingAreas()
         trackingAreas.forEach(removeTrackingArea)
-        Self.logger.notice("hoverTracking bounds=\(NSStringFromRect(self.bounds), privacy: .public) target=\(self.hoverTargetSize.map { NSStringFromSize($0) } ?? "nil(inVisibleRect)", privacy: .public) rect=\(self.hoverTargetSize.map { NSStringFromRect(NotchGeometry.collapsedHoverRect(containerSize: self.bounds.size, notchSize: $0)) } ?? "visible", privacy: .public)")
         if let hoverTargetSize {
             // Explicit trigger band — no `.inVisibleRect`, which would override it and
             // track the full (possibly still-oversized) bounds instead.
