@@ -172,3 +172,39 @@ func brightnessKeyHeldFineRepeatKeepsFineStepAfterModifierChange(flags: UInt64) 
 @Test func throttleRepeatWithoutHistory() {
     #expect(BrightnessKey.isThrottled(isRepeat: true, now: 10, lastApplied: nil) == false)
 }
+
+/// WR-02: without a working setter the tap is never installed and the state reads `.failed`.
+@Test func brightnessTapActionNeverInstallsWithoutSetter() {
+    for enabled in [false, true] {
+        for trusted in [false, true] {
+            for hasTap in [false, true] {
+                for tapEnabled in [false, true] {
+                    let action = BrightnessTapAction.resolve(
+                        enabled: enabled, trusted: trusted, canApply: false, hasTap: hasTap, tapEnabled: tapEnabled
+                    )
+                    #expect(action != .install && action != .rebuild)
+                }
+            }
+        }
+    }
+    #expect(BrightnessTapAction.resolve(enabled: true, trusted: true, canApply: false, hasTap: false, tapEnabled: false) == .keep)
+    #expect(BrightnessBezelState.resolve(enabled: true, trusted: true, tapActive: false) == .failed)
+}
+
+/// WR-02: a registered-but-disabled tap is rebuilt, not left to leave the keys dead.
+@Test func brightnessTapActionRebuildsDisabledTap() {
+    #expect(BrightnessTapAction.resolve(enabled: true, trusted: true, canApply: true, hasTap: true, tapEnabled: false) == .rebuild)
+    #expect(BrightnessTapAction.resolve(enabled: true, trusted: true, canApply: true, hasTap: true, tapEnabled: true) == .keep)
+}
+
+@Test func brightnessTapActionInstallsWhenWantedAndAbsent() {
+    #expect(BrightnessTapAction.resolve(enabled: true, trusted: true, canApply: true, hasTap: false, tapEnabled: false) == .install)
+    #expect(BrightnessTapAction.resolve(enabled: false, trusted: true, canApply: true, hasTap: false, tapEnabled: false) == .keep)
+}
+
+@Test func brightnessTapActionRemovesWhenUntrustedOrDisabled() {
+    for tapEnabled in [false, true] {
+        #expect(BrightnessTapAction.resolve(enabled: true, trusted: false, canApply: true, hasTap: true, tapEnabled: tapEnabled) == .remove)
+        #expect(BrightnessTapAction.resolve(enabled: false, trusted: true, canApply: true, hasTap: true, tapEnabled: tapEnabled) == .remove)
+    }
+}

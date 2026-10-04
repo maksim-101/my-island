@@ -49,9 +49,17 @@ final class BrightnessKeyTap {
     func reconcile(enabled: Bool) {
         lastEnabled = enabled
         let trusted = AXIsProcessTrusted()
-        if let tap, !CGEvent.tapIsEnabled(tap: tap) { remove() }
-        if enabled && trusted && canApply && tap == nil { install() }
-        if (!enabled || !trusted) && tap != nil { remove() }
+        switch BrightnessTapAction.resolve(
+            enabled: enabled, trusted: trusted, canApply: canApply,
+            hasTap: tap != nil, tapEnabled: tap.map { CGEvent.tapIsEnabled(tap: $0) } ?? false
+        ) {
+        case .install: install()
+        case .remove: remove()
+        case .rebuild:
+            remove()
+            install()
+        case .keep: break
+        }
         refreshState(enabled: enabled, trusted: trusted)
     }
 

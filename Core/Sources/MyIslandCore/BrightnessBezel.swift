@@ -110,3 +110,21 @@ public enum BrightnessBezelState: String, Equatable, Sendable {
         return tapActive ? .active : .failed
     }
 }
+
+/// What `BrightnessKeyTap.reconcile` does to the event tap (HUD-03). A tap that exists but is
+/// disabled would leave the keys dead, so it is rebuilt; a tap is never installed without a
+/// working brightness setter, trust or the setting.
+public enum BrightnessTapAction: Equatable, Sendable {
+    case install
+    case remove
+    case rebuild
+    case keep
+
+    public static func resolve(enabled: Bool, trusted: Bool, canApply: Bool, hasTap: Bool, tapEnabled: Bool) -> BrightnessTapAction {
+        let wanted = enabled && trusted && canApply
+        guard hasTap else { return wanted ? .install : .keep }
+        guard enabled && trusted else { return .remove }
+        guard tapEnabled else { return wanted ? .rebuild : .remove }
+        return .keep
+    }
+}
