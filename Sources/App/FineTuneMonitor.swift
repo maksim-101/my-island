@@ -32,6 +32,6 @@ final class FineTuneMonitor {
     }
 
     private static func scan() -> Bool {
-        !NSRunningApplication.runningApplications(withBundleIdentifier: bundleID).isEmpty
+        NSRunningApplication.runningApplications(withBundleIdentifier: bundleID).contains { !$0.isTerminated }
     }
 }
