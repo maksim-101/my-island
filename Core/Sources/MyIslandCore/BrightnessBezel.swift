@@ -73,6 +73,17 @@ public enum BrightnessKey {
         return Event(up: raw.up, isDown: raw.isDown, isRepeat: raw.isRepeat, fine: fine)
     }
 
+    /// Like `decode(subtype:data1:flags:)`, but an auto-repeat key-down of a hold my-island owns
+    /// (`heldFine` non-nil, the step of the press that started it) keeps that step when the
+    /// modifiers change mid-hold, so the hold never goes dead; a fresh key-down still gets the
+    /// modifier filter.
+    public static func decode(subtype: Int16, data1: Int, flags: UInt64, heldFine: Bool?) -> Event? {
+        if let decoded = decode(subtype: subtype, data1: data1, flags: flags) { return decoded }
+        guard let raw = decodeIgnoringModifiers(subtype: subtype, data1: data1),
+              raw.isDown, raw.isRepeat, let heldFine else { return nil }
+        return Event(up: raw.up, isDown: true, isRepeat: true, fine: heldFine)
+    }
+
     /// Grid-snapped so repeated presses land on clean values; clamped to 0...1.
     public static func nextLevel(current: Float, up: Bool, fine: Bool) -> Float {
         let step = fine ? fineStep : standardStep

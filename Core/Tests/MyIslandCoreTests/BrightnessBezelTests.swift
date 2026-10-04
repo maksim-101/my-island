@@ -88,6 +88,37 @@ func brightnessKeyDecodeIgnoringModifiersKeyUpKeepsDirection(flags: UInt64) {
     #expect(event != nil)
 }
 
+/// WR-01 follow-up: an owned hold keeps stepping when its modifiers change mid-hold.
+@Test(arguments: [option, command, control])
+func brightnessKeyHeldFineRepeatKeepsFineStepAfterModifierChange(flags: UInt64) {
+    let up = BrightnessKey.decode(subtype: 8, data1: data1(code: 2, state: 0x0A, repeatBit: 1), flags: flags, heldFine: true)
+    let down = BrightnessKey.decode(subtype: 8, data1: data1(code: 3, state: 0x0A, repeatBit: 1), flags: flags, heldFine: true)
+    #expect(up == BrightnessKey.Event(up: true, isDown: true, isRepeat: true, fine: true))
+    #expect(down == BrightnessKey.Event(up: false, isDown: true, isRepeat: true, fine: true))
+}
+
+@Test func brightnessKeyHeldCoarseRepeatKeepsCoarseStep() {
+    let event = BrightnessKey.decode(subtype: 8, data1: data1(code: 3, state: 0x0A, repeatBit: 1), flags: option, heldFine: false)
+    #expect(event == BrightnessKey.Event(up: false, isDown: true, isRepeat: true, fine: false))
+}
+
+@Test func brightnessKeyHeldFineFreshPressKeepsModifierFilter() {
+    #expect(BrightnessKey.decode(subtype: 8, data1: data1(code: 2, state: 0x0A, repeatBit: 0), flags: option, heldFine: true) == nil)
+    #expect(BrightnessKey.decode(subtype: 8, data1: data1(code: 2, state: 0x0B, repeatBit: 0), flags: option, heldFine: true) == nil)
+}
+
+@Test func brightnessKeyUnownedRepeatKeepsModifierFilter() {
+    #expect(BrightnessKey.decode(subtype: 8, data1: data1(code: 2, state: 0x0A, repeatBit: 1), flags: option, heldFine: nil) == nil)
+}
+
+@Test func brightnessKeyHeldRepeatThatStillDecodesUsesDecodedStep() {
+    let d1 = data1(code: 2, state: 0x0A, repeatBit: 1)
+    let coarse = BrightnessKey.decode(subtype: 8, data1: d1, flags: shift, heldFine: true)
+    #expect(coarse?.fine == false)
+    #expect(coarse == BrightnessKey.decode(subtype: 8, data1: d1, flags: shift))
+    #expect(BrightnessKey.decode(subtype: 8, data1: d1, flags: option | shift, heldFine: false)?.fine == true)
+}
+
 /// RESEARCH Open Question 1: 16 presses from the bottom rail reach the top rail.
 @Test func brightnessKeyNextLevelSixteenUpsFromZeroReachOne() {
     var level: Float = 0
