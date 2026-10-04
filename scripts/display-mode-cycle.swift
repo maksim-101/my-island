@@ -7,9 +7,10 @@
 //
 // Exit codes: 0 PASS, 1 FAIL, 2 usage or refused.
 // Only --cycle changes display state: it refuses the built-in, inactive and mirrored displays,
-// applies the mode for the login session only (.forSession), restores the original mode, and prints
-// the my-island `reconcile` lines logged meanwhile. --list and --windows are read-only; --windows
-// reads only the bounds of my-island-owned windows, never a window title or content.
+// applies the mode for the login session only (.forSession), restores the original mode (also on
+// SIGINT or SIGTERM), and prints the my-island `reconcile` lines logged meanwhile. --list and
+// --windows are read-only; --windows reads only the bounds of my-island-owned windows, never a
+// window title or content.
 
 import CoreGraphics
 import Foundation
@@ -83,7 +84,7 @@ func apply(_ mode: CGDisplayMode, to id: CGDirectDisplayID) -> Bool {
 }
 
 func cycle(id: CGDirectDisplayID, width: Int) -> Never {
-    guard onlineDisplays().contains(id) else { fail("refused: display not active", code: 2) }
+    guard onlineDisplays().contains(id) else { fail("refused: display not online", code: 2) }
     if CGDisplayIsBuiltin(id) != 0 { fail("refused: built-in display", code: 2) }
     if CGDisplayIsActive(id) == 0 { fail("refused: display not active", code: 2) }
     if CGDisplayMirrorsDisplay(id) != kCGNullDirectDisplay { fail("refused: display is mirrored", code: 2) }
@@ -103,6 +104,19 @@ func cycle(id: CGDirectDisplayID, width: Int) -> Never {
     formatter.dateFormat = "yyyy-MM-dd HH:mm:ss"
     let start = formatter.string(from: Date())
 
+    var interrupts: [DispatchSourceSignal] = []
+    for sig in [SIGINT, SIGTERM] {
+        signal(sig, SIG_IGN)
+        let source = DispatchSource.makeSignalSource(signal: sig, queue: .global())
+        source.setEventHandler {
+            _ = apply(original, to: id)
+            print("interrupted, restored \(original.width)x\(original.height)pt")
+            exit(130)
+        }
+        source.resume()
+        interrupts.append(source)
+    }
+
     let switched = apply(target, to: id)
     print("switched to \(target.width)x\(target.height)pt")
     Thread.sleep(forTimeInterval: 8)
@@ -115,13 +129,13 @@ func cycle(id: CGDirectDisplayID, width: Int) -> Never {
     log.arguments = ["show", "--predicate", "subsystem == \"com.maksim101.myisland\" AND category == \"NotchPanelController\"", "--start", start, "--style", "compact"]
     let pipe = Pipe()
     log.standardOutput = pipe
-    try? log.run()
+    do { try log.run() } catch { fail("cannot run /usr/bin/log: \(error)", code: 1) }
     let data = pipe.fileHandleForReading.readDataToEndOfFile()
     log.waitUntilExit()
     for line in String(decoding: data, as: UTF8.self).split(separator: "\n") where line.contains("reconcile") {
         print(line)
     }
-    exit(switched && restored ? 0 : 1)
+    withExtendedLifetime(interrupts) { exit(switched && restored ? 0 : 1) }
 }
 
 let args = Array(CommandLine.arguments.dropFirst())
