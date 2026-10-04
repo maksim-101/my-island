@@ -8,8 +8,9 @@ import SwiftUI
 enum NotchLayout {
     /// How long the cursor must dwell over the notch before it expands.
     /// Driven by `NotchPanelController`'s `NSTrackingArea`-based hover
-    /// detection (SHELL-11 fix) rather than SwiftUI `.onHover`.
-    static let hoverDwellDelay: TimeInterval = 0.25
+    /// detection (SHELL-11 fix) rather than SwiftUI `.onHover`. Raised from 0.25 (quick 261004-ah2)
+    /// so a pointer passing through the notch toward a tab bar just below does not open it.
+    static let hoverDwellDelay: TimeInterval = 0.35
 
     /// Grace period after the cursor leaves before the notch collapses —
     /// avoids flicker on momentary pointer blips.

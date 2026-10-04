@@ -6,12 +6,21 @@ import CoreGraphics
 /// belly and lean channels chase toward. Pure CoreGraphics, no AppKit/SwiftUI import — same
 /// convention as `FluidShapeGeometry`/`FluidSpring`.
 public enum FluidPointer {
-    /// The sketch's `inside` test (`Math.abs(dx) < P.half.x && p.y < P.d.x + 8`), with the
-    /// meeting-bump guard (`onBump`) folded in as an optional `alertTop`: resting on the alert
-    /// drop's own content (`p.y > alertTop − 2`) must never register as a dwell target, even when
-    /// the base half-width/depth band would otherwise say yes.
+    /// Only the upper two-thirds of a collapsed surface's depth starts the hover dwell, so a pointer passing just under the notch (a maximized window's tab bar) cannot open it (quick 261004-ah2).
+    public static let hoverTriggerDepthFraction: CGFloat = 2.0 / 3.0
+
+    /// The trigger band's depth for `q`, measured top-down from the anchor's top edge; the App sizes its tracking area from the same value.
+    public static func triggerDepth(q: FluidParams) -> CGFloat {
+        q.d * hoverTriggerDepthFraction
+    }
+
+    /// The pointer must sit inside the half-width band and above `triggerDepth(q:)` (the upper
+    /// two-thirds of `q.d`; quick 261004-ah2 dropped the sketch's 8 pt below-pill slack from the
+    /// dwell decision). The meeting-bump guard (`onBump`) is folded in as an optional `alertTop`:
+    /// resting on the alert drop's own content (`p.y > alertTop − 2`) must never register as a
+    /// dwell target, even when the base band would otherwise say yes.
     public static func isDwellTarget(pointer: CGPoint, cx: CGFloat, q: FluidParams, alertTop: CGFloat? = nil) -> Bool {
-        let base = abs(pointer.x - cx) < q.half && pointer.y < q.d + 8
+        let base = abs(pointer.x - cx) < q.half && pointer.y < triggerDepth(q: q)
         if let alertTop, pointer.y > alertTop - 2 {
             return false
         }
@@ -20,9 +29,9 @@ public enum FluidPointer {
 
     /// Ported verbatim from index.html:512-519. `reach` grows with `q.half` so a wider pill (the
     /// Dell's desktop pill) reaches a touch further than the MacBook's; `f` is the falloff from
-    /// reach, `inside` reuses the same half-width/depth band as `isDwellTarget`'s base check
-    /// (deliberately NOT the `alertTop`-aware variant — the sticky pull itself has no alert
-    /// concept, only the dwell-to-open decision does). `damped` scales both terms by 0.3, exactly
+    /// reach, `inside` is the sketch's full band, half-width and down to 8 pt below the
+    /// pill's depth, deliberately wider than `isDwellTarget`'s trigger band so the visual pull still
+    /// answers a pointer the dwell ignores, and it has no alert concept. `damped` scales both terms by 0.3, exactly
     /// the sketch's `if (st.extra){ pull *= .3; lean *= .3; }`.
     public static func stickyPull(pointer: CGPoint?, cx: CGFloat, q: FluidParams, damped: Bool) -> (pull: CGFloat, lean: CGFloat) {
         guard let pointer else { return (0, 0) }
