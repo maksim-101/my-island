@@ -31,8 +31,8 @@ final class BrightnessKeyTap {
 
     @ObservationIgnored var apply: ((BrightnessKey.Event) -> Bool)?
     @ObservationIgnored var canApply = true
-    @ObservationIgnored private var tap: CFMachPort?
-    @ObservationIgnored private var source: CFRunLoopSource?
+    @ObservationIgnored nonisolated(unsafe) private var tap: CFMachPort?
+    @ObservationIgnored nonisolated(unsafe) private var source: CFRunLoopSource?
     @ObservationIgnored private var probeEnabled = false
     @ObservationIgnored private var installFailedLogged = false
     @ObservationIgnored private var lastLoggedState: BrightnessBezelState?
@@ -99,12 +99,23 @@ final class BrightnessKeyTap {
         if probeEnabled { logTapOwners() }
     }
 
-    private func remove() {
+    /// The tap's refcon is an unretained pointer to `self`, so it must not outlive its owner.
+    /// `tap` and `source` are `nonisolated(unsafe)` for this `deinit` (same shape as
+    /// `BrightnessProvider.pollTimer`); the owner lives on the main actor.
+    deinit {
+        Self.tearDown(tap: tap, source: source)
+    }
+
+    private nonisolated static func tearDown(tap: CFMachPort?, source: CFRunLoopSource?) {
         if let tap {
             CGEvent.tapEnable(tap: tap, enable: false)
             CFMachPortInvalidate(tap)
         }
         if let source { CFRunLoopRemoveSource(CFRunLoopGetMain(), source, .commonModes) }
+    }
+
+    private func remove() {
+        Self.tearDown(tap: tap, source: source)
         tap = nil
         source = nil
         swallowedDirections = [:]
