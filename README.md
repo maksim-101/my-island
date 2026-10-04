@@ -14,7 +14,7 @@ on it (or jump straight to it) without switching windows.
 > **without** a notch (external monitors, notchless Macs) get a synthetic pill under the menu
 > bar that behaves the same way; Settings -> Displays turns it off.
 
-![The expanded my-island panel showing an idle timer and clipboard history](docs/screenshot.png)
+![The open my-island band on a notchless display: Now Playing, a running focus timer, the next meeting and the latest clipboard entry](docs/screenshot.png)
 
 ## Status
 
