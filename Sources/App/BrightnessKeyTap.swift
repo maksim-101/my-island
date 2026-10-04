@@ -38,8 +38,10 @@ final class BrightnessKeyTap {
     @ObservationIgnored private var lastLoggedState: BrightnessBezelState?
     @ObservationIgnored private var lastEnabled = false
     @ObservationIgnored private var lastApplied: TimeInterval?
-    /// Directions (`up`) whose latest key-down this tap swallowed; their key-up is swallowed too.
-    @ObservationIgnored private var swallowedDirections: Set<Bool> = []
+    /// Directions (`up`) whose latest key-down this tap swallowed, each mapped to that press's `fine`
+    /// step; their key-up is swallowed too, and their auto-repeats keep that step after a mid-hold
+    /// modifier change.
+    @ObservationIgnored private var swallowedDirections: [Bool: Bool] = [:]
     @ObservationIgnored private var selfTestArmed = false
     @ObservationIgnored private var selfTestConsumed = false
     private let logger = AppLog.make("BrightnessKeyTap")
@@ -66,7 +68,7 @@ final class BrightnessKeyTap {
         probeEnabled = UserDefaults.standard.bool(forKey: Self.probeKey)
         selfTestArmed = !selfTestConsumed && UserDefaults.standard.bool(forKey: Self.timeoutSelfTestKey)
         lastApplied = nil
-        swallowedDirections = []
+        swallowedDirections = [:]
         let mask = probeEnabled ? Self.probeMask : Self.productionMask
         guard let created = CGEvent.tapCreate(
             tap: .cgSessionEventTap,
@@ -105,6 +107,7 @@ final class BrightnessKeyTap {
         if let source { CFRunLoopRemoveSource(CFRunLoopGetMain(), source, .commonModes) }
         tap = nil
         source = nil
+        swallowedDirections = [:]
     }
 
     private func handle(type: CGEventType, event: CGEvent) -> Unmanaged<CGEvent>? {
@@ -134,14 +137,14 @@ final class BrightnessKeyTap {
 
         guard let raw = BrightnessKey.decodeIgnoringModifiers(subtype: subtype, data1: data1) else { return passThrough }
         guard raw.isDown else {
-            return swallowedDirections.remove(raw.up) != nil ? nil : passThrough
+            return swallowedDirections.removeValue(forKey: raw.up) != nil ? nil : passThrough
         }
-        guard let press = BrightnessKey.decode(subtype: subtype, data1: data1, flags: event.flags.rawValue) else {
-            return raw.isRepeat && swallowedDirections.contains(raw.up) ? nil : passThrough
-        }
+        guard let press = BrightnessKey.decode(
+            subtype: subtype, data1: data1, flags: event.flags.rawValue, heldFine: swallowedDirections[raw.up]
+        ) else { return passThrough }
 
         let now = ProcessInfo.processInfo.systemUptime
-        if swallowedDirections.contains(press.up),
+        if swallowedDirections[press.up] != nil,
            BrightnessKey.isThrottled(isRepeat: press.isRepeat, now: now, lastApplied: lastApplied) {
             return nil
         }
@@ -155,10 +158,10 @@ final class BrightnessKeyTap {
         logger.notice("brightnessTap press up=\(press.up, privacy: .public) fine=\(press.fine, privacy: .public) applied=\(applied, privacy: .public)")
         if applied {
             lastApplied = now
-            swallowedDirections.insert(press.up)
+            swallowedDirections[press.up] = press.fine
             return nil
         }
-        swallowedDirections.remove(press.up)
+        swallowedDirections[press.up] = nil
         return passThrough
     }
 
