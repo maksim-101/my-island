@@ -155,7 +155,7 @@ final class BrightnessKeyTap {
             logger.notice("brightnessTap selfTest stalled=2.0s")
         }
         let applied = apply?(press) == true
-        logger.notice("brightnessTap press up=\(press.up, privacy: .public) fine=\(press.fine, privacy: .public) applied=\(applied, privacy: .public)")
+        logger.debug("brightnessTap press up=\(press.up, privacy: .public) fine=\(press.fine, privacy: .public) applied=\(applied, privacy: .public)")
         if applied {
             lastApplied = now
             swallowedDirections[press.up] = press.fine
