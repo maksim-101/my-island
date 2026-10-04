@@ -84,11 +84,14 @@ public enum BrightnessKey {
         return Event(up: raw.up, isDown: true, isRepeat: true, fine: heldFine)
     }
 
-    /// Grid-snapped so repeated presses land on clean values; clamped to 0...1.
+    /// Moves to the next grid line in the direction of travel, so an off-grid start never jumps more
+    /// than one step; the epsilon keeps an on-grid value that drifted by float error on its line.
+    /// Clamped to 0...1.
     public static func nextLevel(current: Float, up: Bool, fine: Bool) -> Float {
         let step = fine ? fineStep : standardStep
-        let index = (current / step).rounded()
-        let moved = up ? index + 1 : index - 1
+        let position = current / step
+        let epsilon: Float = 1e-4
+        let moved = up ? floor(position + epsilon) + 1 : ceil(position - epsilon) - 1
         return min(1, max(0, moved * step))
     }
 }

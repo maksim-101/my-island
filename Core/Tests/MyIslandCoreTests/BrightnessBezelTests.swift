@@ -136,7 +136,11 @@ func brightnessKeyHeldFineRepeatKeepsFineStepAfterModifierChange(flags: UInt64) 
 
 @Test func brightnessKeyNextLevelSnapsOffGrid() {
     #expect(BrightnessKey.nextLevel(current: 0.53, up: true, fine: false) == 0.5625)
-    #expect(BrightnessKey.nextLevel(current: 0.53, up: false, fine: false) == 0.4375)
+    #expect(BrightnessKey.nextLevel(current: 0.53, up: false, fine: false) == 0.5)
+    #expect(BrightnessKey.nextLevel(current: 0.06, up: true, fine: false) == 0.0625)
+    #expect(BrightnessKey.nextLevel(current: 0.07, up: false, fine: false) == 0.0625)
+    #expect(BrightnessKey.nextLevel(current: 0.5625, up: true, fine: false) == 0.625)
+    #expect(BrightnessKey.nextLevel(current: 0.5625, up: false, fine: false) == 0.5)
 }
 
 @Test func brightnessKeyNextLevelFineStep() {
