@@ -628,7 +628,18 @@ final class NotchPanelController: NSObject {
         if startsAsBulge {
             panel.setFrame(resolvedFrame(for: panel), display: true)
         }
-        (panel.contentView as? HoverTrackingView)?.hoverTargetSize = hoverTriggerFrame(for: panel).size
+        if let container = panel.contentView as? HoverTrackingView {
+            container.hoverTargetSize = hoverTriggerFrame(for: panel).size
+            // AppKit can report `mouseEntered` for a pointer outside the tracking rect (seen on a
+            // cursor warp into the window below the band), so a collapsed enter only counts once
+            // the live pointer is confirmed inside the trigger band.
+            container.onHoverChange = { [weak self, weak panel] hovering in
+                guard let self, let panel else { return }
+                let confirmed = hovering && (panel.viewModel?.isOpen == true || self.isInHoverTrigger(panel, NSEvent.mouseLocation))
+                panel.notchHovering = confirmed
+                Self.applyHover(panel: panel)
+            }
+        }
         model.onOpenChange = { [weak self, weak panel] isOpen in
             guard let self, let panel, let motion = panel.motion else { return }
             // 07-05 Task 3 (sketch's own `openBand`): opening the band — by hover-dwell or the
@@ -1184,6 +1195,13 @@ final class NotchPanelController: NSObject {
         )
     }
 
+    /// Includes the band's top edge, which `NSRect.contains` excludes, so a pointer pushed against
+    /// the top of the screen still counts.
+    private func isInHoverTrigger(_ panel: NotchPanel, _ point: NSPoint) -> Bool {
+        let band = hoverTriggerFrame(for: panel)
+        return point.x >= band.minX && point.x < band.maxX && point.y >= band.minY && point.y <= band.maxY
+    }
+
     /// The click-through overlay's frame (Task 1): wider/taller than the interactive panel by a
     /// fixed margin so the rim stroke and glow blur (both drawn outside the fill's own edge) never
     /// clip — `ceil(max(2·half·1.12, 160) + 24)` wide, `ceil(d + sag + 48)` tall, centered on the
@@ -1719,7 +1737,7 @@ final class NotchPanelController: NSObject {
             // (`HoverTrackingView.hoverTargetSize`) and `FluidPointer.isDwellTarget` use, so no
             // hover source can open the panel from the lower third.
             if !isOpen {
-                let insideTrigger = hoverTriggerFrame(for: panel).contains(mouseGlobal)
+                let insideTrigger = isInHoverTrigger(panel, mouseGlobal)
                 if panel.notchHovering != insideTrigger {
                     panel.notchHovering = insideTrigger
                     Self.applyHover(panel: panel)
