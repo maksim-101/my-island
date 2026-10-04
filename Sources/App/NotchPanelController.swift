@@ -1331,6 +1331,7 @@ final class NotchPanelController: NSObject {
     /// that callback already means.
     private static let latencySignposter = OSSignposter(subsystem: AppIdentity.bundleID, category: "Latency")
     private static let latencyLogger = AppLog.make("NotchPanelController")
+    private static let hoverLogger = AppLog.make("NotchPanelController")
 
     private static func beginHotkeyLatency(motion: FluidMotion) {
         beginLatency(name: "hotkeyToFrame", kind: "hotkey", motion: motion)
@@ -1850,6 +1851,7 @@ final class NotchPanelController: NSObject {
         let hovering = panel.notchHovering || panel.outlineHovering
         guard hovering != panel.lastHoverApplied else { return }
         panel.lastHoverApplied = hovering
+        hoverLogger.debug("hover applied=\(hovering, privacy: .public) notch=\(panel.notchHovering, privacy: .public) outline=\(panel.outlineHovering, privacy: .public) mouse=\(NSStringFromPoint(NSEvent.mouseLocation), privacy: .public)")
         handleHoverChange(panel: panel, hovering: hovering)
     }
 }
@@ -1863,6 +1865,7 @@ final class NotchPanelController: NSObject {
 private final class HoverTrackingView: NSView {
     var onHoverChange: ((Bool) -> Void)?
     var hoverTargetSize: CGSize? { didSet { updateTrackingAreas() } }
+    private static let logger = AppLog.make("HoverTracking")
 
     /// Keeps the (wider-than-container) hosting subview horizontally centered
     /// and top-pinned on every window resize, replacing the `autoresizingMask`
@@ -1881,6 +1884,7 @@ private final class HoverTrackingView: NSView {
     override func updateTrackingAreas() {
         super.updateTrackingAreas()
         trackingAreas.forEach(removeTrackingArea)
+        Self.logger.debug("hoverTracking bounds=\(NSStringFromRect(self.bounds), privacy: .public) target=\(self.hoverTargetSize.map { NSStringFromSize($0) } ?? "nil(inVisibleRect)", privacy: .public) rect=\(self.hoverTargetSize.map { NSStringFromRect(NotchGeometry.collapsedHoverRect(containerSize: self.bounds.size, notchSize: $0)) } ?? "visible", privacy: .public)")
         if let hoverTargetSize {
             // Explicit trigger band — no `.inVisibleRect`, which would override it and
             // track the full (possibly still-oversized) bounds instead.
