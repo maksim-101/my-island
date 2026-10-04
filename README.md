@@ -2,41 +2,64 @@
 
 A native macOS notch app — an **actionable-first** companion for the camera-housing notch.
 The collapsed notch always shows live ambient state; it expands on hover or a global hotkey
-into a panel for timers, clipboard, now-playing, and and calendar.
+(⌥Space by default) into a band of modules for now playing, timers, the next meeting and the
+clipboard, each opening a detail droplet with its actions.
 
 Actionable, not decorative — the notch surfaces what needs your attention and lets you act
 on it (or jump straight to it) without switching windows.
 
 > Built as a personal daily-driver on a 16" MacBook Pro, but nothing is hardware-specific:
 > the notch layout is derived from Apple's public safe-area APIs, so it should work on any
-> notched Mac (14"/16" MacBook Pro, notched MacBook Air) on **macOS Tahoe (26.x)** — those
-> are just untested. A display with **no** notch is currently unsupported (the app stays
-> dormant there; a notch-less fallback is planned, not built).
+> notched Mac (14"/16" MacBook Pro, notched MacBook Air) — those are just untested. Displays
+> **without** a notch (external monitors, notchless Macs) get a synthetic pill under the menu
+> bar that behaves the same way; Settings -> Displays turns it off.
 
 ![The expanded my-island panel showing an idle timer and clipboard history](docs/screenshot.png)
 
 ## Status
 
-**Version 0.1.1 — in active development.** Not all features are built yet.
+**In active development.** Prebuilt, notarized builds are on the
+[Releases](https://github.com/maksim-101/my-island/releases) page; `main` may be ahead of the
+latest release.
 
 | Area | State |
 |------|-------|
-| Notch shell (always-on collapsed state, hover-to-expand, global hotkey) | ✅ Working |
-| Timers / focus (pomodoro + countdown) | ✅ Working |
-| Brightness + volume HUD | ✅ Working |
+| Notch shell: always-on collapsed state, hover-to-expand, global hotkey | ✅ Working |
+| Notchless displays: synthetic pill on every connected display, shallow bulge over fullscreen apps | ✅ Working |
+| Band + detail droplets, switchable modules (Settings -> Modules) | ✅ Working |
+| Timers / focus (pomodoro + countdown), shown as a line along the notch outline | ✅ Working |
 | Clipboard history (10 entries, password-manager copies skipped) | ✅ Working |
-| Own visual design language ([`DESIGN.md`](DESIGN.md)) | ✅ Working |
-| Calendar next-meeting countdown + one-click join | ✅ Working |
+| Calendar next-meeting alert + one-click join | ✅ Working |
 | Now Playing (Apple Music + browser audio) + live CoreAudio sound-wave | ✅ Working |
+| Brightness + volume HUD, drawn as a drop out of the notch | ✅ Working |
+| Replace the system brightness bezel (optional, needs Accessibility) | ✅ Working |
+| Volume HUD that yields to FineTune | ✅ Working |
+| Own visual design language ([`DESIGN.md`](DESIGN.md)) | ✅ Working |
+| Camera mirror + microphone level / mute | Planned |
+| Quick actions (keep-awake, Reminders due today, Shortcuts), self-update, Homebrew cask | Planned |
 | Downloads / transfers progress | Backlogged |
+
+### Opening the band
+
+Rest the pointer in the upper two-thirds of the notch (or pill) for about a third of a second,
+or press the hotkey. The lower third and the strip just below the notch never open it, so a
+pointer passing by on its way to a tab bar right under the notch leaves it alone. Moving away
+from the band closes it again.
 
 ## Requirements
 
-- Any Mac with a notch — 14"/16" MacBook Pro or a notched MacBook Air (developed & tested only on the 16" MBP) — running **macOS 26 (Tahoe)** or later. A non-notch display is not yet supported.
-- **Xcode 26** (Tahoe SDK) with command-line tools
+- **macOS 26 (Tahoe)** or later (developed on a 16" MacBook Pro, currently on macOS 27). Any
+  Mac works; on a notchless display the app draws its own pill.
+- To build from source: **Xcode 26** or later with command-line tools
 - [`xcodegen`](https://github.com/yonaskolb/XcodeGen) — `brew install xcodegen`
 
-## Build & install
+## Install a release
+
+Download the zip from the latest [release](https://github.com/maksim-101/my-island/releases),
+unzip it and move `my-island.app` to `/Applications`. Releases are signed with a Developer ID
+and notarized by Apple, so they open without a Gatekeeper warning.
+
+## Build & install from source
 
 ```bash
 git clone https://github.com/maksim-101/my-island.git
@@ -62,8 +85,8 @@ every build, and macOS keys its privacy (TCC) grants to that hash — so with ad
 you may have to re-grant Calendar / Accessibility / Automation access after each reinstall.
 A stable Developer ID identity keeps grants across rebuilds.
 
-The app is **not notarized**. If you copy a build to another Mac (rather than building it
-there), Gatekeeper will quarantine it. Clear the quarantine flag before first launch:
+A local `install.sh` build is **not notarized** (only release builds are). If you copy such a
+build to another Mac (rather than building it there), Gatekeeper will quarantine it. Clear the quarantine flag before first launch:
 
 ```bash
 xattr -dr com.apple.quarantine /Applications/my-island.app
@@ -102,7 +125,9 @@ the calendar, or what was copied.
 Sources/App/        SwiftUI + AppKit app (NSPanel notch overlay, providers, views)
 Core/               MyIslandCore SwiftPM package (shared primitives, unit-tested)
 Vendor/             Vendored MediaRemote adapter (drives Now Playing)
-scripts/            install.sh, dev-reset.sh (TCC reset), capture-nowplaying.sh
+scripts/            install.sh, release.sh (signed + notarized zip), dev-reset.sh (TCC reset),
+                    assert-hud-ownership.sh (HUD invariants), capture-nowplaying.sh, and
+                    display/notch probes (display-mode-cycle.swift, notch-clearance-probe.swift)
 project.yml         XcodeGen spec — single source of truth for the Xcode project
 DESIGN.md           Design tokens (colors, type, spacing) — the app's visual language
 ```
