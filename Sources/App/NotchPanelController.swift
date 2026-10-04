@@ -1851,7 +1851,7 @@ final class NotchPanelController: NSObject {
         let hovering = panel.notchHovering || panel.outlineHovering
         guard hovering != panel.lastHoverApplied else { return }
         panel.lastHoverApplied = hovering
-        hoverLogger.debug("hover applied=\(hovering, privacy: .public) notch=\(panel.notchHovering, privacy: .public) outline=\(panel.outlineHovering, privacy: .public) mouse=\(NSStringFromPoint(NSEvent.mouseLocation), privacy: .public)")
+        hoverLogger.notice("hover applied=\(hovering, privacy: .public) notch=\(panel.notchHovering, privacy: .public) outline=\(panel.outlineHovering, privacy: .public) mouse=\(NSStringFromPoint(NSEvent.mouseLocation), privacy: .public)")
         handleHoverChange(panel: panel, hovering: hovering)
     }
 }
@@ -1884,7 +1884,7 @@ private final class HoverTrackingView: NSView {
     override func updateTrackingAreas() {
         super.updateTrackingAreas()
         trackingAreas.forEach(removeTrackingArea)
-        Self.logger.debug("hoverTracking bounds=\(NSStringFromRect(self.bounds), privacy: .public) target=\(self.hoverTargetSize.map { NSStringFromSize($0) } ?? "nil(inVisibleRect)", privacy: .public) rect=\(self.hoverTargetSize.map { NSStringFromRect(NotchGeometry.collapsedHoverRect(containerSize: self.bounds.size, notchSize: $0)) } ?? "visible", privacy: .public)")
+        Self.logger.notice("hoverTracking bounds=\(NSStringFromRect(self.bounds), privacy: .public) target=\(self.hoverTargetSize.map { NSStringFromSize($0) } ?? "nil(inVisibleRect)", privacy: .public) rect=\(self.hoverTargetSize.map { NSStringFromRect(NotchGeometry.collapsedHoverRect(containerSize: self.bounds.size, notchSize: $0)) } ?? "visible", privacy: .public)")
         if let hoverTargetSize {
             // Explicit trigger band — no `.inVisibleRect`, which would override it and
             // track the full (possibly still-oversized) bounds instead.
