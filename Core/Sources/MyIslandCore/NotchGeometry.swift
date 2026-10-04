@@ -77,13 +77,12 @@ public enum NotchGeometry {
     /// resolves a cutout, `.synthetic` with the drawn top-center pill
     /// otherwise (including the inverted-aux-edges case, which `notchFrame`
     /// also treats as nil).
-    /// D-11: the hover-tracking rect while a panel is collapsed or mid-collapse
-    /// — bottom-left-origin AppKit view coordinates matching
-    /// `HoverTrackingView.resizeSubviews`. Centered horizontally (x rounded, since
-    /// AppKit view geometry is pixel-snapped there) and pinned to the container's
-    /// top edge; degenerates to the full container once it has actually shrunk to
-    /// the notch's own size. Never consults collapse timing/state — purely a
-    /// function of the two sizes involved.
+    /// D-11: the hover-tracking rect of a collapsed or collapsing panel, a `notchSize` rect
+    /// centered horizontally (x rounded, since AppKit view geometry is pixel-snapped) and pinned
+    /// to the container's top edge, in the bottom-left-origin view coordinates `HoverTrackingView`
+    /// uses. `HoverTrackingView` passes its live bounds and the hover trigger band (full surface
+    /// width, `FluidPointer.triggerDepth(q:)` deep), so the rect stays top-pinned across every
+    /// window resize; it never consults collapse timing or state.
     public static func collapsedHoverRect(containerSize: CGSize, notchSize: CGSize) -> CGRect {
         CGRect(
             x: ((containerSize.width - notchSize.width) / 2).rounded(),

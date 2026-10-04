@@ -298,7 +298,7 @@ final class NotchPanelController: NSObject {
                 // observed, so the two can never disagree about which shape is now current.
                 set.motion.jump(to: self.collapsedParams(for: set.panel))
                 set.panel.setFrame(self.resolvedFrame(for: set.panel), display: true)
-                (set.panel.contentView as? HoverTrackingView)?.hoverRect = nil
+                (set.panel.contentView as? HoverTrackingView)?.hoverTargetSize = self.hoverTriggerFrame(for: set.panel).size
             }
         }
 
@@ -628,6 +628,7 @@ final class NotchPanelController: NSObject {
         if startsAsBulge {
             panel.setFrame(resolvedFrame(for: panel), display: true)
         }
+        (panel.contentView as? HoverTrackingView)?.hoverTargetSize = hoverTriggerFrame(for: panel).size
         model.onOpenChange = { [weak self, weak panel] isOpen in
             guard let self, let panel, let motion = panel.motion else { return }
             // 07-05 Task 3 (sketch's own `openBand`): opening the band — by hover-dwell or the
@@ -1171,6 +1172,18 @@ final class NotchPanelController: NSObject {
         )
     }
 
+    /// The collapsed hover trigger band in global screen coordinates (full surface width, top-pinned, the upper two-thirds of the surface's depth), shared by the tracking area and the mouse-moved self-correct.
+    private func hoverTriggerFrame(for panel: NotchPanel) -> NSRect {
+        let q = collapsedParams(for: panel)
+        let depth = FluidPointer.triggerDepth(q: q)
+        return NSRect(
+            x: panel.notchFrame.midX - q.half,
+            y: panel.anchorMaxY - depth,
+            width: q.half * 2,
+            height: depth
+        )
+    }
+
     /// The click-through overlay's frame (Task 1): wider/taller than the interactive panel by a
     /// fixed margin so the rim stroke and glow blur (both drawn outside the fill's own edge) never
     /// clip — `ceil(max(2·half·1.12, 160) + 24)` wide, `ceil(d + sag + 48)` tall, centered on the
@@ -1263,18 +1276,14 @@ final class NotchPanelController: NSObject {
 
         if isOpen {
             // The whole expanded window is the hover target again.
-            container?.hoverRect = nil
+            container?.hoverTargetSize = nil
             panel.setFrame(frame, display: true)
         } else {
-            // D-11: shrink the tracking rect to the collapsed pill immediately —
-            // before the window itself shrinks — so a cursor sweeping through
-            // the dead zone below the still-oversized window never re-arms the
-            // dwell, while moving onto the pill itself still gets a fresh
-            // `mouseEntered` at any point during the 0.45s collapse animation.
-            container?.hoverRect = NotchGeometry.collapsedHoverRect(
-                containerSize: panel.frame.size,
-                notchSize: collapsedSurfaceFrame(for: panel).size
-            )
+            // D-11: shrink the tracking target to the trigger band immediately, before the
+            // window shrinks, so neither the dead zone below the still-oversized window nor the
+            // pill's lower third re-arms the dwell, while moving onto the band still gets a fresh
+            // `mouseEntered` during the collapse animation.
+            container?.hoverTargetSize = hoverTriggerFrame(for: panel).size
             var work: DispatchWorkItem!
             work = DispatchWorkItem { [weak self, weak panel] in
                 guard let panel else { return }
@@ -1293,9 +1302,8 @@ final class NotchPanelController: NSObject {
                 }
                 let collapseFrame = self.resolvedFrame(for: panel)
                 panel.setFrame(collapseFrame, display: true)
-                // The collapsed window now IS the pill — `.inVisibleRect`
-                // tracking is correct again, and cheaper.
-                (panel.contentView as? HoverTrackingView)?.hoverRect = nil
+                // Re-derived for the surface actually settled on (pill or bulge).
+                (panel.contentView as? HoverTrackingView)?.hoverTargetSize = self.hoverTriggerFrame(for: panel).size
                 self.logClickProbeNow(key: panel.displayKey)
             }
             panel.pendingCollapse = work
@@ -1607,8 +1615,8 @@ final class NotchPanelController: NSObject {
     /// AppKit `NSTrackingArea` enter/exit events (SHELL-11 fix), replacing
     /// SwiftUI `.onHover` — which the left half of the notch never received
     /// (see `container` comment in `makePanel`). Mirrors the previous
-    /// `NotchContentView.handleHover` timing exactly (0.25s open dwell,
-    /// 0.1s close grace, cancel-on-new-event) but uses `DispatchWorkItem`s
+    /// `NotchContentView.handleHover` timing exactly (`NotchLayout.hoverDwellDelay` open dwell,
+    /// `NotchLayout.hoverCollapseGrace` close grace, cancel-on-new-event) but uses `DispatchWorkItem`s
     /// hung off the panel instead of a SwiftUI `@State` `Task`, matching the
     /// existing `pendingCollapse` pattern in this controller.
     private static func handleHoverChange(panel: NotchPanel, hovering: Bool) {
@@ -1703,21 +1711,16 @@ final class NotchPanelController: NSObject {
             // reads on every real mouse-moved event anywhere on screen (the global monitor above),
             // exactly mirroring how `outlineHovering` already self-corrects two lines up.
             //
-            // Deliberately `resolvedFrame(for:)`, NOT `panel.frame`: on close, `isOpen` flips
-            // false immediately but the actual AppKit window frame stays at the large OPEN size
-            // until `motion.whenSettled` fires and `applyFrame` shrinks it (the drain animation,
-            // several hundred ms). A `panel.frame.contains` check during that window reads `true`
-            // for a pointer that only just left the band's drawn OUTLINE, not the still-oversized
-            // window — re-asserting `notchHovering = true` on every move and starving
-            // `lastHoverApplied` of the `false` edge a fresh hover-in needs. `applyFrame` already
-            // solves exactly this for the real AppKit tracking area via `HoverTrackingView.hoverRect`
-            // (pinned to the collapsed rect for the same reason, same window); `resolvedFrame(for:)`
-            // is the identical target — it returns `collapsedSurfaceFrame(for:)` whenever `isOpen`
-            // is false, regardless of whether the window itself has caught up yet.
+            // The band comes from `hoverTriggerFrame(for:)`, never `panel.frame`: on close the
+            // window frame lags `isOpen` through the drain animation (gotcha #2), while the
+            // trigger frame is computed from the panel's anchor and collapsed params and is the
+            // collapsed target immediately. It is the same band the tracking area
+            // (`HoverTrackingView.hoverTargetSize`) and `FluidPointer.isDwellTarget` use, so no
+            // hover source can open the panel from the lower third.
             if !isOpen {
-                let insideContainer = resolvedFrame(for: panel).contains(mouseGlobal)
-                if panel.notchHovering != insideContainer {
-                    panel.notchHovering = insideContainer
+                let insideTrigger = hoverTriggerFrame(for: panel).contains(mouseGlobal)
+                if panel.notchHovering != insideTrigger {
+                    panel.notchHovering = insideTrigger
                     Self.applyHover(panel: panel)
                 }
             }
@@ -1851,20 +1854,15 @@ final class NotchPanelController: NSObject {
     }
 }
 
-/// Tracks hover over the container's full bounds via AppKit's
-/// `NSTrackingArea` rather than SwiftUI `.onHover`, which is unreliable here
-/// (see `container` comment in `NotchPanelController.makePanel`). Two
-/// regimes (D-11): when `hoverRect` is nil, `.zero` + `.inVisibleRect` keeps
-/// the tracking rect pinned to the view's current bounds automatically as
-/// `applyFrame` resizes the window between the collapsed notch size and the
-/// expanded panel size — used while open/expanded and once fully collapsed.
-/// When `hoverRect` is set (during the collapse animation, before the window
-/// itself has shrunk), the tracking area is pinned to that explicit rect
-/// instead, so the dead zone below the still-oversized window never re-arms
-/// the hover dwell.
+/// Tracks hover via AppKit's `NSTrackingArea` rather than SwiftUI `.onHover`, which is unreliable
+/// here (see `container` comment in `NotchPanelController.makePanel`). Two regimes (D-11): when
+/// `hoverTargetSize` is nil, `.zero` + `.inVisibleRect` tracks the whole visible rect, used only
+/// while open. When non-nil, the tracking area is the trigger band of that size, used while
+/// collapsed and collapsing and positioned top-pinned against live bounds, so neither the dead
+/// zone below a still-oversized window nor the pill's lower third re-arms the dwell.
 private final class HoverTrackingView: NSView {
     var onHoverChange: ((Bool) -> Void)?
-    var hoverRect: NSRect? { didSet { updateTrackingAreas() } }
+    var hoverTargetSize: CGSize? { didSet { updateTrackingAreas() } }
 
     /// Keeps the (wider-than-container) hosting subview horizontally centered
     /// and top-pinned on every window resize, replacing the `autoresizingMask`
@@ -1872,6 +1870,7 @@ private final class HoverTrackingView: NSView {
     /// collapsed→HUD-bump resize, clipping the HUD to the notch's right half).
     /// Does NOT call `super` — this view owns its single subview's geometry.
     override func resizeSubviews(withOldSize oldSize: NSSize) {
+        updateTrackingAreas()
         guard let hosting = subviews.first else { return }
         hosting.setFrameOrigin(NSPoint(
             x: ((bounds.width - hosting.frame.width) / 2).rounded(),
@@ -1882,11 +1881,11 @@ private final class HoverTrackingView: NSView {
     override func updateTrackingAreas() {
         super.updateTrackingAreas()
         trackingAreas.forEach(removeTrackingArea)
-        if let hoverRect {
-            // Explicit rect — no `.inVisibleRect`, which would override it and
-            // track the full (still-oversized, mid-collapse) bounds instead.
+        if let hoverTargetSize {
+            // Explicit trigger band — no `.inVisibleRect`, which would override it and
+            // track the full (possibly still-oversized) bounds instead.
             addTrackingArea(NSTrackingArea(
-                rect: hoverRect,
+                rect: NotchGeometry.collapsedHoverRect(containerSize: bounds.size, notchSize: hoverTargetSize),
                 options: [.mouseEnteredAndExited, .activeAlways],
                 owner: self,
                 userInfo: nil

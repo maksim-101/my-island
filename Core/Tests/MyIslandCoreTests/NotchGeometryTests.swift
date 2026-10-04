@@ -213,6 +213,15 @@ import CoreGraphics
     #expect(result == CGRect(x: 0, y: 0, width: 185, height: 32))
 }
 
+// A settled desktop pill window is d + sag + 6 = 38 tall, so the trigger band (2/3 of d 30 = 20) starts 18 pt above the window's bottom edge, not at two-thirds of the window.
+@Test func collapsedHoverRectPinsTriggerBandInCollapsedWindow() {
+    let result = NotchGeometry.collapsedHoverRect(
+        containerSize: CGSize(width: 197.33, height: 38),
+        notchSize: CGSize(width: 197.33, height: 20)
+    )
+    #expect(result == CGRect(x: 0, y: 18, width: 197.33, height: 20))
+}
+
 // MARK: - 20260912-hide-during-space-slide: NotchGeometry.isSlideStep
 
 @Test func isSlideStepAcceptsHorizontalOnlyMotionAtUnchangedSize() {
